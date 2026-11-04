@@ -4,7 +4,8 @@
 # Windows. It compiles only as a diagnostic build: no unlock code, GPU writes, driver release,
 # DMA or firmware variable writes. Builds files only.
 param([Parameter(Mandatory)][guid]$WindowsEspGuid,[string]$Clang='clang',[string]$LldLink='lld-link',[string]$Python='python',
-      [ValidateRange(1,255)][int]$TargetBus=1)
+      [ValidateRange(1,255)][int]$TargetBus=1,
+      [switch]$NvgopDriverEvidence)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $boot=Join-Path $repo 'internal-boot/boot'
@@ -24,11 +25,12 @@ $generated=Join-Path $boot 'generated.h'
 if(!(Test-Path -LiteralPath $generated)){'/* Observation build: GU_DIAGNOSTIC_ONLY excludes all unlock loading. */' | Set-Content -LiteralPath $generated -Encoding ascii}
 Push-Location -LiteralPath $boot
 try {
- $out='build/probe-generic'
+ $out=if($NvgopDriverEvidence){'build/probe-generic-driver-evidence'}else{'build/probe-generic'}
  New-Item -ItemType Directory -Path $out -Force | Out-Null
  $sources=@('handoff.c','diagnostic.c','../efi_runtime.c','probe.c','probe-parent.c','../unlock/sha256.c',
    '../../research/pci-decode/efi-capture.c','../../research/pci-decode/snapshot.c')
  $defines=@('-DGU_DIAGNOSTIC_ONLY','-DGU_DIAGNOSTIC_PROBE','-DGU_PROBE_GENERIC','-DGU_USB_PROBE','-DGU_PROBE_PARENT_BASELINE')
+ if($NvgopDriverEvidence){$defines+='-DGU_NVGOP_DRIVER_EVIDENCE'}
  $busMode='auto'
  if($PSBoundParameters.ContainsKey('TargetBus')){
   $defines+=('-DGU_PROBE_BUS=0x{0:x}U' -f $TargetBus);$busMode='explicit'
@@ -46,9 +48,10 @@ try {
  if($LASTEXITCODE -ne 0){throw 'Probe PE verification failed'}
  [ordered]@{Mode='generic-read-only-probe-then-windows-usb';CanUnlock=$false;CanDetach=$false;WritesFirmwareVariables=$false;HardwareTested=$false;Defines=$defines
   ProbeBusMode=$busMode;TargetBus=$(if($busMode -eq 'explicit'){$TargetBus}else{$null})
+  NvgopDriverEvidence=[bool]$NvgopDriverEvidence
   EfiSha256=(Get-FileHash -LiteralPath "$out/BOOTX64.EFI").Hash.ToLowerInvariant();BuiltUtc=[DateTime]::UtcNow.ToString('o')
   Sources=$sourceRows
  } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath "$out/manifest.json" -Encoding utf8
  Assert-GuGenericProbeManifest $repo (Get-Content -LiteralPath "$out/manifest.json" -Raw | ConvertFrom-Json) "$out/BOOTX64.EFI"
- "Built generic read-only probe $out/BOOTX64.EFI; hardware untested."
+ "Built generic read-only probe $out/BOOTX64.EFI; hardware untested. Driver-image evidence is opt-in and never authorizes unlock."
 } finally {Pop-Location}

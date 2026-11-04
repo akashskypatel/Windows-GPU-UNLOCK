@@ -20,6 +20,8 @@ function Assert-GuGenericProbeManifest([string]$Repo,$Manifest,[string]$Efi) {
  }
  if($Manifest.Mode -isnot [string] -or $Manifest.Mode -cne 'generic-read-only-probe-then-windows-usb'){throw 'Generic probe manifest mode is stale'}
  $defines=@('-DGU_DIAGNOSTIC_ONLY','-DGU_DIAGNOSTIC_PROBE','-DGU_PROBE_GENERIC','-DGU_USB_PROBE','-DGU_PROBE_PARENT_BASELINE')
+ if($Manifest.NvgopDriverEvidence -isnot [bool]){throw 'Driver evidence option must be an explicit Boolean'}
+ if($Manifest.NvgopDriverEvidence){$defines+='-DGU_NVGOP_DRIVER_EVIDENCE'}
  if($Manifest.ProbeBusMode -is [string] -and $Manifest.ProbeBusMode -ceq 'auto' -and $null -eq $Manifest.TargetBus){$defines+='-DGU_PROBE_AUTO_BUS'}
  elseif($Manifest.ProbeBusMode -is [string] -and $Manifest.ProbeBusMode -ceq 'explicit' -and
         ($Manifest.TargetBus -is [int] -or $Manifest.TargetBus -is [long]) -and $Manifest.TargetBus -ge 1 -and $Manifest.TargetBus -le 255){

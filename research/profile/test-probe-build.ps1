@@ -46,6 +46,9 @@ foreach($bus in @($null,1,43,255)) {
   {param($x) $x.Mode=@($x.Mode)},
   {param($x) $x.Sources[0].Path=@($x.Sources[0].Path)},
   {param($x) $x.CanUnlock='false'},
+  {param($x) $x.NvgopDriverEvidence='false'},
+  {param($x) $x.NvgopDriverEvidence=$true},
+
   {param($x) $x.Sources=@($x.Sources|Select-Object -Skip 1)}
  )) {
   $bad=$m|ConvertTo-Json -Depth 8|ConvertFrom-Json
@@ -72,6 +75,33 @@ foreach($bus in @($null,1,43,255)) {
  }
  $checks++
 }
+# The evidence mode must compile as a distinct read-only image, carry the
+# opt-in define in the manifest and refuse inconsistent evidence metadata.
+& $build -WindowsEspGuid $dummy -Clang $Clang -LldLink $LldLink -Python $Python -NvgopDriverEvidence
+if(!$?){throw 'Driver-evidence probe build failed'}
+$evidenceDir=Join-Path $sandbox 'internal-boot/boot/build/probe-generic-driver-evidence'
+$evidence=Get-Content -LiteralPath (Join-Path $evidenceDir 'manifest.json') -Raw | ConvertFrom-Json
+$evidenceEfi=Join-Path $evidenceDir 'BOOTX64.EFI'
+Assert-GuGenericProbeManifest $sandbox $evidence $evidenceEfi
+if(!$evidence.NvgopDriverEvidence -or $evidence.Defines -cnotcontains '-DGU_NVGOP_DRIVER_EVIDENCE' -or
+   $evidence.CanUnlock -or $evidence.CanDetach -or $evidence.WritesFirmwareVariables -or $evidence.HardwareTested){
+ throw 'Evidence mode missing opt-in or enabled a mutating flag'
+}
+foreach($change in @(
+ {param($x) $x.NvgopDriverEvidence=$false},
+ {param($x) $x.Defines=@($x.Defines|Where-Object {$_ -cne '-DGU_NVGOP_DRIVER_EVIDENCE'})},
+ {param($x) $x.NvgopDriverEvidence='true'}
+)) {
+ $bad=$evidence|ConvertTo-Json -Depth 8|ConvertFrom-Json
+ & $change $bad
+ $refused=$false;try {Assert-GuGenericProbeManifest $sandbox $bad $evidenceEfi}catch {$refused=$true}
+ if(!$refused){throw 'Tampered driver-evidence manifest accepted'}
+ $checks++
+}
+$evidenceMap=[IO.File]::ReadAllText((Join-Path $evidenceDir 'PROBE.map'))
+if($evidenceMap -match '\b(GuDecodeSync|GuDsEfiRun|GuDsEfiInitialize)\b'){throw 'Actuator reached driver-evidence build'}
+$checks++
+
 foreach($bus in @(0,256)) {
  try {& $build -WindowsEspGuid $dummy -Clang $Clang -LldLink $LldLink -TargetBus $bus;throw 'Invalid build bus accepted'}
  catch {if($_.FullyQualifiedErrorId -notmatch 'ParameterArgumentValidation'){throw}};$checks++

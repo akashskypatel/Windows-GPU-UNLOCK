@@ -19,13 +19,16 @@
 #endif
 #include "../unlock/machine-profile.h"
 
+#if defined(GU_NVGOP_DRIVER_EVIDENCE) && (!defined(GU_PROBE_GENERIC) || !defined(GU_DIAGNOSTIC_ONLY) || !defined(GU_DIAGNOSTIC_PROBE) || defined(GU_FULL_UNLOCK) || defined(GU_EXPERIMENTAL_3090))
+#error NVIDIA driver evidence capture must be a generic, read-only diagnostic build
+#endif
 #if defined(GU_PROBE_DUMP_PROM) && (!defined(GU_DIAGNOSTIC_ONLY) || !defined(GU_DIAGNOSTIC_PROBE) || !defined(GU_USB_MEDIA) || defined(GU_FULL_UNLOCK) || defined(GU_EXPERIMENTAL_3090))
 #error GU_PROBE_DUMP_PROM is only for the observation-only diagnostic image
 #endif
 #if defined(GU_PROBE_GENERIC) || defined(GU_PROBE_DUMP_PROM) || defined(GU_PROFILE_H610M_3060) || defined(GU_PROFILE_PROBE_H610M_3060) || (defined(GU_DIAGNOSTIC_ONLY) && defined(GU_USB_MEDIA))
 #define GU_CHECKED_PROBE 1
 #endif
-#if defined(GU_PROBE_DUMP_PROM) || defined(GU_PROFILE_H610M_3060) || defined(GU_PROFILE_PROBE_H610M_3060) || (defined(GU_DIAGNOSTIC_ONLY) && defined(GU_USB_MEDIA))
+#if defined(GU_NVGOP_DRIVER_EVIDENCE) || defined(GU_PROBE_DUMP_PROM) || defined(GU_PROFILE_H610M_3060) || defined(GU_PROFILE_PROBE_H610M_3060) || (defined(GU_DIAGNOSTIC_ONLY) && defined(GU_USB_MEDIA))
 #define GU_PROBE_PRESERVE_CAPTURE 1
 #endif
 /* Auto discovery is restricted to the profile-less read-only probe. An explicit
@@ -220,6 +223,90 @@ static BOOLEAN ProbeUnchanged(CAPTURE *c,EFI_HANDLE handle,EFI_PCI_IO_PROTOCOL *
   return TRUE;
 }
 #endif
+#if defined(GU_NVGOP_DRIVER_EVIDENCE)
+/* Optional, exact-machine read-only evidence. No MMIO, image execution, Stop,
+ * DisconnectController, or device state changes. Never dump an unbound image. */
+typedef struct {
+  EFI_HANDLE Handle;
+  EFI_PCI_IO_PROTOCOL *Io;
+  UINTN Segment,Bus;
+  UINT32 Config[64];
+} GU_NV_EVIDENCE;
+
+static BOOLEAN NvEvidenceName(const EFI_DEVICE_PATH_PROTOCOL *p,const CHAR16 *expected) {
+  if(!p || p->Type!=MEDIA_DEVICE_PATH || p->SubType!=MEDIA_FILEPATH_DP)return FALSE;
+  const UINT8 *bytes=(const UINT8 *)p;
+  UINTN len=(UINTN)bytes[2]+((UINTN)bytes[3]<<8),namesize=0;
+  while(expected[namesize] && namesize<32)namesize++;
+  if(namesize>=32 || len!=4+(namesize+1)*2)return FALSE;
+  for(UINTN i=0;i<=namesize;i++)
+    if(bytes[4+i*2]!=(UINT8)expected[i] || bytes[5+i*2]!=(UINT8)(expected[i]>>8))return FALSE;
+  const UINT8 *end=bytes+len;
+  return end[0]==END_DEVICE_PATH_TYPE && end[1]==END_ENTIRE_DEVICE_PATH_SUBTYPE &&
+    end[2]==4 && end[3]==0;
+}
+
+static VOID NvEvidenceImage(CAPTURE *c,EFI_FILE_PROTOCOL *root,const GU_NV_EVIDENCE *v) {
+  UINT32 id=v->Config[0];
+  const UINT32 expectedSubsystem=id==0x268410deU?0x88e61043U:0xb61219daU;
+  const UINT32 expectedVersion=id==0x268410deU?0x7000bU:0x60010U;
+  const UINTN expectedSize=id==0x268410deU?0x278e0U:0x26ae0U;
+  const UINTN expectedStop=id==0x268410deU?0x6ecU:0x678U;
+  const CHAR16 *expectedName=id==0x268410deU?L"nvgop-ad1xx":L"nvgop-ga1xx";
+  EFI_BOOT_SERVICES *bs=c->Table->BootServices;
+  if(!root || !root->Open || !root->Write || !root->Close ||
+     (id!=0x268410deU && id!=0x220a10deU) || v->Config[2]!=0x030000a1U ||
+     v->Config[11]!=expectedSubsystem || v->Segment!=0 ||
+     v->Bus!=(id==0x268410deU?1U:4U) ||
+     !ProbeUnchanged(c,v->Handle,v->Io,v->Config,v->Segment,v->Bus)) {
+    Problem(c,"nvgop-evidence-pci-identity",EFI_NOT_READY);return;
+  }
+  EFI_OPEN_PROTOCOL_INFORMATION_ENTRY *opens=NULL;
+  UINTN n=0;EFI_HANDLE agent=NULL;
+  EFI_STATUS s=bs->OpenProtocolInformation?
+    bs->OpenProtocolInformation(v->Handle,&PciGuidL,&opens,&n):EFI_UNSUPPORTED;
+  if(s!=EFI_SUCCESS || n>512 || (n && !opens)){
+    if(opens && bs->FreePool)bs->FreePool(opens);
+    Problem(c,"nvgop-evidence-open-owners",s==EFI_SUCCESS?EFI_COMPROMISED_DATA:s);return;
+  }
+  UINTN owners=0;
+  for(UINTN i=0;i<n;i++) {
+    if(opens[i].Attributes==EFI_OPEN_PROTOCOL_BY_DRIVER) {
+      owners++;
+      if(opens[i].ControllerHandle!=v->Handle || opens[i].OpenCount!=1 || !opens[i].AgentHandle)break;
+      agent=opens[i].AgentHandle;
+    }
+  }
+  EFI_STATUS freeStatus=bs->FreePool?bs->FreePool(opens):EFI_UNSUPPORTED;
+  if(freeStatus!=EFI_SUCCESS || owners!=1 || !agent){
+    Problem(c,"nvgop-evidence-owner",EFI_NOT_READY);return;
+  }
+  EFI_DRIVER_BINDING_PROTOCOL *driver=NULL;
+  EFI_LOADED_IMAGE_PROTOCOL *image=NULL;
+  s=bs->HandleProtocol(agent,&BindGuidL,(VOID **)&driver);
+  if(s!=EFI_SUCCESS || !driver || !driver->Stop || driver->DriverBindingHandle!=agent ||
+     driver->ImageHandle!=agent || driver->Version!=expectedVersion ||
+     bs->HandleProtocol(agent,&ImgGuidL,(VOID **)&image)!=EFI_SUCCESS || !image ||
+     image->DeviceHandle!=v->Handle || image->ImageCodeType!=EfiBootServicesCode ||
+     image->ImageSize!=expectedSize || !image->ImageBase ||
+     !NvEvidenceName(image->FilePath,expectedName)){
+    Problem(c,"nvgop-evidence-driver-fingerprint",EFI_UNSUPPORTED);return;
+  }
+  UINTN base=(UINTN)image->ImageBase,stop=(UINTN)driver->Stop;
+  if(base>~(UINTN)0-image->ImageSize || stop!=base+expectedStop ||
+     !ProbeUnchanged(c,v->Handle,v->Io,v->Config,v->Segment,v->Bus)){
+    Problem(c,"nvgop-evidence-driver-drift",EFI_NOT_READY);return;
+  }
+  Text(c,"nvgop-evidence-v1 bdf-seg=0x");Hex(c,v->Segment,4);
+  Text(c," bus=0x");Hex(c,v->Bus,2);Text(c," pci-id=0x");Hex(c,id,8);
+  UINT8 digest[32];
+  GuSha256(image->ImageBase,image->ImageSize,digest);
+  Text(c," image-index=0x");Hex(c,DumpIndex,2);
+  Text(c," loaded-image-sha256=");for(UINTN k=0;k<32;k++)Hex(c,digest[k],2);End(c);
+  DumpImage(c,root,agent);
+}
+#endif
+
 static VOID ProbeBar(CAPTURE *c,EFI_PCI_IO_PROTOCOL *io,UINT32 bar,EFI_FILE_PROTOCOL *root,
                      EFI_HANDLE handle,const UINT32 *cfg,UINTN expectedSegment,UINTN expectedBus) {
 #ifdef GU_PROBE_GENERIC
@@ -416,6 +503,9 @@ EFI_STATUS GuProbeGpu(EFI_SYSTEM_TABLE *t,CAPTURE *c) {
   DumpIndex=0;
 #ifdef GU_PROBE_GENERIC
   InventorySeen=InventoryDisplays=InventoryFailures=0;
+#ifdef GU_NVGOP_DRIVER_EVIDENCE
+  GU_NV_EVIDENCE evidence[2];UINTN evidenceCount=0;
+#endif
   Text(c,"probe-inventory-v2 begin");End(c);
 #endif
 #ifdef GU_PROBE_PARENT_BASELINE
@@ -503,6 +593,14 @@ EFI_STATUS GuProbeGpu(EFI_SYSTEM_TABLE *t,CAPTURE *c) {
     Text(c,"cfg dwords=");for(UINTN j=0;j<64;j++){Hex(c,cfg[j],8);Text(c," ");}End(c);
     UINT32 sub=0;io->Pci.Read(io,EfiPciIoWidthUint32,0x2c,1,&sub);PH(c,"subsystem=0x",sub);
     ProbeCaps(c,io);
+#if defined(GU_PROBE_GENERIC) && defined(GU_NVGOP_DRIVER_EVIDENCE)
+    if(evidenceCount<2 && locationStatus==EFI_SUCCESS && seg==0 &&
+       ((id==0x268410deU && bus==1) || (id==0x220a10deU && bus==4)) && !dev && !fun) {
+      GU_NV_EVIDENCE *e=&evidence[evidenceCount++];
+      e->Handle=hs[i];e->Io=io;e->Segment=seg;e->Bus=bus;
+      for(UINTN k=0;k<64;k++)e->Config[k]=cfg[k];
+    }
+#endif
     UINT32 bar=cfg[0x10/4]&~0xfU;
 #if defined(GU_PROBE_GENERIC) && defined(GU_PROBE_PARENT_BASELINE)
     /* Capture ancestry individually even when shared PROM.BIN forbids deep
@@ -564,6 +662,14 @@ EFI_STATUS GuProbeGpu(EFI_SYSTEM_TABLE *t,CAPTURE *c) {
   /* A selected target disappearing or turning non-display during the second
    * pass must not become a successful inventory-only capture. */
   if(inventoryOk && candidates==1 && !InventoryFailures && !targetValidated)Problem(c,"probe-inventory-target-lost",EFI_NOT_READY);
+#endif
+#if defined(GU_PROBE_GENERIC) && defined(GU_NVGOP_DRIVER_EVIDENCE)
+  if(inventoryOk && candidates==2 && InventoryDisplays==3 && !InventoryFailures &&
+     found==2 && !cfgFailed && evidenceCount==2 &&
+     evidence[0].Config[0]!=evidence[1].Config[0] && root) {
+    NvEvidenceImage(c,root,&evidence[0]);
+    if(c->Io==EFI_SUCCESS && c->Complete)NvEvidenceImage(c,root,&evidence[1]);
+  } else {Problem(c,"nvgop-evidence-incomplete-topology",EFI_NOT_READY);}
 #endif
 #ifdef GU_PROBE_GENERIC
   Text(c,"probe-inventory-v2 end displays=0x");Hex(c,InventoryDisplays,4);
