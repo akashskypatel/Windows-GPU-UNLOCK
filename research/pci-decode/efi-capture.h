@@ -23,3 +23,20 @@ typedef struct {
 } GU_DS_CAPTURE;
 
 EFI_STATUS GuDsEfiCapture(GU_DS_CAPTURE *Context,EFI_BOOT_SERVICES *Boot,const GU_DS_CAPTURE_TARGET *Target);
+
+#if defined(GU_PROBE_GENERIC) && defined(GU_DIAGNOSTIC_ONLY)
+/* Diagnostic-only failure location; index 0 is GPU, indices 1..N are parents.
+ * A stage is the last operation attempted, NOT proof it was the only failure. */
+typedef enum {
+  GuDsObserveInput=1,GuDsObserveTarget=2,GuDsObserveLocate=3,
+  GuDsObserveInterface=4,GuDsObservePath=5,GuDsObserveLocation=6,
+  GuDsObserveConfig=7,GuDsObserveAttributes=8,GuDsObserveSupported=9,
+  GuDsObserveTopology=10,GuDsObserveMatch=11,GuDsObserveComplete=12,
+  GuDsObserveFinalConfig=13,GuDsObserveCapabilities=14
+} GU_DS_OBSERVE_STAGE;
+typedef struct {
+  UINTN Stage,Pass,Index;
+} GU_DS_OBSERVE_TRACE;
+EFI_STATUS GuDsEfiObserveParents(GU_DS_CAPTURE *Context,EFI_BOOT_SERVICES *Boot,
+  const GU_DS_CAPTURE_TARGET *Target,GU_DS_OBSERVE_TRACE *Trace);
+#endif

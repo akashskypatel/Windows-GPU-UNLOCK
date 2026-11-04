@@ -47,6 +47,10 @@ static EFI_GUID InfoGuid=EFI_FILE_INFO_ID;
 #endif
 static EFI_SYSTEM_TABLE *Table;
 static EFI_HANDLE Self,OwnDevice,WindowsImage;
+#ifdef GU_USB_PROBE
+/* Captured before the graph; the Windows image is loaded only after capture. */
+static EFI_HANDLE DeferredWindowsDevice;
+#endif
 #ifndef GU_DIAGNOSTIC_ONLY
 static EFI_HANDLE UnlockImage;
 #endif
@@ -80,6 +84,7 @@ static VOID ScreenStatus(const char *Event,EFI_STATUS Status) {
   text[n++]='\r';text[n++]='\n';text[n]=0;Say(text);
 }
 #endif
+#ifndef GU_USB_PROBE
 static VOID Stop(VOID) {
   Say(L"\r\nHANDOFF STOPPED. No reset or automatic retry. Power off and use Windows Boot Manager for recovery.\r\n");
   if(Table && Table->BootServices) {
@@ -88,6 +93,7 @@ static VOID Stop(VOID) {
   }
   for(;;)__asm__ volatile("pause");
 }
+#endif
 static EFI_STATUS PathFor(EFI_HANDLE Device,EFI_DEVICE_PATH_PROTOCOL **Out) {
   *Out=NULL;
   EFI_STATUS s=Table->BootServices->HandleProtocol(Device,&PathGuid,(VOID **)Out);
@@ -241,6 +247,11 @@ static EFI_STATUS Prepare(VOID *Context) {
 #ifndef GU_DIAGNOSTIC_ONLY
   s=LoadUnlock();if(s!=EFI_SUCCESS)return s;
 #endif
+#ifdef GU_USB_PROBE
+  /* No Windows LoadImage before the firmware ownership graph is collected. */
+  DeferredWindowsDevice=windows;
+  return EFI_SUCCESS;
+#else
   EFI_DEVICE_PATH_PROTOCOL *path=NULL;
   s=FilePath(windows,L"\\EFI\\Microsoft\\Boot\\bootmgfw.efi",&path);
   if(s==EFI_SUCCESS)s=Table->BootServices->LoadImage(FALSE,Self,path,NULL,0,&WindowsImage);
@@ -249,6 +260,7 @@ static EFI_STATUS Prepare(VOID *Context) {
   EFI_LOADED_IMAGE_PROTOCOL *loaded=NULL;
   s=Table->BootServices->HandleProtocol(WindowsImage,&LoadedGuid,(VOID **)&loaded);
   return s==EFI_SUCCESS && loaded && loaded->DeviceHandle==windows?EFI_SUCCESS:EFI_COMPROMISED_DATA;
+#endif
 }
 #ifndef GU_DIAGNOSTIC_ONLY
 #ifndef GU_FULL_UNLOCK
@@ -351,6 +363,18 @@ static EFI_STATUS Windows(VOID *Context) {
   (void)Context;
   Say(L"Starting Windows Boot Manager directly. No reset.\r\n");
   EFI_STATUS s=CloseBootFiles(NULL,NULL);if(s!=EFI_SUCCESS)return s;
+#ifdef GU_USB_PROBE
+  /* The graph and log are complete before loading the Windows EFI image. */
+  if(!DeferredWindowsDevice)return EFI_NOT_READY;
+  EFI_DEVICE_PATH_PROTOCOL *path=NULL;
+  s=FilePath(DeferredWindowsDevice,L"\\EFI\\Microsoft\\Boot\\bootmgfw.efi",&path);
+  if(s==EFI_SUCCESS)s=Table->BootServices->LoadImage(FALSE,Self,path,NULL,0,&WindowsImage);
+  if(path)Table->BootServices->FreePool(path);
+  if(s!=EFI_SUCCESS)return s;
+  EFI_LOADED_IMAGE_PROTOCOL *loaded=NULL;
+  s=Table->BootServices->HandleProtocol(WindowsImage,&LoadedGuid,(VOID **)&loaded);
+  if(s!=EFI_SUCCESS || !loaded || loaded->DeviceHandle!=DeferredWindowsDevice)return EFI_COMPROMISED_DATA;
+#endif
   return Table->BootServices->StartImage(WindowsImage,NULL,NULL);
 }
 #endif
@@ -398,11 +422,20 @@ static EFI_STATUS DetachConsole(VOID *Context) {
 #endif
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE Image,EFI_SYSTEM_TABLE *St) {
   Table=St;Self=Image;
+#ifdef GU_USB_PROBE
+  /* Preserve the firmware watchdog; errors return to the boot manager. */
+  if(!St || !St->BootServices)return EFI_INVALID_PARAMETER;
+#else
   if(!St || !St->BootServices)Stop();
   if(St->BootServices->SetWatchdogTimer(0,0,0,NULL)!=EFI_SUCCESS)Stop();
+#endif
   EFI_LOADED_IMAGE_PROTOCOL *loaded=NULL;
   EFI_STATUS s=St->BootServices->HandleProtocol(Image,&LoadedGuid,(VOID **)&loaded);
+#ifdef GU_USB_PROBE
+  if(s!=EFI_SUCCESS || !loaded)return s!=EFI_SUCCESS?s:EFI_NOT_FOUND;
+#else
   if(s!=EFI_SUCCESS || !loaded)Stop();
+#endif
   OwnDevice=loaded->DeviceHandle;
 #ifdef GU_FULL_UNLOCK
   GU_FULL_FLOW_OPS ops={NULL,Prepare,FullChoice,FullCapture,FullRelease,FullVerifyCold,Unlock,Windows,FullWindows,Record};
@@ -439,7 +472,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE Image,EFI_SYSTEM_TABLE *St) {
     return s==EFI_SUCCESS || s==EFI_ABORTED?EFI_NOT_STARTED:s;
   }
 #endif
-#if defined(GU_DIAGNOSTIC_ONLY) && defined(GU_USB_MEDIA)
+#if defined(GU_DIAGNOSTIC_ONLY) && (defined(GU_USB_MEDIA) || defined(GU_USB_PROBE))
   /* Observation stick: this image never releases a driver or writes GPU state,
    * so a failed capture or Windows load hands back to the firmware BootOrder. */
   if(Log){(void)Log->Close(Log);Log=NULL;}
@@ -447,6 +480,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE Image,EFI_SYSTEM_TABLE *St) {
   Say(L"Nothing was changed. Returning to the firmware boot order.\r\n");
   return s==EFI_SUCCESS || s==EFI_ABORTED?EFI_NOT_STARTED:s;
 #endif
+#ifndef GU_USB_PROBE
   Stop();
+#endif
   return EFI_ABORTED; /* unreachable: do not fall through firmware BootOrder */
 }

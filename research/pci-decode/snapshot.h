@@ -24,4 +24,8 @@ typedef struct {
 
 /* Supplied values only: no ownership, provenance or physical qualification. */
 BOOLEAN GuDecodeSnapshotValid(const GU_DS_SNAPSHOT *Snapshot);
+#if defined(GU_PROBE_GENERIC) && defined(GU_DIAGNOSTIC_ONLY)
+/* Diagnostic-only: never use this observation predicate as unlock eligibility. */
+BOOLEAN GuDecodeSnapshotObservationValid(const GU_DS_SNAPSHOT *Snapshot);
+#endif
 BOOLEAN GuDecodeSnapshotMatches(const GU_DS_SNAPSHOT *Observed,const GU_DS_SNAPSHOT *Expected,BOOLEAN IoCleared);

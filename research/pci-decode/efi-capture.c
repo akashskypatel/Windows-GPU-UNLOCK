@@ -32,15 +32,25 @@ static BOOLEAN Caps(const WORK *w) {
   }
   return TRUE;
 }
-static EFI_STATUS Resolve(WORK *w,UINTN index,BOOLEAN first) {
+#if defined(GU_PROBE_GENERIC) && defined(GU_DIAGNOSTIC_ONLY)
+#define TRACE(t,step) do {if(t)(t)->Stage=(step);} while(0)
+#else
+#define TRACE(t,step) ((void)0)
+typedef struct {UINTN Stage,Pass,Index;} GU_DS_OBSERVE_TRACE;
+#endif
+static EFI_STATUS Resolve(WORK *w,UINTN index,BOOLEAN first,GU_DS_OBSERVE_TRACE *trace) {
+  (void)trace;
   GU_DS_EFI_DEVICE *d=&w->Devices[index];UINT8 copy[GU_DS_EFI_MAX_PATH];
   for(UINTN i=0;i<d->Pin.PathBytes;i++)copy[i]=d->Pin.Path[i];
   EFI_DEVICE_PATH_PROTOCOL *rest=(VOID *)copy;EFI_HANDLE h=NULL;VOID *io=NULL,*path=NULL;
+  TRACE(trace,GuDsObserveCapabilities);
   if(!Caps(w))return EFI_NOT_READY;
+  TRACE(trace,GuDsObserveLocate);
   EFI_STATUS s=w->Locate(&PciGuid,&rest,&h);
   if(s!=EFI_SUCCESS || !h || !Caps(w) || (UINTN)rest!=(UINTN)copy+d->Pin.PathBytes-4 ||
      !Same(copy,d->Pin.Path,d->Pin.PathBytes) || (!index && h!=w->Target.Handle) ||
      (!first && h!=d->Pin.Handle))return EFI_NOT_READY;
+  TRACE(trace,GuDsObserveInterface);
   s=w->Handle(h,&PciGuid,&io);
   if(s!=EFI_SUCCESS || !io || !Caps(w) || (!first && io!=d->Pin.Io))return EFI_NOT_READY;
   if(first) {
@@ -49,32 +59,43 @@ static EFI_STATUS Resolve(WORK *w,UINTN index,BOOLEAN first) {
     d->Pin.Handle=h;d->Pin.Io=p;d->Location=p->GetLocation;d->Read=p->Pci.Read;d->Attributes=p->Attributes;
     w->Bound=index+1;
   }
+  TRACE(trace,GuDsObservePath);
   s=w->Handle(h,&PathGuid,&path);
   if(s!=EFI_SUCCESS || !path || !Caps(w) || !Same(path,d->Pin.Path,d->Pin.PathBytes))return EFI_NOT_READY;
   return EFI_SUCCESS;
 }
-static EFI_STATUS ReadOne(WORK *w,UINTN index,BOOLEAN first,GU_DS_DEVICE *out) {
+static EFI_STATUS ReadOne(WORK *w,UINTN index,BOOLEAN first,GU_DS_DEVICE *out,GU_DS_OBSERVE_TRACE *trace) {
   GU_DS_EFI_DEVICE *d=&w->Devices[index];
-  if(Resolve(w,index,first)!=EFI_SUCCESS)return EFI_NOT_READY;
+  if(Resolve(w,index,first,trace)!=EFI_SUCCESS)return EFI_NOT_READY;
   out->Handle=(UINTN)d->Pin.Handle;out->Interface=(UINTN)d->Pin.Io;
   out->Segment=out->Bus=out->Device=out->Function=~(UINTN)0;
+  TRACE(trace,GuDsObserveLocation);
   EFI_STATUS s=d->Location(d->Pin.Io,&out->Segment,&out->Bus,&out->Device,&out->Function);
   UINTN tail=d->Pin.PathBytes-4;
   if(s!=EFI_SUCCESS || !Caps(w) || out->Segment!=w->Target.Segment || out->Bus>255 ||
      out->Device!=d->Pin.Path[tail-1] || out->Function!=d->Pin.Path[tail-2] ||
      (!index && out->Bus!=w->Target.Bus))return EFI_NOT_READY;
   for(UINTN i=0;i<64;i++)out->Config[i]=first?0xa5a5a5a5U:0x5a5a5a5aU;
+  TRACE(trace,GuDsObserveConfig);
   s=d->Read(d->Pin.Io,EfiPciIoWidthUint32,0,64,out->Config);
   if(s!=EFI_SUCCESS || !Caps(w))return EFI_NOT_READY;
   if(!index && (out->Config[0]!=w->Target.PciId || out->Config[11]!=w->Target.Subsystem || out->Config[4]!=w->Target.Bar0))return EFI_NOT_READY;
   out->Attributes=out->Supported=~0ULL;
+  TRACE(trace,GuDsObserveAttributes);
   s=d->Attributes(d->Pin.Io,EfiPciIoAttributeOperationGet,0,&out->Attributes);
   if(s!=EFI_SUCCESS || out->Attributes==~0ULL || !Caps(w))return EFI_NOT_READY;
+  TRACE(trace,GuDsObserveSupported);
   s=d->Attributes(d->Pin.Io,EfiPciIoAttributeOperationSupported,0,&out->Supported);
   if(s!=EFI_SUCCESS || out->Supported==~0ULL || !Caps(w))return EFI_NOT_READY;
-  return Resolve(w,index,FALSE);
+  return Resolve(w,index,FALSE,trace);
 }
-EFI_STATUS GuDsEfiCapture(GU_DS_CAPTURE *c,EFI_BOOT_SERVICES *boot,const GU_DS_CAPTURE_TARGET *target) {
+static EFI_STATUS Capture(GU_DS_CAPTURE *c,EFI_BOOT_SERVICES *boot,
+  const GU_DS_CAPTURE_TARGET *target,BOOLEAN observation,GU_DS_OBSERVE_TRACE *trace) {
+  TRACE(trace,GuDsObserveInput);
+#if !defined(GU_PROBE_GENERIC) || !defined(GU_DIAGNOSTIC_ONLY)
+  (void)observation;
+#endif
+  if(trace){trace->Pass=0;trace->Index=0;}
   if(!c || (boot && Overlap(c,sizeof(*c),boot,sizeof(*boot))) ||
      (target && Overlap(c,sizeof(*c),target,sizeof(*target))) ||
      (boot && target && Overlap(boot,sizeof(*boot),target,sizeof(*target))))return EFI_INVALID_PARAMETER;
@@ -87,6 +108,7 @@ EFI_STATUS GuDsEfiCapture(GU_DS_CAPTURE *c,EFI_BOOT_SERVICES *boot,const GU_DS_C
   *w=(WORK){0};snapshots[0]=(GU_DS_SNAPSHOT){0};snapshots[1]=(GU_DS_SNAPSHOT){0};
   if(!boot || !target || !boot->HandleProtocol || !boot->LocateDevicePath)goto done;
   w->Boot=boot;w->Handle=boot->HandleProtocol;w->Locate=boot->LocateDevicePath;w->Target=*target;
+  TRACE(trace,GuDsObserveTarget);
   if(!w->Target.Handle || w->Target.Segment>0xffffU || !w->Target.Bus || w->Target.Bus>255 ||
      (w->Target.PciId&0xffffU)!=0x10de || !w->Target.Subsystem || w->Target.Subsystem==0xffffffffU ||
      !w->Target.Bar0 || (w->Target.Bar0&0xffffffU) || !GuDsControllerParents(w->Target.Path,w->Target.PathBytes,&parents))goto done;
@@ -100,13 +122,27 @@ EFI_STATUS GuDsEfiCapture(GU_DS_CAPTURE *c,EFI_BOOT_SERVICES *boot,const GU_DS_C
   s=EFI_NOT_READY;
   for(UINTN pass=0;pass<2;pass++) {
     GU_DS_SNAPSHOT *v=&snapshots[pass];v->ParentCount=parents;
-    for(UINTN i=0;i<w->Count;i++)if(ReadOne(w,i,pass==0,i?&v->Parents[i-1]:&v->Gpu)!=EFI_SUCCESS)goto done;
+    for(UINTN i=0;i<w->Count;i++) {
+      if(trace){trace->Pass=pass;trace->Index=i;}
+      if(ReadOne(w,i,pass==0,i?&v->Parents[i-1]:&v->Gpu,trace)!=EFI_SUCCESS)goto done;
+    }
     v->Complete=TRUE;
-    if(!Caps(w) || !GuDecodeSnapshotValid(v))goto done;
+    TRACE(trace,GuDsObserveCapabilities);
+    if(!Caps(w))goto done;
+    TRACE(trace,GuDsObserveTopology);
+#if defined(GU_PROBE_GENERIC) && defined(GU_DIAGNOSTIC_ONLY)
+    if(!(observation?GuDecodeSnapshotObservationValid(v):GuDecodeSnapshotValid(v)))goto done;
+#else
+    if(!GuDecodeSnapshotValid(v))goto done;
+#endif
   }
-  if(!Caps(w) || !GuDecodeSnapshotMatches(&snapshots[1],&snapshots[0],FALSE))goto done;
+  TRACE(trace,GuDsObserveCapabilities);
+  if(!Caps(w))goto done;
+  TRACE(trace,GuDsObserveMatch);
+  if(!GuDecodeSnapshotMatches(&snapshots[1],&snapshots[0],FALSE))goto done;
   for(UINTN i=0;i<w->Count;i++)c->Bindings[i]=w->Devices[i].Pin;
   c->Snapshot=snapshots[1];c->Count=w->Count;c->Ready=TRUE;s=EFI_SUCCESS;
+  TRACE(trace,GuDsObserveComplete);
 done:
   /* Nothing partial is published, even if a callback touched public outputs. */
   if(s!=EFI_SUCCESS) {
@@ -115,3 +151,16 @@ done:
   }
   c->Used=TRUE;c->Busy=FALSE;c->Status=s;ActiveBusy=FALSE;return s;
 }
+
+EFI_STATUS GuDsEfiCapture(GU_DS_CAPTURE *c,EFI_BOOT_SERVICES *boot,const GU_DS_CAPTURE_TARGET *target) {
+  return Capture(c,boot,target,FALSE,NULL);
+}
+#if defined(GU_PROBE_GENERIC) && defined(GU_DIAGNOSTIC_ONLY)
+EFI_STATUS GuDsEfiObserveParents(GU_DS_CAPTURE *c,EFI_BOOT_SERVICES *boot,
+  const GU_DS_CAPTURE_TARGET *target,GU_DS_OBSERVE_TRACE *trace) {
+  if(!trace || (c && Overlap(trace,sizeof(*trace),c,sizeof(*c))) ||
+     (boot && Overlap(trace,sizeof(*trace),boot,sizeof(*boot))) ||
+     (target && Overlap(trace,sizeof(*trace),target,sizeof(*target))))return EFI_INVALID_PARAMETER;
+  return Capture(c,boot,target,TRUE,trace);
+}
+#endif

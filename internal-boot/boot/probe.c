@@ -222,6 +222,11 @@ static BOOLEAN ProbeUnchanged(CAPTURE *c,EFI_HANDLE handle,EFI_PCI_IO_PROTOCOL *
 #endif
 static VOID ProbeBar(CAPTURE *c,EFI_PCI_IO_PROTOCOL *io,UINT32 bar,EFI_FILE_PROTOCOL *root,
                      EFI_HANDLE handle,const UINT32 *cfg,UINTN expectedSegment,UINTN expectedBus) {
+#ifdef GU_PROBE_GENERIC
+  /* PCI inventory only: a missing second GPU must never enable MMIO/PROM reads. */
+  Text(c,"probe-deep-v2 skipped=passive-only");End(c);
+  return;
+#endif
   static const UINT32 offs[]={
     0x000000,0x108154,0x108170,0x108180,0x108354,
     0x118128,0x118234,0x110100,0x1183a4,0x1fa828,
@@ -305,6 +310,10 @@ static VOID ProbeBar(CAPTURE *c,EFI_PCI_IO_PROTOCOL *io,UINT32 bar,EFI_FILE_PROT
 }
 
 static VOID ProbeDrivers(CAPTURE *c,EFI_FILE_PROTOCOL *root) {
+#ifdef GU_PROBE_GENERIC
+  Text(c,"probe-driver-dumps-v2 skipped=passive-only");End(c);
+  return;
+#endif
   EFI_HANDLE *hs=NULL;UINTN n=0;
   if(SysT->BootServices->LocateHandleBuffer(ByProtocol,&BindGuidL,NULL,&n,&hs)!=EFI_SUCCESS||!hs)return;
   Text(c,"driver-bindings=");Hex(c,n,8);End(c);
@@ -317,6 +326,71 @@ static VOID ProbeDrivers(CAPTURE *c,EFI_FILE_PROTOCOL *root) {
   }
   SysT->BootServices->FreePool(hs);
 }
+
+#ifdef GU_PROBE_GENERIC
+/* Passive metadata only. This does not enable MMIO, PROM, GPU reset, or unlock
+ * eligibility for multiple controllers. Never infer zero from failed reads. */
+static UINT64 InventoryBdf[1024];
+static UINTN InventorySeen;
+static UINTN InventoryDisplays;
+static UINTN InventoryFailures;
+static VOID InventoryDisplay(CAPTURE *c,EFI_HANDLE handle,EFI_PCI_IO_PROTOCOL *io,
+                             UINT32 id,UINT32 cls) {
+  EFI_BOOT_SERVICES *bs=SysT->BootServices;
+  UINTN seg=~(UINTN)0,bus=~(UINTN)0,dev=~(UINTN)0,fun=~(UINTN)0;
+  UINT32 first[64],second[64];
+  UINT64 attrs=~(UINT64)0,supported=~(UINT64)0;
+  EFI_STATUS loc=EFI_UNSUPPORTED,readA=EFI_UNSUPPORTED,readB=EFI_UNSUPPORTED;
+  EFI_STATUS get=EFI_UNSUPPORTED,sup=EFI_UNSUPPORTED,pathStatus=EFI_UNSUPPORTED;
+  EFI_DEVICE_PATH_PROTOCOL *path=NULL;
+  BOOLEAN stable=FALSE,duplicate=FALSE;
+  InventoryDisplays++;
+  if(io->GetLocation)loc=io->GetLocation(io,&seg,&bus,&dev,&fun);
+  if(io->Pci.Read) {
+    for(UINTN k=0;k<64;k++){first[k]=0xa5a5a5a5U;second[k]=0x5a5a5a5aU;}
+    readA=io->Pci.Read(io,EfiPciIoWidthUint32,0,64,first);
+    if(readA==EFI_SUCCESS)readB=io->Pci.Read(io,EfiPciIoWidthUint32,0,64,second);
+  }
+  if(io->Attributes){
+    get=io->Attributes(io,EfiPciIoAttributeOperationGet,0,&attrs);
+    sup=io->Attributes(io,EfiPciIoAttributeOperationSupported,0,&supported);
+  }
+  if(bs->HandleProtocol)pathStatus=bs->HandleProtocol(handle,&PathGuidL,(VOID **)&path);
+  if(loc==EFI_SUCCESS && seg<=0xffffU && bus<=255 && dev<=31 && fun<=7) {
+    UINT64 key=((UINT64)seg<<24)|((UINT64)bus<<16)|((UINT64)dev<<8)|(UINT64)fun;
+    for(UINTN j=0;j<InventorySeen;j++)if(InventoryBdf[j]==key)duplicate=TRUE;
+    if(InventorySeen<1024)InventoryBdf[InventorySeen++]=key;
+    else duplicate=TRUE;
+  }
+  if(loc==EFI_SUCCESS && readA==EFI_SUCCESS && readB==EFI_SUCCESS &&
+     first[0]==id && first[2]==cls) {
+    stable=TRUE;
+    for(UINTN k=0;k<64;k++)if(first[k]!=second[k]){stable=FALSE;break;}
+  }
+  Text(c,"probe-display-v2 seg=0x");Hex(c,seg,4);
+  Text(c," bus=0x");Hex(c,bus,2);Text(c," dev=0x");Hex(c,dev,2);
+  Text(c," fun=0x");Hex(c,fun,2);Text(c," id=0x");Hex(c,id,8);
+  Text(c," class=0x");Hex(c,cls,8);
+  Text(c," subsystem=0x");Hex(c,readA==EFI_SUCCESS?first[11]:0,8);
+  Text(c," command=0x");Hex(c,readA==EFI_SUCCESS?first[1]&0xffffU:0,4);
+  Text(c," loc-status=0x");Hex(c,loc,16);
+  Text(c," config-status=0x");Hex(c,readA,16);
+  Text(c," repeat-status=0x");Hex(c,readB,16);
+  Text(c," attrs-status=0x");Hex(c,get,16);
+  Text(c," attrs=0x");Hex(c,attrs,16);
+  Text(c," supported-status=0x");Hex(c,sup,16);
+  Text(c," supported=0x");Hex(c,supported,16);
+  Text(c," path-status=0x");Hex(c,pathStatus,16);
+  Text(c," stable=");Hex(c,stable?1:0,1);
+  Text(c," duplicate=");Hex(c,duplicate?1:0,1);End(c);
+  if(pathStatus==EFI_SUCCESS && path)DumpPath(c,path,4096);
+  if(!stable || duplicate || loc!=EFI_SUCCESS || seg>0xffffU || bus>255 || dev>31 || fun>7 ||
+     get!=EFI_SUCCESS || sup!=EFI_SUCCESS || pathStatus!=EFI_SUCCESS || !path) {
+    InventoryFailures++;
+    Problem(c,"probe-display-incomplete-or-drift",EFI_NOT_READY);
+  }
+}
+#endif
 
 static VOID ProbeGops(CAPTURE *c) {
   EFI_HANDLE *hs=NULL;UINTN n=0;
@@ -340,6 +414,10 @@ static VOID ProbeGops(CAPTURE *c) {
 EFI_STATUS GuProbeGpu(EFI_SYSTEM_TABLE *t,CAPTURE *c) {
   SysT=t;
   DumpIndex=0;
+#ifdef GU_PROBE_GENERIC
+  InventorySeen=InventoryDisplays=InventoryFailures=0;
+  Text(c,"probe-inventory-v2 begin");End(c);
+#endif
 #ifdef GU_PROBE_PARENT_BASELINE
   /* A distinct diagnostic invocation owns a fresh observation, never a retry of
    * a correction transaction. Static storage keeps it off the firmware stack. */
@@ -379,7 +457,15 @@ EFI_STATUS GuProbeGpu(EFI_SYSTEM_TABLE *t,CAPTURE *c) {
     targetHandle=hs[i];targetIo=io;targetId=id;targetClass=cls;targetSegment=seg;targetBus=bus;
 #endif
   }
+#ifdef GU_PROBE_GENERIC
+  /* Multiple NVIDIA devices are a supported *observation* case, never a
+   * supported deep-read or LOCAL-profile case. */
+  if(!inventoryOk)Problem(c,"probe-inventory",EFI_NOT_READY);
+  Text(c,"probe-deep-v2 single-nvidia=");Hex(c,inventoryOk && candidates==1?1:0,1);
+  Text(c," nvidia-display-count=0x");Hex(c,candidates,4);End(c);
+#else
   if(!inventoryOk || candidates!=1)Problem(c,"probe-inventory",EFI_UNSUPPORTED);
+#endif
 #endif
   Text(c,"probe-pci-handles=");Hex(c,n,8);End(c);
   for(UINTN i=0;i<n && c->Io==EFI_SUCCESS;i++) {
@@ -387,6 +473,12 @@ EFI_STATUS GuProbeGpu(EFI_SYSTEM_TABLE *t,CAPTURE *c) {
     if(bs->HandleProtocol(hs[i],&PciGuidL,(VOID **)&io)!=EFI_SUCCESS||!io)continue;
     if(!io->Pci.Read || !io->GetLocation){Problem(c,"pci-methods",EFI_UNSUPPORTED);continue;}
     if(io->Pci.Read(io,EfiPciIoWidthUint32,0,1,&id)!=EFI_SUCCESS)continue;
+#ifdef GU_PROBE_GENERIC
+    UINT32 displayClass=0;
+    EFI_STATUS displayStatus=io->Pci.Read(io,EfiPciIoWidthUint32,8,1,&displayClass);
+    if(displayStatus!=EFI_SUCCESS){Problem(c,"probe-display-class",displayStatus);continue;}
+    if((displayClass>>24)==3)InventoryDisplay(c,hs[i],io,id,displayClass);
+#endif
     if(!ProbeTarget(io,id))continue;
     found++;
     UINTN seg=0,bus=0,dev=0,fun=0;
@@ -412,8 +504,24 @@ EFI_STATUS GuProbeGpu(EFI_SYSTEM_TABLE *t,CAPTURE *c) {
     UINT32 sub=0;io->Pci.Read(io,EfiPciIoWidthUint32,0x2c,1,&sub);PH(c,"subsystem=0x",sub);
     ProbeCaps(c,io);
     UINT32 bar=cfg[0x10/4]&~0xfU;
+#if defined(GU_PROBE_GENERIC) && defined(GU_PROBE_PARENT_BASELINE)
+    /* Capture ancestry individually even when shared PROM.BIN forbids deep
+     * capture. One device's unavailable ancestry does not authorize the other. */
+    if(inventoryOk && candidates!=1 && locationStatus==EFI_SUCCESS &&
+       seg<=0xffffU && bus<=255 && !dev && !fun && cfg[0]==id) {
+      Text(c,"probe-parent-v2 seg=0x");Hex(c,seg,4);
+      Text(c," bus=0x");Hex(c,bus,2);Text(c," id=0x");Hex(c,id,8);End(c);
+      parentObservation=(GU_DS_CAPTURE){0};
+      EFI_STATUS parentStatus=GuProbeParentBaseline(c,&parentObservation,hs[i],io,cfg,seg,bus);
+      if(parentStatus==EFI_COMPROMISED_DATA){Problem(c,"probe-parent-drift",parentStatus);continue;}
+    }
+#endif
 #ifdef GU_CHECKED_PROBE
     if(!inventoryOk || candidates!=1)continue;
+#ifdef GU_PROBE_GENERIC
+    /* Do not deep-read an unstable or incomplete display inventory. */
+    if(InventoryFailures)continue;
+#endif
 #endif
     UINTN expectedSegment=0,expectedBus=GU_PROBE_BUS;
 #ifdef GU_PROBE_GENERIC
@@ -455,12 +563,25 @@ EFI_STATUS GuProbeGpu(EFI_SYSTEM_TABLE *t,CAPTURE *c) {
 #ifdef GU_PROBE_GENERIC
   /* A selected target disappearing or turning non-display during the second
    * pass must not become a successful inventory-only capture. */
-  if(inventoryOk && candidates==1 && !targetValidated)Problem(c,"probe-inventory-target-lost",EFI_NOT_READY);
+  if(inventoryOk && candidates==1 && !InventoryFailures && !targetValidated)Problem(c,"probe-inventory-target-lost",EFI_NOT_READY);
+#endif
+#ifdef GU_PROBE_GENERIC
+  Text(c,"probe-inventory-v2 end displays=0x");Hex(c,InventoryDisplays,4);
+  Text(c," failures=0x");Hex(c,InventoryFailures,4);
+  Text(c," complete=");Hex(c,inventoryOk && !InventoryFailures?1:0,1);End(c);
 #endif
   if(hs)bs->FreePool(hs);
   Text(c,"probe targets=");Hex(c,found,4);Text(c," cfg-incomplete=");Hex(c,cfgFailed,4);End(c);
   ProbeGops(c);
+#ifdef GU_PROBE_GENERIC
+  /* Mixed-display inventory does not dump loaded driver binaries with no
+   * per-GPU provenance. The passive graph still records driver metadata. */
+  if(candidates==1 && inventoryOk) {
+    if(root)ProbeDrivers(c,root);else Problem(c,"dump-volume",EFI_NOT_FOUND);
+  } else {Text(c,"probe-driver-dumps-v2 skipped=multi-or-incomplete-inventory");End(c);}
+#else
   if(root)ProbeDrivers(c,root);else Problem(c,"dump-volume",EFI_NOT_FOUND);
+#endif
   /* Report a target that could not be captured rather than a clean success. */
   return found?cfgError:EFI_NOT_FOUND;
 }

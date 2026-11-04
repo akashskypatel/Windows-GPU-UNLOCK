@@ -22,6 +22,7 @@ EFI_STATUS GuProbeParentBaseline(CAPTURE *c,GU_DS_CAPTURE *observation,EFI_HANDL
   if(c->Io!=EFI_SUCCESS)return c->Io;
   Active=TRUE;GU_PROBE_PIN pin;EFI_STATUS s=EFI_UNSUPPORTED;
   BOOLEAN pinned=GuProbeTakePin(c,io,&pin);GU_DS_CAPTURE_TARGET target={0};
+  GU_DS_OBSERVE_TRACE trace={0};
   if(pinned && pin.Locate) {
     EFI_DEVICE_PATH_PROTOCOL *path=NULL;s=pin.Handle(handle,&PathGuid,(VOID **)&path);
     if(s==EFI_SUCCESS && path && GuProbePinSame(c,&pin)) {
@@ -35,14 +36,19 @@ EFI_STATUS GuProbeParentBaseline(CAPTURE *c,GU_DS_CAPTURE *observation,EFI_HANDL
         if(p[at-n]==0x7f) {
           target.PathBytes=at;target.Handle=handle;target.Segment=segment;target.Bus=bus;
           target.PciId=cfg[0];target.Subsystem=cfg[11];target.Bar0=cfg[4];
-          s=GuDsEfiCapture(observation,pin.Boot,&target);
-          if(s==EFI_SUCCESS)for(UINTN j=0;j<64;j++)if(observation->Snapshot.Gpu.Config[j]!=cfg[j]){s=EFI_NOT_READY;break;}
+          s=GuDsEfiObserveParents(observation,pin.Boot,&target,&trace);
+          if(s==EFI_SUCCESS)for(UINTN j=0;j<64;j++)if(observation->Snapshot.Gpu.Config[j]!=cfg[j]){
+            trace.Stage=GuDsObserveFinalConfig;s=EFI_NOT_READY;break;
+          }
           break;
         }
       }
     }
   }
   BOOLEAN available=s==EFI_SUCCESS && observation->Ready && pinned && GuProbePinSame(c,&pin);
+  Text(c,"parent-baseline-observation stage=0x");Hex(c,trace.Stage,2);
+  Text(c," pass=0x");Hex(c,trace.Pass,1);
+  Text(c," index=0x");Hex(c,trace.Index,2);End(c);
   Text(c,"parent-baseline status=0x");Hex(c,s,16);Text(c," available=");Hex(c,available?1:0,1);
   Text(c," parents=0x");Hex(c,available?observation->Snapshot.ParentCount:0,2);End(c);
   if(available) {
