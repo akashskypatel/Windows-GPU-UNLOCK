@@ -286,7 +286,9 @@ static BOOLEAN NvCtxHeap(const EFI_MEMORY_DESCRIPTOR *map,UINTN used,UINTN step,
     if(d->Type!=EfiBootServicesData || d->NumberOfPages>~(UINT64)0/4096U)continue;
     UINT64 start=d->PhysicalStart,span=d->NumberOfPages*4096U;
     if(start>~(UINT64)0-span)continue;
-    if((UINT64)address>=start && (UINT64)bytes<=start+span-(UINT64)address)return TRUE;
+    UINT64 end=start+span;
+    if((UINT64)address>=start && (UINT64)address<=end &&
+       (UINT64)bytes<=end-(UINT64)address)return TRUE;
   }
   return FALSE;
 }
