@@ -395,11 +395,17 @@ static VOID NvEvidenceImage(CAPTURE *c,EFI_FILE_PROTOCOL *root,const GU_NV_EVIDE
   const UINTN expectedStop=id==0x268410deU?0x6ecU:0x678U;
   const CHAR16 *expectedName=id==0x268410deU?L"nvgop-ad1xx":L"nvgop-ga1xx";
   EFI_BOOT_SERVICES *bs=c->Table->BootServices;
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+  NvCtxField(c,id,"driver_evidence_begin",1);
+#endif
   if(!root || !root->Open || !root->Write || !root->Close ||
      (id!=0x268410deU && id!=0x220a10deU) || v->Config[2]!=0x030000a1U ||
      v->Config[11]!=expectedSubsystem || v->Segment!=0 ||
      v->Bus!=(id==0x268410deU?1U:4U) ||
      !ProbeUnchanged(c,v->Handle,v->Io,v->Config,v->Segment,v->Bus)) {
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+    NvCtxField(c,id,"pci_identity_ok",0);
+#endif
     Problem(c,"nvgop-evidence-pci-identity",EFI_NOT_READY);return;
   }
   EFI_OPEN_PROTOCOL_INFORMATION_ENTRY *opens=NULL;
@@ -408,6 +414,9 @@ static VOID NvEvidenceImage(CAPTURE *c,EFI_FILE_PROTOCOL *root,const GU_NV_EVIDE
     bs->OpenProtocolInformation(v->Handle,&PciGuidL,&opens,&n):EFI_UNSUPPORTED;
   if(s!=EFI_SUCCESS || n>512 || (n && !opens)){
     if(opens && bs->FreePool)bs->FreePool(opens);
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+    NvCtxField(c,id,"owner_query_status",s);
+#endif
     Problem(c,"nvgop-evidence-open-owners",s==EFI_SUCCESS?EFI_COMPROMISED_DATA:s);return;
   }
   UINTN owners=0;
@@ -420,6 +429,9 @@ static VOID NvEvidenceImage(CAPTURE *c,EFI_FILE_PROTOCOL *root,const GU_NV_EVIDE
   }
   EFI_STATUS freeStatus=bs->FreePool?bs->FreePool(opens):EFI_UNSUPPORTED;
   if(freeStatus!=EFI_SUCCESS || owners!=1 || !agent){
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+    NvCtxField(c,id,"driver_owner_ok",0);
+#endif
     Problem(c,"nvgop-evidence-owner",EFI_NOT_READY);return;
   }
   EFI_DRIVER_BINDING_PROTOCOL *driver=NULL;
@@ -431,11 +443,17 @@ static VOID NvEvidenceImage(CAPTURE *c,EFI_FILE_PROTOCOL *root,const GU_NV_EVIDE
      image->DeviceHandle!=v->Handle || image->ImageCodeType!=EfiBootServicesCode ||
      image->ImageSize!=expectedSize || !image->ImageBase ||
      !NvEvidenceName(image->FilePath,expectedName)){
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+    NvCtxField(c,id,"driver_fingerprint_ok",0);
+#endif
     Problem(c,"nvgop-evidence-driver-fingerprint",EFI_UNSUPPORTED);return;
   }
   UINTN base=(UINTN)image->ImageBase,stop=(UINTN)driver->Stop;
   if(base>~(UINTN)0-image->ImageSize || stop!=base+expectedStop ||
      !ProbeUnchanged(c,v->Handle,v->Io,v->Config,v->Segment,v->Bus)){
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+    NvCtxField(c,id,"driver_drift_ok",0);
+#endif
     Problem(c,"nvgop-evidence-driver-drift",EFI_NOT_READY);return;
   }
   Text(c,"nvgop-evidence-v1 bdf-seg=0x");Hex(c,v->Segment,4);
@@ -444,8 +462,12 @@ static VOID NvEvidenceImage(CAPTURE *c,EFI_FILE_PROTOCOL *root,const GU_NV_EVIDE
   GuSha256(image->ImageBase,image->ImageSize,digest);
   Text(c," image-index=0x");Hex(c,DumpIndex,2);
   Text(c," loaded-image-sha256=");for(UINTN k=0;k<32;k++)Hex(c,digest[k],2);End(c);
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+  NvCtxField(c,id,"driver_identity_ok",1);
+#endif
   DumpImage(c,root,agent);
 #ifdef GU_NVGOP_CONTEXT_EVIDENCE
+  NvCtxField(c,id,"image_dump_ok",c->Io==EFI_SUCCESS && c->Complete?1:0);
   if(c->Io==EFI_SUCCESS && c->Complete)NvCtxSnapshot(c,v,image);
 #endif
 }
@@ -651,6 +673,9 @@ EFI_STATUS GuProbeGpu(EFI_SYSTEM_TABLE *t,CAPTURE *c) {
   GU_NV_EVIDENCE evidence[2];UINTN evidenceCount=0;
 #endif
   Text(c,"probe-inventory-v2 begin");End(c);
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+  NvCtxField(c,0x268410deU,"inventory_started",1);
+#endif
 #endif
 #ifdef GU_PROBE_PARENT_BASELINE
   /* A distinct diagnostic invocation owns a fresh observation, never a retry of
