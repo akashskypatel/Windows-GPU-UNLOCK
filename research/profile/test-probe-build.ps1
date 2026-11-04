@@ -48,6 +48,8 @@ foreach($bus in @($null,1,43,255)) {
   {param($x) $x.CanUnlock='false'},
   {param($x) $x.NvgopDriverEvidence='false'},
   {param($x) $x.NvgopDriverEvidence=$true},
+  {param($x) $x.NvgopContextEvidence=$true},
+  {param($x) $x.NvgopContextEvidence='false'},
 
   {param($x) $x.Sources=@($x.Sources|Select-Object -Skip 1)}
  )) {
@@ -90,7 +92,8 @@ if(!$evidence.NvgopDriverEvidence -or $evidence.Defines -cnotcontains '-DGU_NVGO
 foreach($change in @(
  {param($x) $x.NvgopDriverEvidence=$false},
  {param($x) $x.Defines=@($x.Defines|Where-Object {$_ -cne '-DGU_NVGOP_DRIVER_EVIDENCE'})},
- {param($x) $x.NvgopDriverEvidence='true'}
+ {param($x) $x.NvgopDriverEvidence='true'},
+ {param($x) $x.NvgopContextEvidence=$true}
 )) {
  $bad=$evidence|ConvertTo-Json -Depth 8|ConvertFrom-Json
  & $change $bad
@@ -101,6 +104,36 @@ foreach($change in @(
 $evidenceMap=[IO.File]::ReadAllText((Join-Path $evidenceDir 'PROBE.map'))
 if($evidenceMap -match '\b(GuDecodeSync|GuDsEfiRun|GuDsEfiInitialize)\b'){throw 'Actuator reached driver-evidence build'}
 $checks++
+
+# The separately opted-in context snapshot must compile and reject forged metadata.
+& $build -WindowsEspGuid $dummy -Clang $Clang -LldLink $LldLink -Python $Python -NvgopDriverEvidence -NvgopContextEvidence
+if(!$?){throw 'Context-evidence probe build failed'}
+$contextDir=Join-Path $sandbox 'internal-boot/boot/build/probe-generic-context-evidence'
+$context=Get-Content -LiteralPath (Join-Path $contextDir 'manifest.json') -Raw | ConvertFrom-Json
+$contextEfi=Join-Path $contextDir 'BOOTX64.EFI'
+Assert-GuGenericProbeManifest $sandbox $context $contextEfi
+if(!$context.NvgopDriverEvidence -or !$context.NvgopContextEvidence -or
+   $context.Defines -cnotcontains '-DGU_NVGOP_DRIVER_EVIDENCE' -or
+   $context.Defines -cnotcontains '-DGU_NVGOP_CONTEXT_EVIDENCE' -or
+   $context.CanUnlock -or $context.CanDetach -or $context.WritesFirmwareVariables -or $context.HardwareTested){
+ throw 'Context evidence missing opt-in or enabled mutation'
+}
+foreach($change in @(
+ {param($x) $x.NvgopContextEvidence=$false},
+ {param($x) $x.NvgopDriverEvidence=$false},
+ {param($x) $x.Defines=@($x.Defines|Where-Object {$_ -cne '-DGU_NVGOP_CONTEXT_EVIDENCE'})},
+ {param($x) $x.NvgopContextEvidence='true'}
+)) {
+ $bad=$context|ConvertTo-Json -Depth 8|ConvertFrom-Json
+ & $change $bad
+ $refused=$false;try {Assert-GuGenericProbeManifest $sandbox $bad $contextEfi}catch {$refused=$true}
+ if(!$refused){throw 'Tampered context metadata accepted'};$checks++
+}
+$contextMap=[IO.File]::ReadAllText((Join-Path $contextDir 'PROBE.map'))
+if($contextMap -match '\b(GuDecodeSync|GuDsEfiRun|GuDsEfiInitialize)\b'){throw 'Actuator reached context-evidence image'};$checks++
+$refused=$false
+try {& $build -WindowsEspGuid $dummy -Clang $Clang -LldLink $LldLink -Python $Python -NvgopContextEvidence}catch {$refused=$true}
+if(!$refused){throw 'Context evidence without driver evidence was accepted'};$checks++
 
 foreach($bus in @(0,256)) {
  try {& $build -WindowsEspGuid $dummy -Clang $Clang -LldLink $LldLink -TargetBus $bus;throw 'Invalid build bus accepted'}
