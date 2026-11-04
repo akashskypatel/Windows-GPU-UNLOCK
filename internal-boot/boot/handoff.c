@@ -451,6 +451,19 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE Image,EFI_SYSTEM_TABLE *St) {
     /* Partial observations never authorize unlock. Normal Windows boot is
      * permitted because this separate image has not touched GPU state. */
     EFI_STATUS recorded=Record(NULL,"diagnostic-result",s);
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+    Say(s==EFI_SUCCESS
+      ? L"NVGOP context capture: COMPLETE. Details in USB diagnostic log.\r\n"
+      : L"NVGOP context capture: INCOMPLETE. Inspect USB diagnostic errors.\r\n");
+    Say(L"No NVIDIA Stop, disconnect, GPU MMIO writes, or reset was requested.\r\n");
+    Say(L"Starting Windows in 8 seconds (inspect the screen now).\r\n");
+    if(Table && Table->BootServices && Table->BootServices->Stall) {
+      for(UINTN t=0;t<8;t++) {
+        EFI_STATUS delay=Table->BootServices->Stall(1000000U);
+        if(delay!=EFI_SUCCESS){Say(L"Screen hold interrupted by firmware.\r\n");break;}
+      }
+    }
+#endif
     if(recorded==EFI_SUCCESS)s=Windows(NULL);
     else s=recorded;
   }
