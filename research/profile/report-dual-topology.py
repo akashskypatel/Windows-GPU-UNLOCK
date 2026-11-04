@@ -36,6 +36,25 @@ class DiagnosticError(ValueError):
     pass
 
 
+def match_expected_pair(devices: list[dict], expected_pci_ids: tuple[str, str], complete: bool) -> dict:
+    """Evidence of two observed PCI identities, never unlock or detach authorization."""
+    if len(expected_pci_ids) != 2 or any(not re.fullmatch(r'10de:[0-9a-f]{4}', pci) for pci in expected_pci_ids):
+        raise DiagnosticError('expected exactly two NVIDIA vendor:device identifiers')
+    nvidia = [device for device in devices if device['pci_id'].startswith('10de:')]
+    matched = (complete and len(nvidia) == 2 and
+               all(device['status'] == 'observed_stable' for device in nvidia) and
+               len({device['bdf'] for device in nvidia}) == 2 and
+               sorted(device['pci_id'] for device in nvidia) == sorted(expected_pci_ids))
+    return {
+        'status': 'observed_pci_pair' if matched else 'unverified',
+        'expected_pci_ids': list(expected_pci_ids),
+        'devices': [{'pci_id': device['pci_id'], 'bdf': device['bdf']}
+                    for device in sorted(nvidia, key=lambda item: item['bdf'])] if matched else [],
+        'can_unlock': False,
+        'can_detach': False,
+    }
+
+
 def parse_display(line: str) -> dict:
     if not line.startswith('probe-display-v2 '):
         raise DiagnosticError('not a display observation')
@@ -92,7 +111,8 @@ def load_graph_parser(repo: Path):
     return module.parse_handles
 
 
-def summarise(source: str, parse_handles, *, boot_origin: str = 'unknown') -> dict:
+def summarise(source: str, parse_handles, *, boot_origin: str = 'unknown',
+              expected_pci_ids: tuple[str, str] | None = None) -> dict:
     if len(source.encode('utf-8')) > MAX_INPUT:
         raise DiagnosticError('diagnostic exceeds size limit')
     lines = source.splitlines()
@@ -182,7 +202,7 @@ def summarise(source: str, parse_handles, *, boot_origin: str = 'unknown') -> di
         parent_reports.append({'bdf': bdf, 'status': state, 'declared_parent_count': int(status[3], 16) if state == 'observed' else None})
     gpu_devices = [d for d in devices if d['pci_id'].startswith('10de:')]
     all_complete = complete == 1 and failures == 0 and device_failures == 0 and graph_error is None
-    return {
+    result = {
         'schema': 'dual-nvidia-uefi-diagnostic/1',
         'capture': {
             'status': 'complete_observation' if all_complete else 'incomplete_observation',
@@ -205,6 +225,9 @@ def summarise(source: str, parse_handles, *, boot_origin: str = 'unknown') -> di
                       ['Preboot physical monitor/connector ownership is not proven from UEFI graph records'],
         'evidence_quality': 'passive_pci_and_graph' if all_complete else 'partial_or_invalid',
     }
+    if expected_pci_ids is not None:
+        result['requested_pair'] = match_expected_pair(devices, expected_pci_ids, all_complete)
+    return result
 
 
 def main() -> None:
@@ -213,12 +236,18 @@ def main() -> None:
     p.add_argument('--repository', type=Path, default=Path(__file__).resolve().parents[2])
     p.add_argument('--boot-origin', choices=['cold_off_verified', 'restart', 'unknown'], default='unknown')
     p.add_argument('--output', type=Path)
+    p.add_argument('--expect-pci-id', action='append', default=[], metavar='10de:XXXX',
+                   help='repeat exactly twice for read-only PCI identity matching; never unlock authorization')
     args = p.parse_args()
+    expected_ids = tuple(pci.lower() for pci in args.expect_pci_id)
+    if expected_ids and (len(expected_ids) != 2 or any(not re.fullmatch(r'10de:[0-9a-f]{4}', pci) for pci in expected_ids)):
+        p.error('--expect-pci-id requires exactly two NVIDIA vendor:device identifiers')
     # Do not follow symlinks or consume unbounded input files.
     if not args.diagnostic.is_file() or args.diagnostic.is_symlink() or args.diagnostic.stat().st_size > MAX_INPUT:
         raise SystemExit('Invalid or oversized diagnostic input')
     try:
-        result = summarise(args.diagnostic.read_text(encoding='utf-8'), load_graph_parser(args.repository), boot_origin=args.boot_origin)
+        result = summarise(args.diagnostic.read_text(encoding='utf-8'), load_graph_parser(args.repository),
+                           boot_origin=args.boot_origin, expected_pci_ids=expected_ids or None)
     except (DiagnosticError, UnicodeDecodeError) as exc:
         raise SystemExit(f'Invalid diagnostic: {exc}') from None
     text = json.dumps(result, indent=2, sort_keys=True) + '\n'
