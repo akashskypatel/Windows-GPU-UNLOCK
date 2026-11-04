@@ -22,6 +22,9 @@
 #if defined(GU_NVGOP_DRIVER_EVIDENCE) && (!defined(GU_PROBE_GENERIC) || !defined(GU_DIAGNOSTIC_ONLY) || !defined(GU_DIAGNOSTIC_PROBE) || defined(GU_FULL_UNLOCK) || defined(GU_EXPERIMENTAL_3090))
 #error NVIDIA driver evidence capture must be a generic, read-only diagnostic build
 #endif
+#if defined(GU_NVGOP_CONTEXT_EVIDENCE) && (!defined(GU_NVGOP_DRIVER_EVIDENCE) || !defined(GU_PROBE_GENERIC) || !defined(GU_DIAGNOSTIC_ONLY) || !defined(GU_DIAGNOSTIC_PROBE) || defined(GU_FULL_UNLOCK) || defined(GU_EXPERIMENTAL_3090))
+#error NVIDIA context snapshot requires the read-only driver-evidence probe
+#endif
 #if defined(GU_PROBE_DUMP_PROM) && (!defined(GU_DIAGNOSTIC_ONLY) || !defined(GU_DIAGNOSTIC_PROBE) || !defined(GU_USB_MEDIA) || defined(GU_FULL_UNLOCK) || defined(GU_EXPERIMENTAL_3090))
 #error GU_PROBE_DUMP_PROM is only for the observation-only diagnostic image
 #endif
@@ -246,6 +249,142 @@ static BOOLEAN NvEvidenceName(const EFI_DEVICE_PATH_PROTOCOL *p,const CHAR16 *ex
     end[2]==4 && end[3]==0;
 }
 
+
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+/* Observe only the two exact loaded code revisions from DIAG08. These private
+ * offsets are not portable across NVIDIA GOP versions. No vendor methods,
+ * MMIO, driver detach, or reset are invoked. */
+static const UINT8 NvText3080[32]={0x61,0x5b,0x37,0xa7,0x08,0xb1,0x89,0x4e,0x18,0xd7,0xfa,0x60,0xcf,0xcd,0xac,0xaa,0x4d,0x8b,0x59,0x88,0x63,0xa1,0x0b,0x81,0x03,0xd2,0x31,0xa5,0x95,0x84,0x7b,0x2b};
+static const UINT8 NvText4090[32]={0x77,0x63,0x29,0x02,0xf0,0xce,0xb0,0xba,0x28,0x48,0x20,0x0f,0x39,0x6a,0xb6,0x1e,0xac,0xd7,0x91,0x0e,0x9c,0xce,0x7c,0x53,0x5f,0x65,0xd6,0xcd,0xbe,0x2b,0x6c,0x32};
+static EFI_GUID NvPrivateGuid={0xfe47349a,0x7f0d,0x4641,{0x82,0x2b,0x34,0xba,0xa2,0x8e,0xcd,0xd0}};
+
+/* Bounded progress to USB diagnostic AND visible AMD preboot console.
+ * The full handle graph remains file-only to avoid flooding the display. */
+static VOID NvCtxField(CAPTURE *c,UINT32 id,const char *field,UINTN value) {
+  Text(c,"nvgop-context-v1 pci-id=0x");Hex(c,id,8);
+  Text(c," ");Text(c,field);Text(c,"=0x");Hex(c,value,16);End(c);
+  if(!SysT || !SysT->ConOut || !SysT->ConOut->OutputString)return;
+  CHAR16 line[144];UINTN n=0;
+  const char *prefix=id==0x268410deU?"NVGOP RTX4090 ":"NVGOP RTX3080 ";
+  while(*prefix && n<48)line[n++]=(CHAR16)(UINT8)*prefix++;
+  while(*field && n<90)line[n++]=(CHAR16)(UINT8)*field++;
+  line[n++]='=';line[n++]='0';line[n++]='x';
+  for(int i=15;i>=0;i--)line[n++]=(CHAR16)"0123456789abcdef"[(value>>(i*4))&15U];
+  line[n++]='\r';line[n++]='\n';line[n]=0;
+  (void)SysT->ConOut->OutputString(SysT->ConOut,line);
+}
+
+/* Require the entire bounded read to be inside ONE BootServicesData region.
+ * Firmware memory-map validation reduces risk but does not prove live object
+ * lifetime or protect against concurrent changes by firmware callbacks. */
+static BOOLEAN NvCtxHeap(const EFI_MEMORY_DESCRIPTOR *map,UINTN used,UINTN step,
+                         UINTN address,UINTN bytes) {
+  if(!address || (address&7U) || !bytes || bytes>0x1000U ||
+     address>~(UINTN)0-bytes || step<sizeof(EFI_MEMORY_DESCRIPTOR))return FALSE;
+  for(UINTN off=0;off<=used && used-off>=step;off+=step) {
+    const EFI_MEMORY_DESCRIPTOR *d=(const VOID *)((const UINT8 *)map+off);
+    if(d->Type!=EfiBootServicesData || d->NumberOfPages>~(UINT64)0/4096U)continue;
+    UINT64 start=d->PhysicalStart,span=d->NumberOfPages*4096U;
+    if(start>~(UINT64)0-span)continue;
+    if((UINT64)address>=start && (UINT64)bytes<=start+span-(UINT64)address)return TRUE;
+  }
+  return FALSE;
+}
+
+/* Called only after exact PCI identity, driver binding and loaded-image
+ * provenance have been verified by NvEvidenceImage. No arbitrary scan. */
+static VOID NvCtxSnapshot(CAPTURE *c,const GU_NV_EVIDENCE *v,
+                          const EFI_LOADED_IMAGE_PROTOCOL *image) {
+  UINT32 id=v->Config[0];
+  BOOLEAN is4090=id==0x268410deU;
+  UINTN textSize=is4090?137711U:134451U;
+  UINTN vtableRva=is4090?0x22270U:0x215b0U;
+  const UINT8 *expected=is4090?NvText4090:NvText3080;
+  EFI_BOOT_SERVICES *bs=c->Table->BootServices;
+  EFI_MEMORY_DESCRIPTOR *map=NULL;
+  UINTN used=0,step=0;
+  EFI_STATUS failure=EFI_NOT_READY;
+  BOOLEAN ok=FALSE;
+  UINT8 digest[32];
+  NvCtxField(c,id,"begin",1);
+  if(!bs || !bs->HandleProtocol || !bs->GetMemoryMap || !bs->AllocatePool || !bs->FreePool ||
+     !image || !image->ImageBase || image->ImageSize<0x280U+textSize)goto done;
+  GuSha256((UINT8 *)image->ImageBase+0x280U,textSize,digest);
+  BOOLEAN match=TRUE;
+  for(UINTN i=0;i<32;i++)if(digest[i]!=expected[i])match=FALSE;
+  NvCtxField(c,id,"text_hash_match",match?1:0);
+  if(!match){failure=EFI_UNSUPPORTED;goto done;}
+  VOID *context=NULL;
+  EFI_STATUS s=bs->HandleProtocol(v->Handle,&NvPrivateGuid,&context);
+  NvCtxField(c,id,"protocol_status",s);
+  if(s!=EFI_SUCCESS || !context){failure=s==EFI_SUCCESS?EFI_NOT_FOUND:s;goto done;}
+  /* A fixed initial map allocation avoids relying on GetMemoryMap(NULL).
+   * Repeat at most three times if memory-map growth requires more space. */
+  UINTN capacity=65536U;
+  for(UINTN attempt=0;attempt<3;attempt++) {
+    s=bs->AllocatePool(EfiBootServicesData,capacity,(VOID **)&map);
+    if(s!=EFI_SUCCESS || !map){failure=s==EFI_SUCCESS?EFI_OUT_OF_RESOURCES:s;goto done;}
+    used=capacity;
+    UINTN key=0;UINT32 version=0;
+    s=bs->GetMemoryMap(&used,map,&key,&step,&version);
+    if(s==EFI_SUCCESS)break;
+    EFI_STATUS released=bs->FreePool(map);map=NULL;
+    if(released!=EFI_SUCCESS){failure=released;goto done;}
+    if(s!=EFI_BUFFER_TOO_SMALL || !step || step>1024U ||
+       used>1024U*1024U || used>1024U*1024U-16U*step){failure=s;goto done;}
+    capacity=used+16U*step;
+  }
+  NvCtxField(c,id,"memory_map_status",s);
+  if(s!=EFI_SUCCESS || !map || step<sizeof(EFI_MEMORY_DESCRIPTOR) || step>1024U ||
+     !used || used>1024U*1024U || used%step){failure=EFI_COMPROMISED_DATA;goto done;}
+  UINTN cp=(UINTN)context;
+  NvCtxField(c,id,"context",cp);
+  if(!NvCtxHeap(map,used,step,cp,0xa0U)){failure=EFI_COMPROMISED_DATA;goto done;}
+  UINTN handle=*(volatile const UINTN *)(cp+0x28U);
+  UINTN pciIo=*(volatile const UINTN *)(cp+0x30U);
+  NvCtxField(c,id,"context_handle",handle);
+  NvCtxField(c,id,"context_pci_io",pciIo);
+  if(handle!=(UINTN)v->Handle || pciIo!=(UINTN)v->Io){
+    failure=EFI_COMPROMISED_DATA;goto done;
+  }
+  NvCtxField(c,id,"reset_flag_98",*(volatile const UINT8 *)(cp+0x98U));
+  UINTN factory=*(volatile const UINTN *)(cp+0x38U);
+  UINTN auxiliary=*(volatile const UINTN *)(cp+0x40U);
+  UINTN device=*(volatile const UINTN *)(cp+0x48U);
+  UINTN allocation=*(volatile const UINTN *)(cp+0x68U);
+  NvCtxField(c,id,"factory",factory);
+  NvCtxField(c,id,"auxiliary",auxiliary);
+  NvCtxField(c,id,"device",device);
+  NvCtxField(c,id,"allocation",allocation);
+  if(!device){NvCtxField(c,id,"device_present",0);ok=TRUE;goto done;}
+  if(!NvCtxHeap(map,used,step,device,0x7a8U)){failure=EFI_COMPROMISED_DATA;goto done;}
+  UINTN vtable=*(volatile const UINTN *)device;
+  NvCtxField(c,id,"device_vtable",vtable);
+  if((UINTN)image->ImageBase>~(UINTN)0-vtableRva ||
+     vtable!=(UINTN)image->ImageBase+vtableRva){failure=EFI_COMPROMISED_DATA;goto done;}
+  UINTN adapter=*(volatile const UINTN *)(device+0x70U);
+  UINTN embedded=*(volatile const UINTN *)(device+0x78U);
+  NvCtxField(c,id,"adapter",adapter);
+  NvCtxField(c,id,"embedded",embedded);
+  if(adapter) {
+    if(!NvCtxHeap(map,used,step,adapter,sizeof(UINTN))){failure=EFI_COMPROMISED_DATA;goto done;}
+    NvCtxField(c,id,"adapter_vtable",*(volatile const UINTN *)adapter);
+  }
+  if(embedded) {
+    if(!NvCtxHeap(map,used,step,embedded,sizeof(UINTN))){failure=EFI_COMPROMISED_DATA;goto done;}
+    NvCtxField(c,id,"embedded_vtable",*(volatile const UINTN *)embedded);
+  }
+  ok=TRUE;
+done:
+  if(map && bs && bs->FreePool) {
+    EFI_STATUS freed=bs->FreePool(map);
+    if(freed!=EFI_SUCCESS){failure=freed;ok=FALSE;}
+  }
+  NvCtxField(c,id,"snapshot_complete",ok?1:0);
+  if(!ok)Problem(c,"nvgop-context-snapshot",failure);
+}
+#endif
+
 static VOID NvEvidenceImage(CAPTURE *c,EFI_FILE_PROTOCOL *root,const GU_NV_EVIDENCE *v) {
   UINT32 id=v->Config[0];
   const UINT32 expectedSubsystem=id==0x268410deU?0x88e61043U:0xb61219daU;
@@ -304,6 +443,9 @@ static VOID NvEvidenceImage(CAPTURE *c,EFI_FILE_PROTOCOL *root,const GU_NV_EVIDE
   Text(c," image-index=0x");Hex(c,DumpIndex,2);
   Text(c," loaded-image-sha256=");for(UINTN k=0;k<32;k++)Hex(c,digest[k],2);End(c);
   DumpImage(c,root,agent);
+#ifdef GU_NVGOP_CONTEXT_EVIDENCE
+  if(c->Io==EFI_SUCCESS && c->Complete)NvCtxSnapshot(c,v,image);
+#endif
 }
 #endif
 
