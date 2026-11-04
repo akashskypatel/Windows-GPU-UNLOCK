@@ -54,5 +54,29 @@ class PairEvidenceTests(unittest.TestCase):
                 report.match_expected_pair([self.ada, self.ampere], expected, True)
 
 
+    def test_summary_threads_pair_evidence_without_changing_default_output(self):
+        def display(device_id, bus):
+            values = {name: '0x0' for name in report.FIELDS}
+            values.update(seg='0x0000', bus=f'0x{bus:02x}', dev='0x00', fun='0x00',
+                          id=f'0x{device_id:04x}10de', **{'class': '0x030000a1'},
+                          stable='1', duplicate='0')
+            return 'probe-display-v2 ' + ' '.join(f'{name}={values[name]}' for name in report.FIELDS)
+
+        diagnostic = '\n'.join([
+            'probe-inventory-v2 begin', display(0x2684, 1), display(0x220a, 4),
+            'probe-inventory-v2 end displays=0x2 failures=0x0 complete=1',
+            'capture-complete=1', 'diagnostic-result status=0x0000000000000000',
+            'console out=0x6 error=0x6 input=0x6',
+        ])
+        graph = lambda text: {}  # Artificial empty graph: tests PCI observation only.
+        matched = report.summarise(diagnostic, graph, expected_pci_ids=self.expected)
+        self.assertEqual(matched['requested_pair']['status'], 'observed_pci_pair')
+        self.assertFalse(matched['capture']['unlock_eligible'])
+        self.assertNotIn('requested_pair', report.summarise(diagnostic, graph))
+        incomplete = diagnostic.replace('complete=1', 'complete=0')
+        self.assertEqual(report.summarise(incomplete, graph, expected_pci_ids=self.expected)
+                         ['requested_pair']['status'], 'unverified')
+
+
 if __name__ == '__main__':
     unittest.main()
