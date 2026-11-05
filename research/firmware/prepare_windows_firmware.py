@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 VENDOR = HERE / 'ada_610'
 REFERENCE_VERSION = '610.43.03'
 TARGET_DRIVER = '617.42'
-EXPECTED_CARDS = {'01:00.0': 'RTX 4090', '04:00.0': 'RTX 3080'}
+EXPECTED_CARDS = {'01:00.0': 'NVIDIA GeForce RTX 4090', '04:00.0': 'NVIDIA GeForce RTX 3080'}
 SOURCE_ROOT = f'NVIDIA-kernel-module-source-{REFERENCE_VERSION}'
 SOURCE_C_FILES = (
     'g_bindata_kgspGetBinArchiveBooterLoadUcode_GA102.c',
@@ -56,7 +56,7 @@ def parse_driver_inventory(output: str) -> dict:
         if not match:
             raise ValueError('unexpected NVIDIA PCI address')
         bdf = match.group(1).lower()
-        if bdf not in EXPECTED_CARDS or EXPECTED_CARDS[bdf] not in name or bdf in devices:
+        if bdf not in EXPECTED_CARDS or EXPECTED_CARDS[bdf] != name or bdf in devices:
             raise ValueError('unexpected GPU set or duplicate BDF')
         if version != TARGET_DRIVER:
             raise ValueError('installed NVIDIA driver is not the target version')

@@ -45,7 +45,8 @@ class PrepareWindowsFirmwareTests(unittest.TestCase):
         for bad in ('00000000:04:00.0, NVIDIA GeForce RTX 3080, 616.56\n',
                     '00000000:04:00.0, NVIDIA GeForce RTX 4090, 617.42\n',
                     '00000000:02:00.0, NVIDIA GeForce RTX 3080, 617.42\n',
-                    '00000000:01:00.0, NVIDIA GeForce RTX 4090, 617.42\n'):
+                    '00000000:01:00.0, NVIDIA GeForce RTX 4090, 617.42\n',
+                    '00000000:04:00.0, NVIDIA GeForce RTX 3080 Ti, 617.42\n'):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 fw.parse_driver_inventory(good + bad)
 
