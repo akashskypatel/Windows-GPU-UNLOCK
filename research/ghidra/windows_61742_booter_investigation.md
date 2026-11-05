@@ -1,3 +1,39 @@
+# 2026-11-05 14:43 PST — +0x2160 indirect address stores identified; static +0x170 callback hypothesis weakened
+
+## Input and verification
+
+User-run passive read-only PyGhidra report `nvlddmkm-61742-booter-discovery-20261105-144338-833088.txt` (6,069 bytes, SHA-256 `948d20a4d5b08bb5e55001da9481ffe8fb648f69e5ccba8c13db4cfc83eadc78`), for Windows NVIDIA `nvlddmkm.sys` 617.42, MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. Four instruction-site windows plus two initialized nonexecutable 64-byte static windows returned. `STATUS=COMPLETE`, `DECOMPILATION=SKIPPED`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. This is a completed bounded static inspection, not whole-function dataflow or runtime proof.
+
+## Conditional pointer +0x170 dereference now discriminates against static template alias
+
+Previously `FUN_140A48220` at `0x140A492DE` copied 64 bytes of static template data to `[R8+0x2160..0x219F]`. First qword of the two possible templates is their own address: `0x140FE99C0` and `0x140FE9A00`. If (still unproven) its `R8` aliases the `RBX` of consumer `FUN_140124A90` and no later overwrite occurs, then `RDX=[RBX+0x2160]` and `RAX=[RDX+0x170]` imply:
+
+| Template first qword | `RDX+0x170` | Found qword | Implication |
+|---|---|---|---|
+| `0x140FE99C0` | `0x140FE9B30` | `0x140C06B80` | Code-address-shaped, executable/function identity unverified; not known HS loader `0x140BF3880` |
+| `0x140FE9A00` | `0x140FE9B70` | `0x140FE9B70` | Self-reference into initialized **nonexecutable** static data; not a legitimate CFG call target if actually used directly |
+
+The second 64-byte window at `0x140FE9B70` includes further pointer-shaped entries but begins with the data self-pointer above; the first at `0x140FE9B30` begins with `0x140C06B80` followed by several code-shaped pointers and an integer `1`. **Neither candidate `+0x170` pointer is `FUN_140BF3880`.** This weakens the hypothesis that this bulk-template initializer seeds the same object consumed as the real HS-loader callback. Does NOT prove no alias exists across mode-specific branches, overwrites, or unreachable call paths; nor does it disprove the independently constructed nested `0x9B0` Falcon HS dispatch object.
+
+## Genuine address escapes in `FUN_140A444D0`
+
+- `0x140A4570B: LEA RAX,[RDI+0x2160]`; preceding `TEST RDI,RDI`; `0x140A45719: CMOVZ RAX,R9`; `0x140A4571D: MOV [RBX+0x21A0],RAX`. Conditionally stores the address of an embedded region (or R9) to a *different* field. This may feed other setup paths; owner identity and alias with `FUN_140A48220` not established.
+- `0x140A475D5: LEA RAX,[RBX+0x2160]`, then `0x140A475F1: MOV [RCX],RAX`. **Actual store of an address of the +0x2160 region through indirect output**, not a write of a Falcon dispatch pointer *to* that region. Trace origin and consumer of RCX.
+
+These correct CSV byte-match VAs `0x140A4570E`/`0x140A475D8` into actual instruction starts. `FUN_140A48220` selects `[R8+0x2160]` template conditioned on `[R8+0x2240]` but its earlier distinct `[R8+0x2050]` template condition uses `[R8+0x21A0]`; do not conflate them.
+
+## Smallest read-only next acquisition
+
+One-line Ghidra Python 3 console command using existing script (no changes or broad scans):
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x140a4571d", "0x140a475f1", "0x140a492d6", "0x140124b56"], "__name__": "__main__"})
+```
+
+Next: prove origin of `RCX` at `0x140A475F1`, base `R8` of template-copy function, and relevant object ownership; classify whether consumer `RBX` can alias either and whether the CFG target at `[RDX+0x170]` is executable on reachable path. If not, exclude this unrelated interface and follow the separately confirmed nested Falcon HS object instead. Stock signed Windows Booter image/header/signatures, its descriptor argument producer, physical AD102/GA102 branch, cryptographic acceptance and active unlock remain **UNPROVEN**. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`; process/recovery audit unchanged.
+
+---
+
 # 2026-11-05 14:34 PST — Manual +0x170/+0x2160 Ghidra CSV triage: static pointer-table hypothesis, not proven HS-object alias
 
 ## New passive evidence and parsing caveats
