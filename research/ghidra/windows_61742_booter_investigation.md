@@ -1,3 +1,34 @@
+# 2026-11-05 13:25 PST — 0x170 scan completed executable-byte coverage but omitted 1,821 candidate instructions; transfer-focused scan added
+
+## User report and precise interpretation
+
+Input Ghidra report nvlddmkm-61742-booter-discovery-20261105-132517-487652.txt, **11,094 bytes**, SHA-256 **cdc66a22a542ddb5f8e5db0dd19c29685e8125d56b0cb36427843d27f3b62313**. Loaded original NVIDIA Windows 617.42 nvlddmkm.sys MD5 3fb9afac9d0e394723e830aa14e60512, base VA 0x140000000. Passive existing-reference/byte scan, SCAN_STRINGS=False, SCAN_SLOT_DISPLACEMENT=0x170, HARDWARE_ACTION=NONE, GHIDRA_MUTATION=NONE.
+
+The scan enumerated **12 initialized executable blocks, read 19,689,472 executable bytes**, found **2,445 raw literal disp32 byte matches** and **1,901 distinct existing Ghidra instructions** with a textual +0x170 memory operand. Because MAX_SLOT_CANDIDATES=80, it **recorded only 80** candidate instructions and suppressed the other **1,821**. Its STATUS=PARTIAL and scan_complete=False are justified by *incomplete reporting*, not by an unread executable block: all 12 blocks appear in the report's SLOT_SCAN_BLOCK records and total scanned bytes equal their summed sizes. Reported duration 1.205 s. Previously recorded +0x170 results from ordinary integer fields, stack slots, compares, and writes cannot be interpreted as calls of nested dispatch object +0x170. No actual indirect invocation, descriptor provider or runtime GPU path was found.
+
+## Corrected next step: filter semantically relevant transfer candidates
+
+The existing research/ghidra/nvlddmkm_booter_discovery.py now accepts optional **SLOT_SCAN_FOCUS='transfer'** with SCAN_SLOT_DISPLACEMENT='0x170'; the default **'all'** remains backward compatible. No new dependencies or new script file.
+
+Focused mode retains only already-defined Ghidra instructions of two limited forms:
+
+1. CALL/JMP with an explicit memory operand containing +0x170 (class DIRECT_MEMORY_TRANSFER).
+2. MOV of a qword pointer from memory +0x170 into a 64-bit register followed within **at most eight existing instructions and the same Ghidra function** by CALL/JMP through that register (REGISTER_TRANSFER_NEARBY), or a nearby known CFG guarded-dispatch transfer (GUARD_TRANSFER_NEARBY).
+
+It scans the same executable bytes using existing Ghidra Listing and still observes the **192 MiB**, **90 s**, and **80 recorded candidates** bounds, maintaining cross-chunk matches and failure status on unreadable blocks/incomplete budgets. Summary now distinguishes all distinct offset-bearing instructions from *focus-selected* candidates, and the cap applies to selected candidates. A reported STATUS=COMPLETE would mean the specified focus search exhausted executable blocks without caps; it would **not** imply exhaustiveness of all indirect transfer shapes.
+
+**Proof limitations:** The focus mode performs no actual def-use or control-flow equivalence proof: an instruction within eight linear instructions may be unreachable or clobber the register, and longer-range alias chains, different instruction encodings, trampolines and separate-function loads may be missed. Candidate base register is not yet identified as the 0x9B0-byte nested dispatch object, and direct guarded calls cannot be treated as authenticated production Booter execution. Do not assert these matches are effective callbacks until individually decompiled and traced.
+
+**Verification:** Local syntax compilation succeeded for script and updated tests; all **24/24 tests in the existing Ghidra test module passed**, including previous whole-scan/cap/budget cases and new focused-mode integration, direct memory transfer, nearby register/guard transfer, unrelated-field and unrelated-call rejection, same-function boundary checks, and invalid focus rejection. This new focus mode has **not** run in Ghidra; tests are host-level evidence only.
+
+After updating the user's local main checkout, run exactly:
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "SCAN_SLOT_DISPLACEMENT": "0x170", "SLOT_SCAN_FOCUS": "transfer", "__name__": "__main__"})
+
+If the candidate report is still capped, keep STATUS=PARTIAL and tighten using real evidence, not an invented success. Follow genuine caller sites backward from the known embedded context pointer outer+0x108 -> nested dispatch and forward to the third-argument signed-data descriptor consumer FUN_140BF3880. Physical AD102/GA102 selection, Windows production Booter image/header/signature provenance and cryptographic acceptance remain unproven. No unlock/detach/flash or system/firmware modification permitted; CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false. Immutable recovery audit untouched.
+
+---
+
 # 2026-11-05 13:10 PST — Windows 617.42 HS-loader alternative is a not-supported return; real Falcon DMA consumer descriptor mapped
 
 ## Primary evidence and status

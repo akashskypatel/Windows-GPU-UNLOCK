@@ -381,7 +381,44 @@ def _slot_displacement_hits(previous, current, needle):
         pos = at + 1
 
 
-def scan_existing_slot_displacements(program, slot, log, deadline):
+def _slot_transfer_evidence(instruction, listing, functions, slot, lookahead=8):
+    """Return a bounded *candidate* transfer near a slot read, never proof of a callback.
+
+    Only explicit CALL/JMP [base+slot] or register loads followed by indirect
+    transfer/guard dispatch are retained. Other ways of forwarding the pointer
+    will not be found by this conservative filter.
+    """
+    assembly = str(instruction)
+    slot_operand = r'\[[^\]\n]*\+\s*0x%x\b[^\]\n]*\]' % slot
+    if re.match(r'^(?:CALL|JMP)\s+', assembly, re.I) and re.search(slot_operand, assembly, re.I):
+        return ('DIRECT_MEMORY_TRANSFER', 'AT ' + assembly)
+    match = re.match(
+        r'^MOV\s+(R[A-Z0-9]+)\s*,\s*qword ptr\s*' + slot_operand + r'\s*$',
+        assembly, re.I)
+    if match is None:
+        return None
+    target_register = match.group(1)
+    fn = functions.getFunctionContaining(instruction.getAddress())
+    if fn is None:
+        return None
+    current = instruction
+    for distance in range(1, lookahead + 1):
+        following = listing.getInstructionAfter(current.getAddress())
+        if following is None or not fn.getBody().contains(following.getAddress()):
+            return None
+        next_assembly = str(following)
+        if re.match(r'^(?:CALL|JMP)\s+' + re.escape(target_register) + r'\s*$',
+                    next_assembly, re.I):
+            return ('REGISTER_TRANSFER_NEARBY', '%d instructions later: %s' % (distance, next_assembly))
+        if (re.match(r'^(?:CALL|JMP)\s+', next_assembly, re.I) and
+                ('guard_dispatch_icall' in next_assembly.lower() or
+                 '0x140e02aa8' in next_assembly.lower())):
+            return ('GUARD_TRANSFER_NEARBY', '%d instructions later: %s' % (distance, next_assembly))
+        current = following
+    return None
+
+
+def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
     """Find candidate x64 [register+disp32] uses in existing executable code.
 
     Bytes are never disassembled; raw matches are accepted only when already
@@ -391,6 +428,8 @@ def scan_existing_slot_displacements(program, slot, log, deadline):
     slot = int(str(slot), 0) if isinstance(slot, str) else int(slot)
     if not 0x80 <= slot <= 0x7fffffff:
         raise ValueError('SLOT_DISPLACEMENT must be a positive x64 disp32 >= 0x80')
+    if focus not in ('all', 'transfer'):
+        raise ValueError('SLOT_SCAN_FOCUS must be all or transfer')
     memory = program.getMemory()
     listing = program.getListing()
     functions = program.getFunctionManager()
@@ -401,11 +440,12 @@ def scan_existing_slot_displacements(program, slot, log, deadline):
     scanned = 0
     raw_matches = 0
     verified = 0
+    relevant = 0
     recorded = 0
     seen_instructions = set()
     complete = True
-    log('SLOT_SCAN_BEGIN slot=0x%x block_count=%d max_bytes=%d deadline_bounded=True' % (
-        slot, len(blocks), MAX_SCAN_BYTES))
+    log('SLOT_SCAN_BEGIN slot=0x%x focus=%s block_count=%d max_bytes=%d deadline_bounded=True' % (
+        slot, focus, len(blocks), MAX_SCAN_BYTES))
     for block_index, block in enumerate(blocks):
         base = int(block.getStart().getOffset())
         length = int(block.getSize())
@@ -437,15 +477,22 @@ def scan_existing_slot_displacements(program, slot, log, deadline):
                     continue
                 seen_instructions.add(entry)
                 verified += 1
+                evidence = None
+                if focus == 'transfer':
+                    evidence = _slot_transfer_evidence(instruction, listing, functions, slot)
+                    if evidence is None:
+                        continue
+                relevant += 1
                 if recorded >= MAX_SLOT_CANDIDATES:
                     complete = False
                     continue
                 recorded += 1
                 fn = functions.getFunctionContaining(instruction.getAddress())
-                log('SLOT_CANDIDATE VA=%s block=%s asm=%s function=%s(%s)' % (
+                log('SLOT_CANDIDATE VA=%s block=%s asm=%s function=%s(%s) evidence=%s' % (
                     instruction.getAddress(), block.getName(), instruction,
                     fn.getName() if fn is not None else 'UNKNOWN',
-                    fn.getEntryPoint() if fn is not None else 'UNKNOWN'))
+                    fn.getEntryPoint() if fn is not None else 'UNKNOWN',
+                    ('%s; %s' % evidence) if evidence is not None else 'offset_only'))
             previous = (previous + current)[-3:]
             offset += take
             scanned += take
@@ -454,9 +501,9 @@ def scan_existing_slot_displacements(program, slot, log, deadline):
                 complete = False
                 log('SLOT_SCAN_UNVISITED_BLOCKS count=%d' % (len(blocks)-block_index-1))
             break
-    log('SLOT_SCAN_END scanned_bytes=%d raw_hits=%d distinct_instruction_candidates=%d recorded=%d capped=%s scan_complete=%s' % (
-        scanned, raw_matches, verified, recorded, verified>recorded, complete))
-    log('SLOT_SCAN_LIMIT=Candidate offsets only: no dispatch-owner provenance, indirect-call identity, runtime branch, or firmware acceptance proven')
+    log('SLOT_SCAN_END scanned_bytes=%d raw_hits=%d distinct_instruction_candidates=%d recorded=%d capped=%s scan_complete=%s selected_candidates=%d focus=%s' % (
+        scanned, raw_matches, verified, recorded, relevant>recorded, complete, relevant, focus))
+    log('SLOT_SCAN_LIMIT=Heuristic transfer proximity is not dataflow proof; no dispatch-owner provenance, callback identity, runtime branch, or firmware acceptance proven')
     return complete
 
 
@@ -611,7 +658,8 @@ def main():
             scan_known_string_references(program, output)
         slot_displacement = globals().get('SCAN_SLOT_DISPLACEMENT', None)
         if slot_displacement is not None and not scan_existing_slot_displacements(
-                program, slot_displacement, output, time.monotonic() + MAX_SCAN_SECONDS):
+                program, slot_displacement, output, time.monotonic() + MAX_SCAN_SECONDS,
+                focus=globals().get('SLOT_SCAN_FOCUS', 'all')):
             status = 'PARTIAL'
             output('SLOT_SCAN_COMPLETE=FALSE; results incomplete or candidate cap reached')
         instruction_sites = globals().get('TRACE_INSTRUCTION_SITES', ())

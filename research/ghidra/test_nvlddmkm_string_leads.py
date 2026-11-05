@@ -198,7 +198,7 @@ class SlotDisplacementScanTests(unittest.TestCase):
         def __str__(self):
             return self.assembly
 
-    def run_scan(self, data, asm, *, max_bytes=512, chunk_bytes=4):
+    def run_scan(self, data, asm, *, max_bytes=512, chunk_bytes=4, focus='all'):
         from types import SimpleNamespace
         base = 0x140000000
         starts = [n for n in range(len(data)) if data.startswith(b'\x70\x01\x00\x00', n)]
@@ -235,8 +235,24 @@ class SlotDisplacementScanTests(unittest.TestCase):
              patch.object(probe, 'CHUNK_BYTES', chunk_bytes), \
              patch.object(probe, 'MAX_SCAN_BYTES', max_bytes), \
              patch.object(probe.time, 'monotonic', return_value=1.0):
-            result = probe.scan_existing_slot_displacements(ProgramWithCode(), 0x170, out.append, 2.0)
+            result = probe.scan_existing_slot_displacements(ProgramWithCode(), 0x170, out.append, 2.0, focus=focus)
         return result, out
+
+    def test_transfer_focus_keeps_direct_memory_call(self):
+        result, out = self.run_scan(b'AB\x70\x01\x00\x00CD',
+                                    'CALL qword ptr [RCX + 0x170]', focus='transfer')
+        self.assertTrue(result)
+        self.assertEqual(sum(x.startswith('SLOT_CANDIDATE') for x in out), 1)
+        self.assertTrue(any('DIRECT_MEMORY_TRANSFER' in x for x in out))
+        self.assertTrue(any('selected_candidates=1 focus=transfer' in x for x in out))
+
+    def test_transfer_focus_excludes_other_memory_fields_without_false_partial(self):
+        result, out = self.run_scan(b'AB\x70\x01\x00\x00CD',
+                                    'CMP dword ptr [RCX + 0x170],0x0', focus='transfer')
+        self.assertTrue(result)
+        self.assertEqual(sum(x.startswith('SLOT_CANDIDATE') for x in out), 0)
+        self.assertTrue(any('distinct_instruction_candidates=1' in x and
+                            'selected_candidates=0 focus=transfer' in x for x in out))
 
     def test_disp32_spanning_chunk_boundary_matches_existing_instruction(self):
         result, out = self.run_scan(b'AB\x70\x01\x00\x00CD', 'MOV RAX,qword ptr [RCX + 0x170]')
@@ -306,6 +322,74 @@ class SlotDisplacementScanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'SLOT_DISPLACEMENT'):
             probe.scan_existing_slot_displacements(program, 0x20, lambda _: None, 2.0)
 
+
+
+class SlotTransferEvidenceTests(unittest.TestCase):
+    class Instruction:
+        def __init__(self, address, assembly):
+            self.address, self.assembly = address, assembly
+        def getAddress(self):
+            return self.address
+        def __str__(self):
+            return self.assembly
+
+    def setup_listing(self, instructions, end=None):
+        from types import SimpleNamespace
+        items = {obj.getAddress(): obj for obj in instructions}
+        ordered = sorted(items)
+        listing = SimpleNamespace(getInstructionAfter=lambda address:
+                                  items[ordered[ordered.index(address)+1]]
+                                  if address in items and ordered.index(address)+1 < len(ordered)
+                                  else None)
+        limit = end if end is not None else ordered[-1] + 1
+        fn = SimpleNamespace(getBody=lambda: SimpleNamespace(contains=lambda address:
+                                                              ordered[0] <= address < limit))
+        functions = SimpleNamespace(getFunctionContaining=lambda address: fn)
+        return listing, functions
+
+    def test_direct_call_through_displacement_is_candidate(self):
+        insn = self.Instruction(0x1000, 'CALL qword ptr [RCX + 0x170]')
+        listing, functions = self.setup_listing([insn])
+        self.assertEqual(probe._slot_transfer_evidence(insn, listing, functions, 0x170)[0],
+                         'DIRECT_MEMORY_TRANSFER')
+
+    def test_qword_load_followed_by_indirect_register_call_is_candidate(self):
+        first = self.Instruction(0x1000, 'MOV RAX,qword ptr [RBX + 0x170]')
+        middle = self.Instruction(0x1005, 'MOV R8,R9')
+        call = self.Instruction(0x1008, 'CALL RAX')
+        listing, functions = self.setup_listing([first, middle, call])
+        evidence = probe._slot_transfer_evidence(first, listing, functions, 0x170)
+        self.assertEqual(evidence[0], 'REGISTER_TRANSFER_NEARBY')
+        self.assertIn('2 instructions later', evidence[1])
+
+    def test_qword_load_followed_by_guard_dispatch_is_candidate(self):
+        first = self.Instruction(0x1000, 'MOV RAX,qword ptr [RBX + 0x170]')
+        call = self.Instruction(0x1005, 'JMP qword ptr [PTR__guard_dispatch_icall]')
+        listing, functions = self.setup_listing([first, call])
+        self.assertEqual(probe._slot_transfer_evidence(first, listing, functions, 0x170)[0],
+                         'GUARD_TRANSFER_NEARBY')
+
+    def test_nonpointer_access_and_unrelated_call_are_rejected(self):
+        first = self.Instruction(0x1000, 'MOV EAX,dword ptr [RBX + 0x170]')
+        second = self.Instruction(0x1005, 'CALL RAX')
+        listing, functions = self.setup_listing([first, second])
+        self.assertIsNone(probe._slot_transfer_evidence(first, listing, functions, 0x170))
+        self.assertIsNone(probe._slot_transfer_evidence(
+            self.Instruction(0x1000, 'MOV RAX,qword ptr [RBX + 0x170]'),
+            self.setup_listing([self.Instruction(0x1000, 'MOV RAX,qword ptr [RBX + 0x170]'),
+                                self.Instruction(0x1005, 'CALL RCX')])[0],
+            functions, 0x170))
+
+    def test_nearby_call_from_another_function_is_not_a_candidate(self):
+        first = self.Instruction(0x1000, 'MOV RAX,qword ptr [RBX + 0x170]')
+        call = self.Instruction(0x1005, 'JMP RAX')
+        listing, functions = self.setup_listing([first, call], end=0x1005)
+        self.assertIsNone(probe._slot_transfer_evidence(first, listing, functions, 0x170))
+
+    def test_invalid_focus_is_rejected_before_memory_scan(self):
+        with self.assertRaisesRegex(ValueError, 'SLOT_SCAN_FOCUS'):
+            probe.scan_existing_slot_displacements(Program(), 0x170, lambda line: None,
+                                                   1.0, focus='all_and_everything')
 
 if __name__ == '__main__':
     unittest.main()
