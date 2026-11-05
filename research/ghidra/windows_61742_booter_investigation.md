@@ -1,3 +1,39 @@
+# 2026-11-05 — UCODES offset search inconclusive in GSP initialization function
+
+## Evidence reviewed
+
+User-run read-only Ghidra report: `nvlddmkm-61742-booter-discovery-20261105-114742-741405.txt` (SHA-256 `b2a019b46b15ac07fcf65b1b6ab8f23a198a125e97b9f352ce2f830ba8aa6513`). `nvlddmkm.sys` 617.42 MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`.
+
+`FUN_1401B0E00` decompiled to 16,563 C characters. Focused report `excerpt_truncated=False` for four requested literals (NOT the complete function). Exact counts:
+
+| Search | Matches |
+|---|---:|
+| `0x69f70` (the previously observed UCODES destination resource offset) | 0 |
+| `0x69f78` (adjacent resource state field) | 0 |
+| `FUN_1401b2c10` | 1 |
+| `FUN_1401a7840` | 1 |
+
+The displayed call `FUN_1401B2C10(param_1,param_2,0)` occurs after RMARGS-associated staging at C line 213 and before additional GSP initialization/boot-attempt work. `FUN_1401A7840(param_1,param_2,param_3,local_54)` is shown in the retry loop at C line 277. Decompiler-printed arguments in large functions may omit stack-passed values, as seen previously; preserve that caveat.
+
+## What this does and does not establish
+
+- It **does not** show a direct offset-based access to `param_2+0x69F70` or `param_2+0x69F78` inside this particular function.
+- It **does not prove the staged UCODES resource is unused**; references might occur in callees, through a passed object, aliases, or indirect vtable calls. Literal zero counts are not cross-function data-flow proof.
+- `STATUS=COMPLETE` is valid for the **requested excerpt collection**, because two requested function names matched and all selected snippets fit. It does not attest the other two terms were present or that the full function was reviewed. The report explicitly prints both missing term counts.
+- Prior independently analyzed `FUN_1401AA580` remains a GSP logging initializer, not a Booter/UCODES selector. The known external file read / ELF section parse / UCODES staging chain remains intact, but Windows production Booter record location, selector and authentication remain unproven.
+
+## Next small, read-only investigation step
+
+Decompile `FUN_1401B2C10` once to determine whether it initializes boot state, accesses the staged UCODES resource or only handles an unrelated operation. Do not assume it is a Booter parser based solely on its position in the sequence:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1401b2c10"], "__name__": "__main__"})
+```
+
+If it is clipped, the corrected script must mark `STATUS=PARTIAL` and its own C output incomplete. If it does not access UCODES, continue tracing actual consumers of the staged resource at `param_2+0x69F70` through existing driver-code references, rather than expanding a generic search of all firmware-related functions. Avoid any Ghidra database writes or device changes. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`.
+
+---
+
 # 2026-11-05 — GSP logging initializer classified; excluded from Booter provenance shortlist
 
 ## Source and verification
