@@ -26,7 +26,93 @@ def synthetic_rom(device: int, *, vendor=0x10de, final=True, code_type=0, units=
     return bytes(image)
 
 
+def synthetic_ifr_v3(device: int, *, primary=None, secondary=None) -> bytes:
+    """Construct synthetic NVGI v3/RFRD/PCIR bytes, NOT a real NVIDIA ROM."""
+    first = primary if primary is not None else synthetic_rom(device, final=False)
+    second = secondary if secondary is not None else synthetic_rom(device, final=True, code_type=3)
+    start = 0x9200
+    data = bytearray(b'\xff' * (start + len(first) + len(second) + 512))
+    data[0:4] = b'NVGI'
+    data[4:8] = (0x00240300).to_bytes(4, 'little')
+    data[8:12] = (0x1900).to_bytes(4, 'little')
+    data[0x1900:0x1904] = (0x4000).to_bytes(4, 'little')
+    data[0x5000:0x5004] = b'RFRD'
+    data[0x5006:0x5008] = (0x28).to_bytes(2, 'little')
+    data[0x5008:0x500c] = start.to_bytes(4, 'little')
+    data[start:start + len(first) + len(second)] = first + second
+    # Nonuniform vendor-managed data after the PCI image chain must NOT be
+    # reclassified as PCI ROM padding or interpreted as a verified flash area.
+    data[-2:] = b'\x21\x7c'
+    return bytes(data)
+
+
 class InspectBackupTests(unittest.TestCase):
+    def test_ifr_v3_directory_selects_chain_without_scanning(self):
+        data = synthetic_ifr_v3(0x2684)
+        result = inspector.inspect_backup(data, vendor_id=0x10de, device_id=0x2684)
+        self.assertEqual(result['container_format'], 'NVIDIA_IFR_V3')
+        self.assertEqual(result['ifrv3_flash_status_offset'], 0x4000)
+        self.assertEqual(result['ifrv3_rom_directory_offset'], 0x5000)
+        self.assertEqual(result['pci_rom_start_offset'], 0x9200)
+        self.assertEqual(result['pci_rom_end_offset'], 0x9a00)
+        self.assertEqual(result['declared_image_bytes'], 2048)
+        self.assertEqual([x['offset'] for x in result['images']], [0x9200, 0x9600])
+        self.assertIsNone(result['trailing_padding_bytes'])
+        self.assertFalse(result['nvidia_signature_verified'])
+        self.assertFalse(result['full_spi_flash_contents_verified'])
+
+    def test_ifr_no_directory_scan_fallback(self):
+        data = bytearray(synthetic_ifr_v3(0x2684))
+        data[0x5000:0x5004] = b'BAD!'
+        with self.assertRaisesRegex(inspector.InvalidBackup, 'RFRD directory'):
+            inspector.inspect_backup(bytes(data), vendor_id=0x10de, device_id=0x2684)
+
+    def test_ifr_invalid_offsets_and_unsupported_versions_are_refused(self):
+        for name, offset, payload, expected in (
+            ('unsupported version', 4, (0x00240400).to_bytes(4, 'little'), 'unsupported NVGI'),
+            ('reserved fixed2', 8, (0x10001900).to_bytes(4, 'little'), 'reserved bits'),
+            ('status out of bounds', 0x1900, (0xffffffff).to_bytes(4, 'little'), 'RFRD directory'),
+            ('unaligned ROM offset', 0x5008, (0x9201).to_bytes(4, 'little'), 'PCI image offset'),
+            ('overlapping ROM offset', 0x5008, (0x5004).to_bytes(4, 'little'), 'PCI image offset'),
+        ):
+            with self.subTest(name=name):
+                data = bytearray(synthetic_ifr_v3(0x2684))
+                data[offset:offset+len(payload)] = payload
+                with self.assertRaisesRegex(inspector.InvalidBackup, expected):
+                    inspector.inspect_backup(bytes(data), vendor_id=0x10de, device_id=0x2684)
+
+    def test_ifr_first_pci_image_must_establish_identity(self):
+        data = synthetic_ifr_v3(0x2684, primary=synthetic_rom(0x220a, final=False))
+        with self.assertRaisesRegex(inspector.InvalidBackup, 'vendor/device'):
+            inspector.inspect_backup(data, vendor_id=0x10de, device_id=0x2684)
+
+    def test_ifr_efi_zero_pcir_identity_is_unverified_not_matched(self):
+        data = synthetic_ifr_v3(0x220a, secondary=synthetic_rom(0, vendor=0, final=True, code_type=3))
+        result = inspector.inspect_backup(data, vendor_id=0x10de, device_id=0x220a)
+        self.assertEqual(result['images'][0]['identity_status'], 'MATCHED')
+        self.assertEqual(result['images'][1]['identity_status'], 'UNSPECIFIED_EFI_PCIR')
+        self.assertEqual(result['images'][1]['vendor_id'], '0000')
+        self.assertFalse(result['subsystem_id_in_rom_verified'])
+        self.assertFalse(inspector.build_report(synthetic_ifr_v3(0x2684), data)['can_flash'])
+
+    def test_ifr_zero_identity_exception_is_not_general(self):
+        combinations = (
+            synthetic_ifr_v3(0x2684, secondary=synthetic_rom(0, vendor=0, final=True, code_type=0)),
+            synthetic_ifr_v3(0x2684, secondary=synthetic_rom(0x220a, final=True, code_type=3)),
+            synthetic_ifr_v3(0x2684, primary=synthetic_rom(0, vendor=0, final=False)),
+        )
+        for data in combinations:
+            with self.subTest(data=data[:16]), self.assertRaisesRegex(inspector.InvalidBackup, 'vendor/device'):
+                inspector.inspect_backup(data, vendor_id=0x10de, device_id=0x2684)
+        plain = synthetic_rom(0x2684, final=False) + synthetic_rom(0, vendor=0, code_type=3)
+        with self.assertRaisesRegex(inspector.InvalidBackup, 'vendor/device'):
+            inspector.inspect_backup(plain, vendor_id=0x10de, device_id=0x2684)
+
+    def test_ifr_first_image_cannot_be_efi_only(self):
+        data = synthetic_ifr_v3(0x2684, primary=synthetic_rom(0x2684, final=False, code_type=3))
+        with self.assertRaisesRegex(inspector.InvalidBackup, 'not legacy PC-AT'):
+            inspector.inspect_backup(data, vendor_id=0x10de, device_id=0x2684)
+
     def test_valid_two_card_report_never_claims_flashability_or_unlock(self):
         report = inspector.build_report(synthetic_rom(0x2684), synthetic_rom(0x220a))
         self.assertEqual(len(report['cards']), 2)
