@@ -1,3 +1,51 @@
+# 2026-11-05 — Windows GSP ELF64 parser, signature architecture suffix, and GSP/UCODES staging
+
+## Evidence from user-run Ghidra
+
+- nvlddmkm-61742-booter-discovery-20261105-112603-202276.txt; SHA256 0e625ef7ebdd7c07cb04cdaac373dfd07d5424ce1b1822b892886c6f4ca26877. FUN_1401AB740 and FUN_1401A7840 fully decompiled, clipped=False, STATUS=COMPLETE.
+- nvlddmkm-61742-booter-discovery-20261105-112607-237998.txt; SHA256 ad2d85348595116afb470101a9e9a181c7b3d9e07e65bcfa633635a5fc27f5c2. FUN_1401A9AE0 and FUN_1401AA0E0 fully decompiled, clipped=False, STATUS=COMPLETE.
+- Windows driver identity: nvlddmkm.sys 617.42, MD5 3fb9afac9d0e394723e830aa14e60512, Ghidra base 0x140000000. Reported Ghidra and hardware mutation: NONE. No local Windows run was independently performed by the assistant.
+
+## ELF section lookup, not signature verification
+
+**FUN_1401A9AE0** is a named-section lookup for an ELF64 little-endian source buffer. Observed checks: non-null buffer/name/output pointers; input size at least 0x40; ELF magic 0x464C457F; EI_DATA byte +5 equals 1; ELFCLASS byte +4 equals 2; section-header entry size +0x3A equals 0x40; section-count/header-table offsets, overflow and bounds; section-name string-table index and range; section name comparison and section data offset/size bounds. On a matching terminated section name, outputs source-buffer-relative section pointer and length. This is structural validation, NOT proof of cryptographic authentication, complete parser soundness, or successful firmware runtime acceptance.
+
+**FUN_1401AA0E0** constructs a section name by appending a chip-family suffix to a caller-supplied prefix, using device fields at param_1+0xDBC and param_1+0xDC0. The visible switch chooses these literal suffixes:
+
+| Family field | Revision selector | Suffix |
+|---|---|---|
+| 0x160 | below 7 / otherwise | tu10x / tu11x |
+| 0x170 | zero / nonzero | ga100 / ga10x |
+| 0x180 | any | gh100 |
+| 0x190 (Ghidra rendered as decimal 400) | any | ad10x |
+| 0x1A0 | revision 0xB / otherwise | gb10y / gb10x |
+| 0x1B0 | below 0xB / otherwise | gb20x / gb20y |
+| 0x1C0 | any | gr10x |
+
+It checks that prefix+suffix+terminating NUL fits the output, then copies/concatenates. The prefix appears to derive from the previously established signature-prefix vtable slot (normal, CC, or SPDM-lite). Thus normal-path names may be .fwsignature_ga10x and .fwsignature_ad10x. Exact device-field values actually selected at runtime for the user's GA102/AD102 have not been recorded.
+
+**FUN_1401AB740** invokes the ELF lookup for .fwversion, .fwimage, a dynamically selected signature-section name, and .note.gnu.build-id. It checks the version string for a terminating NUL. It saves image section pointer/length to param_3+2/+3; signature section pointer/length to param_3+4/+5. It allocates a DMA-associated staging buffer at param_2+0xB08 rounded to the signature-section size and copies signature bytes using FUN_1401B9020, FUN_1401BC180, and FUN_1400DF7C0. The build ID is copied to an allocated buffer at param_2+0x69EC0 (size at +0x69EC8). Staging does not prove verification or acceptance.
+
+## Highest-priority new data-provenance lead
+
+The same FUN_1401AB740 calls **FUN_1401AFD60** twice: first after local_a8 is set to param_3[2] (GSP .fwimage pointer), with nearby local_a0 holding its size, destination state param_2+0xB00; second conditional on param_3[8] non-null, after local_a8 is set to param_3[8] (UCODES external-file pointer), with nearby local_a0 set to the length at param_3+9, destination state param_2+0x69F70.
+
+**Decompiler ABI warning:** the printed calls to FUN_1401AFD60 expose only four explicit parameters while local_a8/local_a0 appear prepared immediately before each call. Do not assert the effective parameter bindings, caller stack layout, or copy semantics without examining the callee (or callsite assembly). This is evidence of two staging paths, not proof that the actual Windows SEC2 Booter originates from UCODES or that any signature is accepted. Distinguish 4096-byte GSP ELF signature sections from the pinned Linux production Booter bundles' 768-byte signature records.
+
+## Boot-attempt wrapper
+
+The complete FUN_1401A7840 decompilation shows multiple indirect calls, checks a retry-flag output pointer, responds to nonzero return codes, consults RmGspScanWprEndMargin, and can increment param_2+0x69ED8 and update RmGspBootInitialShift. The indirect target identities are still unknown. These observations do not establish a runtime unlock, firmware verification bypass, or GPU hardware execution.
+
+## Next bounded Ghidra Python 3 command (no full scan, no DB writes)
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1401afd60"], "__name__": "__main__"})
+~~~
+
+Inspect whether FUN_1401AFD60 receives explicit stack arguments from these two sites; then trace the destinations and UCODES record selection. If clipped, report PARTIAL and rerun with evidence-driven DECOMP_FOCUS_TERMS. No firmware, driver, EFI or GPU modification authorized. CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false.
+
+---
+
 # 2026-11-05 — Windows 617.42 GSP ELF version/image/signature section extraction traced
 
 ## Evidence and verification
