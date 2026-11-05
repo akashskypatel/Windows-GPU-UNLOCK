@@ -1,3 +1,60 @@
+# 2026-11-05 — HS-loader dispatch constructor and alternative slot implementation recovered
+
+## Source reports and verification scope
+
+Both are user-run **passive read-only Ghidra** reports for Windows 617.42 `nvlddmkm.sys`, MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; both explicitly report no Ghidra DB mutation and no GPU operation.
+
+- `nvlddmkm-61742-booter-discovery-20261105-122357-308794.txt`, SHA-256 `5a4fb78dafa38dccbd7f25bad40a18d4d9b48d56d910b1b09ff82e3863565f32`. Requested code VA `0x1417E9BB8` resolves to **FUN_1417E99B0**; unclipped full body, `STATUS=COMPLETE`. Concurrent inspection of PE header data site `0x1400001E0` succeeded.
+- `nvlddmkm-61742-booter-discovery-20261105-122400-588278.txt`, SHA-256 `9a38d9d8be5b180c683d673568343af8a7aa020106378c3bd5a9fd5d475c466e`. `FUN_1417E8550` focused terms (`FUN_140bf3880`, `param_1 + 0x170`, `param_2 + 0x10`) all captured, `excerpt_truncated=False`, `STATUS=COMPLETE` *for requested excerpts*; full Ghidra decompiled C is **22,282 characters**, and its entire body was not reported.
+
+## Constructor: resolution of the dispatch-object owner
+
+`FUN_1417E99B0(longlong *param_1,longlong param_2,uint param_3)` is the initializer/constructor for a **0x9B0-byte object**. It has a direct code caller from `0x14056C577`, an unconditional jump from `0x1417E83D0`, and several DATA references.
+
+- If `(param_3 & 2) == 0`, calls `FUN_1400FF170(0x9B0)` to allocate the object. If `param_3 & 2` is set, requires a non-null existing `*param_1` and reuses it. It zeroes 0x9B0 bytes and sets flags at object +0x3C.
+- When `param_3 & 1` is clear, resolves an auxiliary interface via `FUN_14010DC60(param_2,&DAT_140E8EC18)`, then calls `FUN_14010DF30`; other branches zero a field.
+- Obtains the **architecture/hardware-class descriptor** `lVar6 = FUN_14010DC60(param_2,&DAT_140EA93F8)`. If null, uses a fallback `FUN_14010E030(param_2,0x74BC71)` then reattempts `FUN_14010DC60(...,&DAT_140EA93F8)`. It rejects a null result. Exact original type names for these interfaces are not recovered.
+- Creates embedded interfaces at object+0x08 and object+0x40, initializes three separate vtable-like pointers (`PTR_DAT_140F27658`, `PTR_DAT_140F27670`, `PTR_DAT_140F27640`), then calls **`FUN_1417E8550(puVar4,lVar6)`** to populate the architecture-specific function pointers in the *same object*.
+- On the visible success path, follows up with `FUN_140296090(puVar1)`, `FUN_141750C80(puVar2)`, **`FUN_1417E83E0(puVar4,lVar6)`**, then writes `*param_1=(longlong)puVar4` and returns zero. Failure cleans up or clears the existing object. `FUN_1417E83E0` must be analyzed before claiming it cannot replace or otherwise alter the +0x170 slot.
+
+This is proof of **static dispatch-object construction and assignment sequencing**, not proof of any runtime invocation or selection on the user's RTX 4090/3080.
+
+## Corrected architecture-dependent slot selection
+
+The focused `FUN_1417E8550` report shows a 16-bit input at `param_2+0x10` is split with `uVar2 = uVar1 >> 5` and compared in group/bitmask tests. At label `LAB_1417E8E3E`, the function assigns:
+
+```c
+*(code **)(param_1 + 0x170) = FUN_140bf3880;
+```
+
+**Important additional evidence:** the same function can instead assign:
+
+```c
+*(code **)(param_1 + 0x170) = FUN_140092d80;
+```
+
+at line 441 in the focused decompilation, with intervening branches depending on `(uVar4 & 0x1f)-5` and group class. `FUN_140092D80` is merely an alternative function pointer at this stage; its semantics have **not** been examined, so do not call it a stub, denial or signature bypass. Neither possible value proves the slot was invoked, which hardware selected it, or that a production Booter descriptor originated from any particular file.
+
+## PE CFG header-reference refinement
+
+The header at VA `0x1400001E0`, contained in a defined `Headers` object rooted at `0x140000108`, points by a DATA reference to `0x141002A00`. The previous reports show a reference at `0x141002A80` (offset +0x80 inside that root) to `0x140E02C20`, and the latter contains a function-table entry for `FUN_140BF3880`. Together this strongly matches a PE32+ Load Configuration directory and its `GuardCFFunctionTable` field. This security metadata is independent of the architecture-conditioned constructor's functional slot +0x170. A specifically typed/decoded PE load-config structure remains necessary to label the chain *formally proven*.
+
+## Next read-only tasks
+
+1. **Inspect constructor's caller at code VA `0x14056C577`** to learn who holds the 0x9B0-byte object and where it is used. The current evidence has no actual dereference-and-invoke callsite for +0x170.
+2. **Inspect the post-registration initializer `FUN_1417E83E0`**, invoked after `FUN_1417E8550`, to check whether it modifies or overwrites +0x170, binds selectors or creates descriptor associations.
+3. Trace a verified consumer of the constructed object's +0x170 slot and the precise param_3 firmware-image descriptor passed to `FUN_140BF3880`. Distinguish static assignment, selected branch, invocation, signed image provenance, cryptographic acceptance and hardware state as different proof gates.
+
+Existing Ghidra script suffices for the first two (no new dependencies or script modifications):
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x14056c577", "0x1417e83e0"], "__name__": "__main__"})
+```
+
+If either entire function is clipped, `STATUS=PARTIAL` accurately reports incomplete whole-function evidence; rerun with focused terms after reading its own metadata. The Windows production Booter image/header/signature, actual AD102/GA102 selector, driver/GPU signature acceptance and unlock remain **unproven**. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`; immutable recovery audit untouched.
+
+---
+
 # 2026-11-05 — GA10x HS-loader dispatch slot +0x170 established; CFG metadata separated
 
 ## Evidence
