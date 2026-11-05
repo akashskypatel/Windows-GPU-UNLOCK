@@ -55,6 +55,21 @@ class InspectBackupTests(unittest.TestCase):
         with self.assertRaisesRegex(inspector.InvalidBackup, 'vendor/device'):
             inspector.build_report(synthetic_rom(0x220a), synthetic_rom(0x2684))
 
+    def test_report_identifies_failing_gpu_and_first_bytes(self):
+        malformed = b'MZ' + bytes(1022)
+        with self.assertRaisesRegex(inspector.InvalidBackup,
+                                    r'rtx3080: missing PCI option-ROM signature at byte offset 0x0; first 16 bytes: 4d 5a'):
+            inspector.build_report(synthetic_rom(0x2684), malformed)
+        with self.assertRaisesRegex(inspector.InvalidBackup,
+                                    r'rtx4090: missing PCI option-ROM signature at byte offset 0x0'):
+            inspector.build_report(malformed, synthetic_rom(0x220a))
+
+    def test_later_image_signature_error_reports_chained_offset(self):
+        bad = synthetic_rom(0x2684, final=False) + bytes(1024)
+        with self.assertRaisesRegex(inspector.InvalidBackup,
+                                    r'missing PCI option-ROM signature at byte offset 0x400'):
+            inspector.inspect_backup(bad, vendor_id=0x10de, device_id=0x2684)
+
     def test_vendor_mismatch_is_rejected(self):
         with self.assertRaisesRegex(inspector.InvalidBackup, 'vendor/device'):
             inspector.inspect_backup(synthetic_rom(0x2684, vendor=0x1234), vendor_id=0x10de, device_id=0x2684)
@@ -78,7 +93,7 @@ class InspectBackupTests(unittest.TestCase):
             inspector.inspect_backup(bytes(bad), vendor_id=0x10de, device_id=0x2684)
 
     def test_unterminated_chain_is_rejected(self):
-        with self.assertRaisesRegex(inspector.InvalidBackup, 'missing PCI option-ROM signature'):
+        with self.assertRaisesRegex(inspector.InvalidBackup, r'truncated PCI option-ROM image at byte offset 0x400'):
             inspector.inspect_backup(synthetic_rom(0x2684, final=False), vendor_id=0x10de, device_id=0x2684)
 
     def test_reject_nonuniform_unknown_trailing_bytes(self):
