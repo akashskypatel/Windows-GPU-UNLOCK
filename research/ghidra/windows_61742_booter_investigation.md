@@ -1,3 +1,32 @@
+# 2026-11-05 — GA10x Falcon HS loader existing DATA XREF provenance: four sites classified, no descriptor source yet
+
+## Primary artifact and limits
+
+User-run read-only Ghidra report: nvlddmkm-61742-booter-discovery-20261105-121152-127076.txt, SHA-256 3374771262e7f70fa23e27d1d1db01ad66f93b47547fd39aa6bc91c49550a993, 2,132 bytes. Target program nvlddmkm.sys 617.42, MD5 3fb9afac9d0e394723e830aa14e60512, image base 0x140000000. Explicit mode: SCAN_STRINGS=False and TRACE_DATA_SITES for four pre-existing references to FUN_140BF3880. STATUS=COMPLETE, ELAPSED_SECONDS=0.025; the script did NOT decompile any function, disassemble bytes, mutate the Ghidra database, or perform hardware operations. STATUS=COMPLETE applies to bounded existing-reference enumeration, not proof of image-descriptor provenance.
+
+## Exactly what the existing Ghidra reference map shows
+
+| Source site | Region and Ghidra defined-data state | Outgoing reference | Incoming reference to source/root | Meaning and limitation |
+|---|---|---|---|---|
+| 0x141469320 | .pdata, defined=True, root 0x141469320 | DATA -> FUN_140BF3880(0x140BF3880) | None | Likely PE unwind/exception function-table metadata; not evidence of a runtime caller. Verify section semantics if using beyond screening. |
+| 0x140E19A0C | .rdata, defined=True, containing root 0x140E02C20 | DATA -> FUN_140BF3880 | No inbound to exact site; one inbound to the root, DATA from 0x141002A80 with no containing function | A large existing read-only data object references the loader. Its table/object type and source-owner chain remain unknown. Do not assume a callable vtable or active descriptor selection. |
+| 0x1417E8E3E | PAGE, defined=False at this address, root itself | DATA -> FUN_140BF3880 | Two CONDITIONAL_JUMP refs from 0x1417E8EDA and 0x1417E8EEC; both belong to FUN_1417E8550 | The strongest **code-context** lead. Conditional jumps target this address *inside an existing function*. They do not themselves show that the loader is called or that the incoming branches dispatch to it. |
+| 0x1417E8E45 | PAGE, defined=False | DATA -> FUN_140BF3880 | None | Adjacent outbound reference within the same PAGE region. No caller, descriptor producer or semantic role established. |
+
+No incoming-reference lists were capped (all capped=False), and no site was unavailable. The script inspected *outgoing Ghidra references from sites*; outbound kind=DATA must not be silently reclassified as CALL. The previously identified FUN_140BF3880 is capable of Falcon high-security binary load/execute, but it receives an unresolved param_3 firmware image/descriptor. The reference map is NOT proof of the origin or production validity of that descriptor.
+
+## Next bounded read-only evidence
+
+Priority: decompile **FUN_1417E8550** (contains the two conditional branches into the PAGE region referencing FUN_140BF3880) and inspect the candidate root-owner site 0x141002A80 for its current Ghidra outbound references. These are independent, bounded reads and can run together with the script's already implemented modes:
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1417e8550"], "TRACE_DATA_SITES": ["0x141002a80"], "__name__": "__main__"})
+~~~
+
+If FUN_1417E8550 C output is clipped, STATUS=PARTIAL is correct; inspect observed code and repeat with narrower focus terms. No full driver memory scan needed. If 0x141002A80 is an initialized data pointer, its outgoing ref may identify the read-only data object's owner; otherwise preserve UNKNOWN. The source-level producer of the pre-GSP Booter image/header/signature remains **unproven**. Keep Linux 615.78.08 Bo(o)ter bindata archive hypotheses separate from direct Windows 617.42 evidence; the GSP ELF signature sections and host UCODES -> GSP bindataArgs are separate previously resolved paths. All hardware/recovery gates remain closed: CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false. Immutable process/recovery audit untouched.
+
+---
+
 # 2026-11-05 — Windows GSP suspend/resume metadata producer matched to NVIDIA Linux 615.78.08 source
 
 ## Primary evidence and definitive classification
