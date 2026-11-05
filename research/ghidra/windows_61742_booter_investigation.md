@@ -1,3 +1,33 @@
+# 2026-11-05 15:16 PST — class-selector callback registration for FUN_140A47B50 located; still separate from HS dispatch
+
+## New evidence and scope
+
+User-run read-only Windows 617.42 Ghidra report `nvlddmkm-61742-booter-discovery-20261105-151625-447814.txt` (5,439 bytes; SHA-256 `fbac2998ab07810d796342bb77d321fce6ba3da0f15149bced1a71fec0fd8344`), verified `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. Four requested instruction windows and one focused decompiled excerpt completed: `STATUS=COMPLETE`, `GHIDRA_MUTATION=NONE`, `HARDWARE_ACTION=NONE`. The full decompiler output was **45,749 C characters but not printed**; `excerpt_truncated=False` describes the selected focus region only.
+
+## Exact registration / selection
+
+- In `FUN_1417930C0`, assembly `0x141793252 LEA EAX,[RCX-5]`, `0x141793255 CMP EAX,4`, `0x141793258 JA 0x141793263`, `0x14179325A LEA RAX,[FUN_140A47B50]`, `0x141793261 JMP 0x14179322C`, `0x14179322C MOV [R8+0x150],RAX` establishes that this class/selector branch installs `FUN_140A47B50` into the `R8+0x150` callback slot for *selector values 5 through 9 inclusive*. Focused C independently reports `else if (uVar6-5 < 5) pcVar3 = FUN_140a47b50;`. Physical GA102/AD102 runtime selector assignments are **unknown**.
+- Alternative branches populate the same slot with other callback implementations, e.g. `FUN_14067F8C0` for the nearby `0x1D..0x1E` case. Adjacent `R8+0x158` also receives conditional callbacks depending in part on `TEST EDX,0x88000000`. The entire 45K-character registration function and all class variants are **not** claimed fully analyzed.
+- This adds **static callback registration** to the earlier proven `FUN_140A47B50` orchestration (`FUN_140A444D0` CALL, internal `RBX=R8`; `FUN_140A48220` tail JMP, same object; `+0x21A0`-controlled 64-byte templates at `+0x2160`). There remains no observed indirect invocation of the registered `+0x150` callback or verification of its per-physical-GPU selection.
+
+## Confirmed but independent caller contexts
+
+- `FUN_140125040` at `0x140125089` calls `FUN_140124A90` with `RCX=RBX, EDX=7, R8D=0x10`.
+- `FUN_140125100` at `0x140125225` calls it with `RCX=RBX, EDX=R14D, R8D=8`.
+- `FUN_140124A90` has the previously known conditional guarded callback through `[[RBX+0x2160]+0x170]`, but **no established alias** links its large context to the class-registered constructor object or to the independent `0x9B0`-byte Falcon HS dispatch (whose `+0x170` can register `FUN_140BF3880`). Same offset values across objects are not proof of the same callback.
+
+## Next bounded passive command
+
+The existing direct CALL into registration `FUN_1417930C0` is at `0x141796386`. Resolve its effective `RCX`, `RDX` and `R8` arguments and trace the selector/flag provider; the callback-field `+0x150` consumer is a subsequent separate proof gate. Use existing read-only script and its truthful terminal status:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x141796386"], "TARGET_FUNCTIONS": ["0x141796386"], "DECOMP_FOCUS_TERMS": ["FUN_1417930c0"], "__name__": "__main__"})
+```
+
+If the focused term is absent or the containing function is unavailable, the request remains partial, not negative proof. Production Booter signed bytes, header/signatures, `FUN_140BF3880` descriptor producer, actual Falcon invocation, cryptographic acceptance and GPU unlock remain unproven. `CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false`. Immutable process/recovery audit unchanged.
+
+---
+
 # 2026-11-05 15:10 PST — Internal shared-object alias verified; constructor-to-CFG consumer remains open
 
 ## Primary source
