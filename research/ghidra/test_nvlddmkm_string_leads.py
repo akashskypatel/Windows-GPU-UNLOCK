@@ -73,5 +73,62 @@ class ExactStringLeadTests(unittest.TestCase):
             probe.scan_known_string_references(Program(), lambda line: None, [('test', 0)] * 25)
 
 
+
+class DataReferenceSiteTests(unittest.TestCase):
+    def test_data_site_reports_outbound_pointer_and_inbound_table_owner(self):
+        from types import SimpleNamespace
+        site = 0x140e19a0c
+        table_start = 0x140e19a00
+        fn_address = 0x140bf3880
+
+        class Ref:
+            def __init__(self, source, dest):
+                self.source, self.dest = source, dest
+            def getFromAddress(self):
+                return self.source
+            def getToAddress(self):
+                return self.dest
+            def getReferenceType(self):
+                return 'DATA'
+
+        class RefManager:
+            def getReferencesFrom(self, address):
+                return [Ref(site, fn_address)] if address == site else []
+            def getReferencesTo(self, address):
+                return [Ref(0x140001234, table_start)] if address == table_start else []
+
+        class ProgramWithTable(Program):
+            def getListing(self):
+                return SimpleNamespace(getDataContaining=lambda address: SimpleNamespace(
+                    isDefined=lambda: True, getMinAddress=lambda: table_start))
+            def getReferenceManager(self):
+                return RefManager()
+            def getFunctionManager(self):
+                return SimpleNamespace(getFunctionContaining=lambda address: SimpleNamespace(
+                    getName=lambda: 'FUN_%x' % address,
+                    getEntryPoint=lambda: address))
+
+        lines = []
+        with patch.object(probe, '_address', side_effect=lambda p, n: n):
+            self.assertTrue(probe.inspect_data_reference_sites(ProgramWithTable(), ['0x140e19a0c'], lines.append))
+        self.assertTrue(any('OUTBOUND target=%d' % fn_address in x for x in lines))
+        self.assertTrue(any('INBOUND_ROOT VA=%d count=1' % table_start in x for x in lines))
+        self.assertTrue(any('INBOUND from=5368713780' in x for x in lines))
+
+    def test_missing_initialized_data_site_reports_partial_not_complete(self):
+        from types import SimpleNamespace
+        class MissingSite(Program):
+            pass
+        lines = []
+        with patch.object(probe, '_address', side_effect=lambda p, n: n):
+            self.assertFalse(probe.inspect_data_reference_sites(MissingSite(initialized=False), ['0x140e19a0c'], lines.append))
+        self.assertTrue(any('DATA_SITE_UNAVAILABLE' in x for x in lines))
+
+    def test_unbounded_site_requests_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'TRACE_DATA_SITES'):
+            probe.inspect_data_reference_sites(Program(), ['0x140e19a0c'] * 9, lambda line: None)
+        with self.assertRaisesRegex(ValueError, 'TRACE_DATA_SITES'):
+            probe.inspect_data_reference_sites(Program(), '0x140e19a0c', lambda line: None)
+
 if __name__ == '__main__':
     unittest.main()

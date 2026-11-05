@@ -27,6 +27,7 @@ MAX_TOTAL_RECORDED = 220
 MAX_REFS_PER_HIT = 10
 MAX_TARGETS = 4
 MAX_INCOMING_REFS = 24
+MAX_DATA_SITES = 8
 DECOMP_TIMEOUT_SECONDS = 12
 MAX_DECOMP_CHARS = 14000
 
@@ -258,6 +259,56 @@ def scan_known_string_references(program, log, leads=FIRMWARE_STRING_LEADS):
 
 
 
+
+def inspect_data_reference_sites(program, sites, log):
+    """Read existing outgoing/incoming Ghidra references at explicit data VAs.
+
+    This examines referenced pointers and their containing defined data objects.
+    It does not scan memory, create functions or mutate the Ghidra database.
+    """
+    if isinstance(sites, (str, bytes)) or not isinstance(sites, (list, tuple)) or len(sites) > MAX_DATA_SITES:
+        raise ValueError('TRACE_DATA_SITES requires at most %d explicit addresses' % MAX_DATA_SITES)
+    memory = program.getMemory()
+    complete = True
+    for value in sites:
+        address = _address(program, int(str(value), 0))
+        block = memory.getBlock(address)
+        if block is None or not block.isInitialized():
+            log('DATA_SITE_UNAVAILABLE VA=%s; no initialized backing memory' % address)
+            complete = False
+            continue
+        listing = program.getListing()
+        manager = program.getReferenceManager()
+        functions = program.getFunctionManager()
+        data = listing.getDataContaining(address)
+        data_defined = data is not None and data.isDefined()
+        root = data.getMinAddress() if data_defined else address
+        log('DATA_SITE VA=%s block=%s defined=%s containing_start=%s' % (
+            address, block.getName(), data_defined, root))
+        n = 0
+        for ref in manager.getReferencesFrom(address):
+            if n >= MAX_REFS_PER_HIT:
+                log('DATA_SITE_OUTBOUND_TRUNCATED VA=%s' % address)
+                complete = False
+                break
+            destination = ref.getToAddress()
+            fn = functions.getFunctionContaining(destination)
+            log('  OUTBOUND target=%s kind=%s function=%s(%s)' % (
+                destination, ref.getReferenceType(),
+                fn.getName() if fn is not None else 'UNKNOWN',
+                fn.getEntryPoint() if fn is not None else 'UNKNOWN'))
+            n += 1
+        for candidate in (address, root) if root != address else (address,):
+            refs, capped = _bounded_references(program, candidate, MAX_REFS_PER_HIT)
+            log('  INBOUND_ROOT VA=%s count=%d capped=%s' % (candidate, len(refs), capped))
+            for ref in refs:
+                log('    INBOUND from=%s kind=%s function=%s(%s)' % (
+                    ref['source'], ref['kind'], ref['function_name'], ref['function_entry']))
+            if capped:
+                complete = False
+    return complete
+
+
 def decompilation_excerpt(code, terms, limit=MAX_DECOMP_CHARS):
     """Extract bounded line-numbered evidence around requested C identifiers.
 
@@ -407,6 +458,10 @@ def main():
             status = 'COMPLETE'
         if bool(globals().get('SCAN_CSV_LEADS', False)):
             scan_known_string_references(program, output)
+        sites = globals().get('TRACE_DATA_SITES', ())
+        if sites and not inspect_data_reference_sites(program, sites, output):
+            status = 'PARTIAL'
+            output('DATA_SITES_COMPLETE=FALSE; unavailable or bounded references')
         if not targeted_decompile(program, targets, output) and status == 'COMPLETE':
             status = 'PARTIAL'
             output('TARGETS_COMPLETE=FALSE; at least one requested function was undefined or could not be decompiled')

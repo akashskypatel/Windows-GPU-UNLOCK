@@ -1,3 +1,41 @@
+# 2026-11-05 — Windows GSP suspend/resume metadata producer matched to NVIDIA Linux 615.78.08 source
+
+## Primary evidence and definitive classification
+
+User-run read-only Ghidra file nvlddmkm-61742-booter-discovery-20261105-120132-350753.txt, 4,138 bytes, SHA-256 **6d3ad05bc366ea439a494234721bdfa86126ede4b329cc8010f0f84d9ee618b9**. Program nvlddmkm.sys 617.42, MD5 3fb9afac9d0e394723e830aa14e60512, base 0x140000000. Supplied 0x14091F922 resolved to existing FUN_14091F870; decompilation complete clipped=False, STATUS=COMPLETE; HARDWARE_ACTION=NONE, GHIDRA_MUTATION=NONE.
+
+Earlier this function was tentatively nominated as an *additional GSP/production Booter image-staging lead* because it directly calls the common mapping helper FUN_1401AFD60. **That interpretation is now corrected:** FUN_14091F870 constructs a **GspFwSRMeta suspend/resume metadata structure** and the corresponding saved-FB-region radix-3 mapping. It does not select/load a production Booter image.
+
+Strong independent comparison: NVIDIA's *pinned* Linux 615.78.08 open kernel source **kgspPrepareSuspendResumeData_TU102** in https://github.com/NVIDIA/open-gpu-kernel-modules/blob/615.78.08/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c. This source contains the same metadata init, region-size arithmetic, radix-3 creation, 256-byte metadata allocation/copy, and cleanup. Cross-check magic/structure against the published GspFwSRMeta in https://linux.googlesource.com/linux/kernel/git/torvalds/linux/+/976d5e0ddac885b0219252f004f6c561c344df9d/drivers/gpu/drm/nouveau/nvkm/subdev/gsp/rm/r535/nvrm/gsp.h and the current NVIDIA source file reference. Note that Linux source 615.78.08 is **not** Windows 617.42, so naming is a strong behavioral correspondence, not recovered Windows symbols.
+
+## Exact Windows ↔ reference correspondence
+
+| Windows 617.42 Ghidra operation | Meaning supported by pinned source |
+|---|---|
+| Clears 0x100 bytes at &local_128 | zero-initialize 256-byte GspFwSRMeta |
+| local_128 = 0x8A3BB9E6C6C39D93 | GSP_FW_SR_META_MAGIC |
+| local_120 = 2 | GSP_FW_SR_META_REVISION |
+| local_110 = ((param_2+0xA48) - (param_2+0xA30) - (param_2+0xA28) + (param_2+0xA40)) | sizeOfSuspendResumeData from FRTS end minus non-WPR heap end, matching NVIDIA source expression; individual Windows field names are not independently recovered |
+| local_88 = (byte at param_2+0xA50 != 0) | matches metadata flags concept at offset +0xA0 / clock-boost boolean; confirm constants/field mapping before treating as a formally decoded structure |
+| FUN_1401AFD60(..., param_2+0xA80, 0) | creates the suspend/resume radix-3 mapping; common allocator, NOT a production Booter asset |
+| local_118 = FUN_1401BB0B0(*(param_2+0xA80),1,0) | writes GPU-addressable mapping-root address into sysmemAddrOfSuspendResumeData at metadata byte offset 0x10 |
+| FUN_1401B9020(param_2+0xA78, param_1, 0x100) | creates 256-byte metadata resource, observed type-like code 0x15 |
+| FUN_1400DF7C0(local_138,0x100,&local_128) | copies entire metadata object into allocated descriptor |
+| FUN_1401BD4C0(...metadata mapping...) | map/unmap or synchronization; exact helper naming not independently verified |
+
+The pinned NVIDIA *boot mode* source also distinguishes normal boot arguments (WPR metadata) from suspend/resume arguments (SR metadata), in its _kgspGetBooterLoadArgs routine. Therefore **this data structure is intended for Booter consumption on the resume path**, which gives it a legitimate place in the firmware sequence; this is not evidence that FUN_14091F870 itself loads any Booter code or authenticates a production Booter signature.
+
+## Effect on active evidence-to-execution plan
+
+- Close prior hypothesis "**FUN_14091F870's third FUN_1401AFD60 call may stage a Booter image**" as contradicted by direct static decompilation plus matching 615.78.08 source.
+- Mark **suspend/resume SR metadata allocation/staging** as statically established for this driver. The user's actual resume behavior/hardware acceptance is untested.
+- Do **not** attribute the host's UCODES bindataArgs (GSP_ARGUMENTS_CACHED at +0x98/+0xA0) to this path. The two structures are separate.
+- Normal-boot Booter image/header/signature bytes, originating archive/source, signed descriptor producer, selector for AD102 vs GA102, and hardware authentication are still UNPROVEN. The pinned Linux production Booter comparison and Windows GSP ELF signatures remain distinct.
+- Highest remaining static priority returns to the **HS Falcon loader** FUN_140BF3880. Existing incoming references to this function entry are DATA at 0x141469320, 0x140E19A0C, 0x1417E8E3E and 0x1417E8E45. Inspect their existing Ghidra containing data objects and inbound reference owners to identify the dispatch callback or image-descriptor constructor (read-only only). Do not attempt to decompile the DATA addresses as code, run the loader, alter GPU firmware/registry, or repeat the full 114 MB scan. No existing exact caller for its firmware descriptor is proven.
+- **Safety gates remain CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false.** Immutable recovery audit untouched.
+
+---
+
 # 2026-11-05 — Second Windows GSP boot-argument caller classified; no production Booter source identified
 
 ## Verified user Ghidra evidence
