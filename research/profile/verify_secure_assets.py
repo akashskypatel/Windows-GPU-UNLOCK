@@ -34,7 +34,9 @@ GROUPS = {
                      'gsp_boot_desc_ga102.bin', 'gsp_ga10x.bin',
                      'v67-ga102-610.43.03.bin'),
 }
-MAX_ASSET_BYTES = 64 * 1024 * 1024
+# The pinned gsp_ga10x.bin is 84,277,400 bytes (firmware/artifacts-610.43.03.json).
+# Allow that stock image without admitting unbounded files.
+MAX_ASSET_BYTES = 96 * 1024 * 1024
 
 
 def _read_digest(path: Path) -> tuple[str, int]:

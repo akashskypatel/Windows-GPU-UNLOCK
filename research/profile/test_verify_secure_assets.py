@@ -54,6 +54,29 @@ class SecureAssetTests(unittest.TestCase):
             self.assertEqual(report['assets']['booter_load_ad102.bin']['status'], 'HASH_MISMATCH')
             self.assertFalse(report['can_detach'])
 
+    def test_pinned_reference_gsp_size_is_readable(self):
+        # Upstream firmware/artifacts-610.43.03.json pins this exact size.
+        # Sparse zeros are synthetic; the test validates size admission, not the
+        # real NVIDIA firmware digest.
+        with tempfile.TemporaryDirectory() as root:
+            file = Path(root) / 'gpu-unlock' / '610.43.03' / 'gsp_ga10x.bin'
+            file.parent.mkdir(parents=True)
+            with file.open('wb') as stream:
+                stream.truncate(84_277_400)
+            digest, size = verify._read_digest(file)
+            self.assertEqual(size, 84_277_400)
+            self.assertEqual(len(digest), 64)
+
+    def test_asset_over_size_limit_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            file = Path(root) / 'gpu-unlock' / '610.43.03' / 'gsp_ga10x.bin'
+            file.parent.mkdir(parents=True)
+            with file.open('wb') as stream:
+                stream.truncate(96 * 1024 * 1024 + 1)
+            report = verify.inspect(Path(root))
+            self.assertEqual(report['assets']['gsp_ga10x.bin']['status'], 'REFUSED_INVALID_FILE')
+            self.assertFalse(report['can_unlock'])
+
     def test_symlink_refused(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / 'gpu-unlock' / '610.43.03'
