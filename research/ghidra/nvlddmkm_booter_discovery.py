@@ -350,8 +350,12 @@ def targeted_decompile(program, addresses, log):
                     all_targets_completed = False
                     log('FOCUS_INCOMPLETE=TRUE no selected evidence or some excerpts omitted')
             else:
-                log('DECOMPILER_BEGIN entry=%s clipped=%s' % (entry, len(code) > MAX_DECOMP_CHARS))
+                clipped = len(code) > MAX_DECOMP_CHARS
+                log('DECOMPILER_BEGIN entry=%s clipped=%s' % (entry, clipped))
                 log(code[:MAX_DECOMP_CHARS])
+                if clipped:
+                    all_targets_completed = False
+                    log('DECOMPILER_OUTPUT_INCOMPLETE=TRUE clipped C output; use DECOMP_FOCUS_TERMS')
             log('DECOMPILER_END')
     finally:
         decompiler.dispose()

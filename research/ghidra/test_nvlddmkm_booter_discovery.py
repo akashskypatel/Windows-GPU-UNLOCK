@@ -135,5 +135,72 @@ class FocusedDecompileTests(unittest.TestCase):
             probe.decompilation_excerpt('code', ['line\nline'])
 
 
+class DecompilationCoverageTests(unittest.TestCase):
+    def _analyze(self, c_source):
+        """Exercise the real targeted path through a minimal Java API simulation."""
+        import types
+
+        class Address:
+            def __str__(self):
+                return '1401b0e00'
+
+        class Function:
+            def getEntryPoint(self):
+                return Address()
+
+            def getName(self):
+                return 'FUN_1401b0e00'
+
+        class Results:
+            def decompileCompleted(self):
+                return True
+
+            def getDecompiledFunction(self):
+                return type('Output', (), {'getC': lambda self: c_source})()
+
+        class Decompiler:
+            def openProgram(self, program):
+                return True
+
+            def decompileFunction(self, function, timeout, monitor):
+                return Results()
+
+            def dispose(self):
+                pass
+
+        class Program:
+            def getMemory(self):
+                return type('Mem', (), {'getBlock': lambda self, address:
+                            type('Block', (), {'isExecute': lambda self: True})()})()
+
+            def getFunctionManager(self):
+                return type('Fns', (), {'getFunctionContaining': lambda self, address: Function()})()
+
+            def getReferenceManager(self):
+                return type('Refs', (), {'getReferencesTo': lambda self, address: []})()
+
+        modules = {name: types.ModuleType(name) for name in
+                   ('ghidra', 'ghidra.app', 'ghidra.app.decompiler',
+                    'ghidra.util', 'ghidra.util.task')}
+        modules['ghidra.app.decompiler'].DecompInterface = Decompiler
+        modules['ghidra.util.task'].TaskMonitor = type('TaskMonitor', (), {'DUMMY': None})
+        logs = []
+        with patch.dict(sys.modules, modules), \
+             patch.object(probe, '_address', side_effect=lambda program, address: Address()):
+            result = probe.targeted_decompile(Program(), ['0x1401b0e00'], logs.append)
+        return result, logs
+
+    def test_clipped_regular_decompilation_reports_incomplete(self):
+        completed, lines = self._analyze('X' * (probe.MAX_DECOMP_CHARS + 5))
+        self.assertFalse(completed)
+        self.assertIn('DECOMPILER_BEGIN entry=1401b0e00 clipped=True', lines)
+        self.assertTrue(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in item for item in lines))
+
+    def test_unclipped_regular_decompilation_remains_complete(self):
+        completed, lines = self._analyze('short code')
+        self.assertTrue(completed)
+        self.assertIn('DECOMPILER_BEGIN entry=1401b0e00 clipped=False', lines)
+        self.assertFalse(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in item for item in lines))
+
 if __name__ == '__main__':
     unittest.main()

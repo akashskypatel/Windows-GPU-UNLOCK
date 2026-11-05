@@ -1,3 +1,52 @@
+# 2026-11-05 — Ghidra 11:09 reports: firmware handoff and device-specific dispatch
+
+## Evidence provenance and coverage
+
+Read-only Ghidra reports from the exact Windows 617.42 `nvlddmkm.sys` (MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`):
+
+- `nvlddmkm-61742-booter-discovery-20261105-110913-832370.txt`, SHA-256 `646880ef7a015510908819d93a9b423d66eb1431813feaac3f4795702667c7a1`: focused `FUN_1400F1310` (full decompiler text length 31,686 characters; selected excerpt windows complete, not the full function).
+- `nvlddmkm-61742-booter-discovery-20261105-110917-156584.txt`, SHA-256 `1097d49a2c6432c9784feb49c1303cc4ea094e8266ab84084b963b51728d1b22`: `FUN_140631750`, decompiler C output **clipped=True** at 14,000 characters even though the old script emitted `STATUS=COMPLETE`. Therefore the exposed function body is incomplete.
+
+The prior 11:03 reports had already demonstrated the firmware-buffer allocations, separate GSP/UCODES/log cleanup, wrapper `FUN_1400EF8E0`, and constant fallback prefix provider `FUN_140633AA0`. That earlier review was recorded in a local addendum after a blocked GitHub write; this section integrates those findings into the remote investigation ledger rather than claiming they were already pushed.
+
+## Firmware handoff: new source-to-sink anchor
+
+In `FUN_1400F1310` the file-reading calls produce `lStack_1688` (GSP), `lStack_1678` (UCODES), and conditional `lStack_1670` (GSP logs); buffer lengths/outputs are associated with `&local_15b8`, `&local_1578`, and `&local_1588`. A later branch includes the exact decompiled statement:
+
+```c
+iVar7 = FUN_1401b0e00(lVar12, *(undefined8 *)(lVar12 + 0x2238), &local_15b8);
+```
+
+This establishes that an address previously supplied to the **GSP** file reader is passed to `FUN_1401B0E00` during later initialization. The report does **not** show the full intervening branch conditions or demonstrate that its third argument is itself a raw image pointer: it may address a compound length/buffer output layout. Earlier string evidence links `FUN_1401B0E00` with `RmGspBootRetryAttempts`. Next step: inspect the callee's argument interpretation and how the GSP/UCODES structures are consumed before assigning it a firmware-loader identity.
+
+## Architecture/device dispatch table: distinct from cryptographic validation
+
+`FUN_140631750(param_1,param_2,param_3)` extracts 16-bit fields at `param_3+0x10` and `param_2+0x10`, then uses shifts, masks and hardware-class-dependent conditions to choose many function pointers stored into `param_1+0x728`, `+0x730`, `+0x738`, `+0x740`, and subsequent slots. An existing direct caller is `0x14063349A`; there are additional data XREFs at `0x1414188C0`, `0x141091E84`, `0x141091E9C`, `0x141091EB0`, and `0x141091EC0`.
+
+The submitted address `0x140632E8B`, previously identified as a cross-reference to signature-prefix provider `FUN_140633AA0`, lies inside this dispatch initializer. Therefore the signature provider is selected through an architecture-dependent dispatch mechanism **in the driver**, but the specific AD102/GA102 branches, runtime-selected provider, ELF-section bytes and authentication are **not yet established**. As these references can be data/function pointers, direct runtime calls are not implied.
+
+## Corrected evidence reporting
+
+The earlier implementation wrongly treated un-focused, clipped decompiler output as `COMPLETE`. The script now sets `all_targets_completed=False`, logs `DECOMPILER_OUTPUT_INCOMPLETE=TRUE`, and yields `STATUS=PARTIAL` for a clipped ordinary decompilation. Two tests cover both clipped and unclipped real targeted-decompilation paths with mocked Ghidra APIs: the clipped test **fails against the former script** and passes after correction; all **18/18** host tests across both Ghidra test modules pass, and Python compilation succeeds. Real execution of the corrected script remains pending.
+
+## Next two non-mutating Python 3 Ghidra commands
+
+**1. Inspect the GSP handoff callee and dispatcher caller (existing functions only):**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1401b0e00", "0x14063349a"], "__name__": "__main__"})
+```
+
+**2. Read only the relevant provider assignments inside the giant dispatch initializer:**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140631750"], "DECOMP_FOCUS_TERMS": ["FUN_140633aa0", "FUN_1409211c0", "FUN_140922420"], "__name__": "__main__"})
+```
+
+The second command may legitimately report `PARTIAL` if excerpts are capped or no selected term occurs. Never infer successful decompilation from script termination alone. No firmware/GPU/Ghidra DB mutation. The exact Windows Booter location, image/signature record identity, production authorization and safe recovery remain **OPEN**; `can_detach=false`, `can_unlock=false`, `can_flash=false`.
+
+---
+
 # 2026-11-05 — Firmware source-to-reader initialization, GA10X Falcon HS loader, GSP signature-prefix decisions (two Ghidra reports)
 
 ## Primary artifacts and identity
