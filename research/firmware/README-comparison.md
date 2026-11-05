@@ -41,3 +41,13 @@ The comparator checks the source archive's exact SHA-256, validates the six exis
 It prints `STATUS=COMPLETE` with `REPORT=` on completed comparison or `STATUS=ERROR` otherwise. The fields can_detach, can_unlock, and can_flash always remain false.
 
 **Verification scope:** Twelve synthetic local tests and Python compilation passed in the assistant environment. The official 615.78.08 source archive has not yet been processed. Do not use a reference comparison as evidence of Windows firmware compatibility, cryptographic signature validity, or permission to run unsigned code.
+
+## Interpretation of the real 610.43.03 vs 615.78.08 comparison
+
+The user ran the pinned official source archive on Windows. Twelve synthetic tests passed and the production comparison completed. Four of six assets were byte-identical across reference releases: GSP boot image and descriptor for both AD102 and GA102. The production Booter *bundles* changed: AD102 57,672 -> 58,440 bytes (+768) and GA102 61,256 -> 61,768 bytes (+512). This does not establish which Booter bytes the Windows 617.42 driver/GSP 615.78.05 loads.
+
+The comparator now adds per-Booter component SHA-256, size and equality checks for the 72-byte research bundle metadata wrapper, internal production image, and appended signature records. This distinguishes changes in code and metadata from changes in signatures. It does not authenticate signatures or alter any firmware.
+
+After updating from main, rerun the existing comparator command above with a **new** report file name such as `D:\Projects\gpu-unlock\boot-assets-610-vs-615-reference-v2.json`. This retains the original report and adds `assets['booter_load_ad102.bin'].components` and the corresponding GA102 component data (without the space in the field name: `booter_load_ad102.bin`).
+
+The refactor has 15 passing synthetic tests locally. Real source asset comparison with the expanded component reporting remains pending until a Windows re-run.

@@ -93,6 +93,32 @@ class CompareBootAssetsTests(unittest.TestCase):
         self.assertEqual(len(result),72+2048+768)
         self.assertEqual(result[-768:],b'1'*768)
 
+    def test_booter_component_slices_cover_exact_bundle(self):
+        bundle = mod.booter_bundle(valid_booter_source())
+        parts = mod.booter_components(bundle)
+        self.assertEqual([parts[k]['bytes'] for k in ('metadata','image','signatures')],
+                         [72, 2048, 768])
+        self.assertEqual(parts['metadata']['sha256'], hashlib.sha256(bundle[:72]).hexdigest())
+        self.assertEqual(parts['image']['sha256'], hashlib.sha256(bundle[72:-768]).hexdigest())
+        self.assertEqual(parts['signatures']['sha256'], hashlib.sha256(bundle[-768:]).hexdigest())
+
+    def test_booter_component_report_detects_only_changed_image(self):
+        original = mod.booter_bundle(valid_booter_source())
+        modified = bytearray(original)
+        modified[73] ^= 1
+        a, b = mod.booter_components(original), mod.booter_components(bytes(modified))
+        self.assertEqual(a['metadata'], b['metadata'])
+        self.assertNotEqual(a['image'], b['image'])
+        self.assertEqual(a['signatures'], b['signatures'])
+
+    def test_malformed_booter_bundle_envelope_refused(self):
+        original = mod.booter_bundle(valid_booter_source())
+        for candidate in (original[:60], original[:-1],
+                          original[:64] + struct.pack('<II',2049,768) + original[72:]):
+            with self.subTest(length=len(candidate)):
+                with self.assertRaisesRegex(ValueError,'Booter bundle'):
+                    mod.booter_components(candidate)
+
     def test_invalid_falcon_transfer_is_rejected(self):
         with self.assertRaisesRegex(ValueError,'Falcon transfer geometry'):
             mod.booter_bundle(valid_booter_source(bad_transfer=True))

@@ -122,6 +122,25 @@ def booter_bundle(source: str) -> bytes:
     return prefix + image + signatures
 
 
+
+def booter_components(bundle: bytes) -> dict:
+    """Inspect only the reference bundle framing, image, and signature bytes."""
+    if len(bundle) < 72:
+        raise ValueError('truncated Booter bundle')
+    magic, version = struct.unpack_from('<II', bundle, 0)
+    metadata = struct.unpack_from('<14I', bundle, 8)
+    image_size, signature_size = struct.unpack_from('<II', bundle, 64)
+    if (magic != MAGIC or version != 1 or not 0 < image_size <= 16 * 1024 * 1024
+            or not 0 < metadata[12] <= 8 or signature_size != metadata[13]
+            or signature_size != metadata[12] * 384 or len(bundle) != 72 + image_size + signature_size):
+        raise ValueError('invalid Booter bundle envelope')
+    segments = {'metadata': bundle[:72],
+                'image': bundle[72:72 + image_size],
+                'signatures': bundle[72 + image_size:]}
+    return {name: {'bytes': len(data), 'sha256': sha256(data)}
+            for name, data in segments.items()}
+
+
 def boot_image_pair(source: str) -> tuple[bytes, bytes]:
     image = array_bytes(source, 'UCODE_IMAGE_PROD')
     desc = array_bytes(source, 'UCODE_DESC_PROD')
@@ -200,6 +219,18 @@ def compare(archive: Path, reference_root: Path) -> dict:
             'candidate': {'version': NEW_VERSION, 'bytes': len(assets[name]), 'sha256': new_sha},
             'byte_identical': new_sha == old_sha and len(assets[name]) == old_size,
         }
+        if name.startswith('booter_load_'):
+            old_bundle = reference.read_bytes()
+            if sha256(old_bundle) != old_sha or len(old_bundle) != old_size:
+                raise ValueError('reference Booter changed during comparison: ' + name)
+            old_parts = booter_components(old_bundle)
+            new_parts = booter_components(assets[name])
+            records[name]['components'] = {
+                'reference': old_parts,
+                'candidate': new_parts,
+                'byte_identical': {part: old_parts[part] == new_parts[part]
+                                   for part in old_parts},
+            }
     return {
         'schema': 'nvidia-reference-boot-assets-comparison/1',
         'status': 'NEARBY_LINUX_REFERENCE_COMPARISON_COMPLETE',
