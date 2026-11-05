@@ -1,3 +1,49 @@
+# 2026-11-05 — Exact CSV XREF pass and Windows firmware-file reader confirmed
+
+## Primary evidence
+
+User-supplied read-only Ghidra report: `nvlddmkm-61742-booter-discovery-20261105-105008-896070.txt`, local SHA-256 `9cfac4af69a9f2a6a713277a939f2463f7788789ce3c1503f9f27a33dc295ffc`. Program identity `nvlddmkm.sys`, MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. The report shows `SCAN_STRINGS=SKIPPED_BY_CALLER`, 18/18 exact CSV labels verified in initialized Ghidra memory, 14 pre-existing XREF-owner functions, one requested function successfully decompiled without clipping, `STATUS=COMPLETE` for the bounded investigation. No database writes or hardware operations.
+
+## Newly established loader path
+
+1. `FUN_1400F35F0` (prior evidence): chooses a TU10x or GA10x GSP/log/UCODES filename and constructs a Unicode path; selection parameter semantics remain to be proven at the caller.
+2. **`FUN_1400F3350` (new evidence): file-backed loader**. Calls `FUN_1400F35F0` and, on success, uses `ZwCreateFile` (observed `0x80000000` requested access), `ZwQueryInformationFile` to obtain the size, `FUN_1400FF170` for allocation, then `ZwReadFile`. The function has error-path buffer freeing and file-handle closing, and on a successful read returns a buffer-like pointer. Decompiler declared `FUN_1400F3350(void)` but also exposes unknown entry registers/stack parameters (`in_R9`, `in_stack_00000028`), so **actual ABI, input firmware class/architecture parameters and complete output validity are not established**. Do not infer all file reads succeed at runtime or that this routine itself decodes/executes a Booter.
+3. Existing caller references to `FUN_1400F3350`: `0x1400F1826`, `0x1400F1847`, `0x1400F1899` (all unconditional calls), plus a data XREF at `0x1413D4F34`. **Next trace should decompile the Ghidra-defined function containing `0x1400F1826`** to distinguish the three file types and downstream byte consumers. All three callsites may be inside the same owner; this has not yet been checked.
+
+**Result scope:** Windows has a concrete external file read path for the GSP/UCODES family named by the helper. It remains **UNKNOWN** whether exact production AD102/GA102 Booter image/header/signature bytes are inside `nvlddmkm.sys`, `ucodes_ga10x.bin`, another package asset, or are retrieved via more than one source. The separately identified `gsp_ga10x.bin` ELF 4096-byte signature sections are **not** interchangeable with the reference Booter bundles' 768-byte signature data.
+
+## Refined cross-reference ownership from 18-address CSV pass
+
+| Ghidra function entry | XREF evidence in supplied report | Current disposition |
+|---|---|---|
+| `0x140BF3880` | Six XREFs to `flcnLoadAndExecuteHsBinaryViaDma_GA10X`, string VA `0x140D2EAE0` | High-value SEC2/Falcon HS execution lead; next targeted decompilation to establish whether it handles production Booter data, not assumed. |
+| `0x1409211C0` | `.fwsignature_` and `.fwsignature_cc_` | Candidate GSP ELF signature-section selection; inspect inputs and ELF linkage. |
+| `0x140922420` | `.fwsignature_`, `.fwsignature_cc_`, `.fwsignature_spdm_lite_` | Candidate ELF signature variant selector; do not presume authentication. |
+| `0x140633AA0` | `.fwsignature_` | Lower-specificity extra section-string owner, retained. |
+| `0x140AF28A0` | `RMAcrExecuteOnSec2`, `RMEnableAcrRiscv`, `RmBootFromHs` | Config/SEC2 lead, pending actual code review. |
+| `0x140336020`, `0x140577EC0` | `RmBootFromHs` and disable-load registry labels | Config lookup leads, not verified bypass mechanisms. |
+| data `0x1411A7298`, `0x1411A72A0` | `GSP_LOAD_EXEC_GENERIC_BOOTLOADER`, `GSP_LOAD_EXEC_HS_BINARY` | Only data references, owner UNKNOWN; should trace associated table *only after* concrete loader leads. |
+
+The dedicated CSV pass did not discover a known owning function for `Invalid Bindata Access` (`0x1411A66F8` data XREF). A data XREF without function ownership does not prove the driver embeds any named Booter archive.
+
+## Next Ghidra commands (existing script, no full memory scan)
+
+First: follow the three known file-read callsites via one inside-function address, and inspect the GA10x HS loader lead:
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1400f1826", "0x140bf3880"], "__name__": "__main__"})
+~~~
+
+Second, after interpreting the first: inspect the two GSP ELF signature-section owners as a *separate* investigation:
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1409211c0", "0x140922420"], "__name__": "__main__"})
+~~~
+
+Execution uses only existing Ghidra functions, caps each decompilation at 12 seconds and output at 14,000 characters. If clipped, the report's `clipped=True` marks incomplete visible decompiler evidence even if a script status otherwise says COMPLETE. Preserve report paths and original output. No EFI/driver mutation or firmware execution. `can_detach=false`, `can_unlock=false`, `can_flash=false`.
+
+---
+
 # 2026-11-05 — Full 617.42 Ghidra string-inventory review and corrected function classification
 
 ## Exact inputs and parsing scope
