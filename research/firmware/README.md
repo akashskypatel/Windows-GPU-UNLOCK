@@ -1,0 +1,72 @@
+# Windows 617.42 — pinned GA102/AD102 reference firmware preparation
+
+This is a **host-only research tool**. It does not change the installed Windows driver, GPU, UEFI, EFI boot entries, or VBIOS. No firmware binaries are committed or distributed here.
+
+## Version distinction
+
+- Installed Windows display driver being investigated: **617.42** (both `01:00.0` RTX 4090 and `04:00.0` RTX 3080).
+- NVIDIA source/GSP binary used by the published unlock reference: **610.43.03**, not 617.42.
+- Source for the unmodified vendored generation scripts and manifests: [gpu-unlock-ada at d28c485](https://github.com/JustAResearcher/gpu-unlock-ada/tree/d28c485418c3d9d034cd4bac19200bc33dd3453b/firmware). Those files are byte-for-byte identical to that commit.
+- No NVIDIA Windows 617.42 firmware/Booter extraction format or signed 617.42-specific asset set has been authenticated. **Matching the reference asset hashes does not establish that the target cards or stock driver 617.42 will accept the secure transaction.**
+
+## Windows requirements
+
+Windows PowerShell, Python 3.10+ on PATH, `zstd` executable on PATH, network access for the two pinned source downloads, and `nvidia-smi` available when checking the actual installed driver. For example, if Scoop is already configured:
+
+```powershell
+scoop install zstd
+```
+
+From your Windows-GPU-UNLOCK repository root:
+
+```powershell
+git pull --ff-only origin main
+```
+
+```powershell
+python -m unittest discover -s research/firmware -p test_prepare_windows_firmware.py -v
+```
+
+```powershell
+python -m unittest discover -s research/profile -p test_verify_secure_assets.py -v
+```
+
+Choose two distinct locations **outside the repository**. The cache may exist; the output directory **must not already exist**:
+
+```powershell
+python .\research\firmware\prepare_windows_firmware.py --cache 'D:\Projects\gpu-unlock\firmware-input-cache' --output 'D:\Projects\gpu-unlock\firmware-reference-610.43.03' --verify-installed-driver
+```
+
+Use `--offline` to require already-downloaded, checksum-matched inputs without accessing the network. The download step checks both source archive and NVIDIA Linux package SHA-256s. The generator checks each extracted stock binary and both generated V67 payloads. The wrapper performs an additional nine-file SHA-256 verification using the existing `research/profile/verify_secure_assets.py`.
+
+The source tarball is **not unpacked wholesale**: the Windows wrapper extracts only the four known GA102/AD102 generated C files, checks their lengths, and delegates their content-hash checks to the unmodified upstream tools. The output is published only when every reference hash matches. A reported driver version and BDF match is an inventory check, **not** a per-card subsystem or hardware compatibility certificate.
+
+## Output
+
+```text
+firmware-reference-610.43.03/
+  gpu-unlock/610.43.03/
+    booter_load_ga102.bin
+    gsp_boot_ga102.bin
+    gsp_boot_desc_ga102.bin
+    v67-ga102-610.43.03.bin
+    booter_load_ad102.bin
+    gsp_boot_ad102.bin
+    gsp_boot_desc_ad102.bin
+    v67-ad102-610.43.03-four-plm.bin
+    gsp_ga10x.bin
+    NVIDIA-LICENSE
+  NOTICE.md
+  provenance.json
+  reference-asset-verification.json
+```
+
+The output is intentionally **not** copied to the EFI partition, the USB unlock boot directory or the Windows DriverStore. It must not be used to authorize release, register writes, FLR, firmware execution, or flashing. The pre-existing diagnostic-only EFI remains unchanged.
+
+Expected success status: `STATUS=REFERENCE_BYTES_MATCH_COMPATIBILITY_UNPROVEN CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false`. The tool emits `STATUS=ERROR` on recognized failure and refuses to publish a partial output.
+
+## Attribution and licensing
+
+The embedded scripts, manifests and NOTICE are copied from the pinned GPL-2.0-only research repository. Extracted NVIDIA firmware remains subject to NVIDIA's separate license. The wrapper preserves the upstream `NVIDIA-LICENSE` text and NOTICE in the generated output; do not commit, redistribute or relabel the binaries as open source. Reproduce from legal source inputs on the local machine.
+
+The next hardware-dependent decisions remain open: proof of the actual card/VBIOS provenance, signed asset acceptance, post-GOP-Stop cold state, SEC2/FWSEC execution, and unmodified Windows 617.42 driver handoff. No current test of this Windows preparation tool certifies those gates.
