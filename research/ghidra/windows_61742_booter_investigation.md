@@ -1,3 +1,51 @@
+# 2026-11-05 — HS dispatch object attachment and post-registration flags resolved
+
+## Primary evidence and validation boundary
+
+User-uploaded read-only PyGhidra report `nvlddmkm-61742-booter-discovery-20261105-122903-717830.txt`, SHA-256 `2a652a2aaa499c302ec138af0d395f039383a475dcaa297932adc7601295c8e9`, 4,709 bytes. Original Ghidra program: Windows NVIDIA `nvlddmkm.sys` 617.42, MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. Target addresses `0x14056C577` and `0x1417E83E0` resolved respectively to containing function entries `FUN_14056C510` and `FUN_1417E83E0`. Both decompilations report `clipped=False`, overall `STATUS=COMPLETE`; `SCAN_STRINGS=SKIPPED_BY_CALLER`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. These status claims describe the user's script run, not independent physical-device verification.
+
+## Parent object retains the constructed HS dispatch object
+
+`FUN_14056C510(longlong param_1)` rejects null `param_1` with status `0x31`, then constructs the previously characterized `0x9B0`-byte dispatch object:
+
+```c
+local_18 = 0;
+iVar1 = FUN_1417e99b0(&local_18,param_1,0);
+if (iVar1 == 0) {
+    if (local_18 == 0) { /* error logged but no immediate return in visible C */ }
+    iVar1 = FUN_1402e7e60(local_18,param_1);
+    if (iVar1 == 0) {
+        *(longlong *)(param_1 + 0x18) = local_18;
+        iVar1 = 0;
+    }
+}
+```
+
+The actual observed storage operation is **`*(longlong *)(param_1+0x18)=local_18`**, gated by success of the constructor and of `FUN_1402E7E60`. This proves how the pointer becomes reachable through its containing parent object. No lifetime-management, ownership in the C++ sense, GPU attachment, or runtime invocation is established solely by this assignment. `FUN_14056C510` has an unconditional caller at `0x141752AF2` and a DATA reference at `0x14140D838`.
+
+**Remaining immediate downstream gate:** `FUN_1402E7E60` is invoked between construction and storage; its side effects (including whether it invokes, mutates, or exposes slot `+0x170`) remain UNKNOWN pending its own decompilation.
+
+## Post-dispatch initializer does not overwrite loader pointer
+
+`FUN_1417E83E0(longlong param_1,longlong param_2)` is the *complete* post-registration helper called by `FUN_1417E99B0` after `FUN_1417E8550`. It reads the same 16-bit group/bit selector `*(ushort *)(param_2+0x10)`; its visible writes are **single-byte feature/capability flags** at object offsets `+0x27A`, `+0x27D`, `+0x27E`, `+0x285`, `+0x28E`, `+0x291`, `+0x294`, `+0x296`, and `+0x297`. It does **not** write the function-pointer slot at `+0x170`. Thus this specific helper does not undo the conditional earlier assignment `+0x170 = FUN_140BF3880` (or alternative `FUN_140092D80`). This is not a global proof that no other code writes `+0x170`.
+
+The constructor chain now has confirmed source-level order:
+1. `FUN_14056C510` requests object construction using `FUN_1417E99B0(&local_18,param_1,0)`.
+2. `FUN_1417E99B0` creates/initializes the 0x9B0-byte object, calls `FUN_1417E8550` (architecture-conditioned function table), and then `FUN_1417E83E0` (capability flags).
+3. Back in `FUN_14056C510`, `FUN_1402E7E60(local_18,param_1)` must succeed before the object pointer is stored at parent `+0x18`.
+
+## Next read-only Ghidra tasks
+
+Highest immediate value: decompile `FUN_1402E7E60` (the post-construction pre-attachment initialization) and the enclosing function at callsite `0x141752AF2` (to identify the parent object and dispatch consumers). Neither is yet known to call HS firmware. Do not start by scanning entire Windows driver memory or modifying device state.
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1402e7e60", "0x141752af2"], "__name__": "__main__"})
+```
+
+If either decompilation is clipped, `STATUS=PARTIAL` and follow up with grounded `DECOMP_FOCUS_TERMS`. Subsequently locate **an actual indirect call through object slot +0x170**, its real argument mapping, and the signed descriptor producer. The Windows production Booter image bytes, architecture-selecting runtime values on GA102 and AD102, accepted signatures and successful GPU execution are unverified. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`. The immutable process/recovery audit is untouched.
+
+---
+
 # 2026-11-05 — HS-loader dispatch constructor and alternative slot implementation recovered
 
 ## Source reports and verification scope
