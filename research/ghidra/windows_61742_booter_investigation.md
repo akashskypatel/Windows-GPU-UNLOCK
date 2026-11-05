@@ -1,3 +1,60 @@
+# 2026-11-05 — Outer 0x3550-byte object contains HS dispatch-owner subobject; field defaults and ABI ambiguities recovered
+
+## User-run Ghidra evidence
+
+- Report nvlddmkm-61742-booter-discovery-20261105-123638-627493.txt, SHA-256 d2ac133e888a808e9acf08b52ad8b677f5473a60e4fdff093232ba5c7b3fd194, size 6,309 bytes (actual uploaded bytes checked). nvlddmkm.sys NVIDIA Windows 617.42 MD5 3fb9afac9d0e394723e830aa14e60512; image base 0x140000000.
+- Requested 0x14017B258 resolved to enclosing function FUN_14017AF30, complete unclipped decompilation; FUN_1406B3FD0 also complete/unclipped; report STATUS=COMPLETE. The script used SCAN_STRINGS=False and explicitly reports HARDWARE_ACTION=NONE and GHIDRA_MUTATION=NONE.
+- Existing Ghidra references for outer constructor FUN_14017AF30 include DATA at 0x1413DCC5C, 0x141055298, 0x1410552A8, 0x1410552C0, and an UNCONDITIONAL_JUMP from 0x1401793B0. Existing incoming direct caller of FUN_1406B3FD0 is 0x1402E7E6B.
+
+## Outer object and nested ownership — correction to generic parent labeling
+
+FUN_14017AF30(longlong *param_1,longlong param_2,uint param_3) allocates (or reuses if param_3 bit 1 is set) a 0x3550-byte outer object, zeroes it, stores flags at +0x44, and locates required descriptors via FUN_14010DC60 using DAT_140EA93F8 and DAT_140EA93D0, with fallbacks FUN_14010E030(...,0x74BC71) and (...,0x34A6D6). It prepares multiple embedded interfaces and installs distinct static vtable-like pointer values (PTR_DAT_140E763F0, PTR_DAT_140E76408, PTR_DAT_140E76420, PTR_DAT_140E764A8, PTR_DAT_140E76618, PTR_DAT_140E76670).
+
+Critical source-level placement:
+
+    puVar1 = puVar3 + 0x1e;        // undefined8* => byte offset +0xF0
+    FUN_141752b20(puVar1,lVar5);
+    ...
+    iVar2 = FUN_141752aa0(puVar1,lVar5);
+
+The previously decompiled FUN_141752AA0 calls FUN_14056C510(param_1), which constructs a separate 0x9B0-byte dispatch object using FUN_1417E99B0; conditional registration in FUN_1417E8550 can set dispatch slot +0x170 to FUN_140BF3880 (GA10x HS load-and-execute) or alternative FUN_140092D80, depending on a 16-bit class/group selector. FUN_14056C510 writes the dispatch pointer at its param_1 +0x18. Since its param_1 in this outer path is **outer+0xF0**, the exact location in this 0x3550-byte outer object is **outer+0x108**. FUN_1402E7E60(dispatch, embedded_context) writes the back-pointer at **dispatch+0x4B0 = outer+0xF0**.
+
+Thus prior documentation shorthand calling the 0x9B0 dispatch object's linked context the “parent object” is imprecise: in this proved construction path, it is a nested/embedded context within a different outer allocation, not the 0x3550-byte allocation base. This is a *static successful-branch* object layout, NOT actual runtime dispatch, AD102 or GA102 selection, GPU authentication, or Booter image provenance.
+
+The outer constructor additionally calls FUN_140179580(puVar3,lVar5,lVar7), then initializes embedded interface constructors FUN_14173CE00, FUN_141752AA0, thunk_FUN_14056A280, FUN_141750C80, and finally FUN_1401793C0(puVar3,lVar5,lVar7) on its success branch. Neither FUN_140179580 nor FUN_1401793C0 is classified yet, and neither is proved to invoke the HS loader.
+
+## FUN_1406B3FD0: fixed field-default initializer, not Booter image staging
+
+Full decompilation of FUN_1406B3FD0(longlong param_1) writes defaults including:
+
+| Field offset | Observed value |
+|---|---|
+| +0x444 | 0x1000 |
+| +0x43C | 0xFFD2 |
+| +0x440 | 0xFFF2 |
+| +0x448 | 0x40000 |
+| +0x44C | 0x20 |
+| +0x3F0 | 0 |
+| +0x3F4, +0x3F8, +0x3FC, +0x400, +0x404 | 1,2,3,4,5 |
+| +0x408, +0x410, +0x418, +0x438, +0x458 | 0xD,1,1,6,1 |
+| +0x988 | 0 |
+| +0x98C, +0x994, +0x99C, +0x9A4 | UINT64_MAX |
+
+The body has no direct file read, image extraction, Booter signature or HS-loader call. **Important ABI caveat:** the earlier FUN_1402E7E60 decompiler prints FUN_1406B3FD0() without explicit argument, whereas FUN_1406B3FD0 expects a pointer and uses it for these field writes. This is an inconsistent decompiler rendering. Validate actual effective register input at callsite 0x1402E7E6B in read-only Ghidra Listing before definitively attributing those writes to the dispatch object.
+
+A second ABI/signature mismatch is now visible: the outer constructor displays "iVar2 = FUN_141752AA0(puVar1,lVar5)" and checks "if (iVar2 == 0)", while the earlier complete decompilation of FUN_141752AA0 describes a void function ending with FUN_14056C510(param_1). Those inferred prototypes are inconsistent. Do not claim the wrapper checked or ignored builder error semantics definitively without examining the actual callsite instruction sequence and return register behavior. This also qualifies the prior description of FUN_141752AA0 as necessarily void.
+
+## Next bounded read-only steps
+
+1. Decompile the two still-unknown outer object setup/finalization functions as one bounded Ghidra report, with no memory scan:
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140179580", "0x1401793c0"], "__name__": "__main__"})
+
+2. Separately use existing Ghidra Listing/read-only disassembly around **0x1402E7E6B** and **0x14017B258** to establish true register argument and status-return behavior, avoiding speculative ABI claims.
+3. Continue only from a verified indirect callsite of embedded-context+0x18 -> dispatch+0x170 (or equivalent object-propagated alias) to identify the source and fields of the HS load descriptor. No such callsite is yet proven. Normal production Booter image/header/signature origin, signature verification, physical GPU selector, execution, unlock, detach and flash remain open. All safety gates unchanged: CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false. Immutable process and recovery audit untouched.
+
+---
+
 # 2026-11-05 — Falcon HS dispatch object linked bidirectionally to parent; parent initializer classified
 
 ## New complete passive decompilation
