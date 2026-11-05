@@ -1,3 +1,25 @@
+# 2026-11-05 14:51 PST — +0x21A0 is the actual +0x2160 template selector; published embedded-object address still untraced
+
+## Primary evidence and scope
+
+User-run passive report `nvlddmkm-61742-booter-discovery-20261105-145110-386655.txt` (5,386 bytes; SHA-256 `df97fa8a3a8591322723d18760d1b143e1a6d7e7b3a957df51ca1dd3535860cc`) from Windows `nvlddmkm.sys` 617.42, MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. Four requested instruction-site windows completed: `STATUS=COMPLETE`, `DECOMPILATION=SKIPPED`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. No new runtime or object-provenance proof.
+
+## Proven low-level relationship and correction
+
+In `FUN_140A444D0`: `0x140A456E9 TEST RDI,RDI` -> `0x140A4570B LEA RAX,[RDI+0x2160]` -> `0x140A45719 CMOVZ RAX,R9` -> `0x140A4571D MOV [RBX+0x21A0],RAX`. Thus the field is set to the other object's embedded address if RDI is nonzero, otherwise to R9. Neither RDI nor R9's object provenance is established.
+
+In `FUN_140A48220`, the earlier `0x140A49272 CMP [R8+0x21A0],0` sets flags preserved by the following four `MOVUPS` stores. The newly revalidated `0x140A4929A JZ 0x140A492BA` therefore selects **`0x140FE99C0` when `[R8+0x21A0]==0`, and `0x140FE9A00` otherwise**, before `0x140A492DE..0x140A492F6` write 64 bytes into `R8+0x2160..0x219F`. Correct earlier ambiguity: `0x140A492D6 CMP [R8+0x2240],0` occurs **after** the template-choice branch and controls a later `0x140A492FE JZ` (following the SIMD stores), not the choice of +0x2160 source table. That +0x21A0 value was also read by earlier +0x2050 template-copy sequence, but this does not prove any cross-function object alias.
+
+Another newly revalidated chain in `FUN_140A444D0`: `0x140A475D5 LEA RAX,[RBX+0x2160]`, `0x140A475E3 MOV [RBX+0x1C58],RCX`, `0x140A475F1 MOV [RCX],RAX`. The embedded-region address is indirectly published, and the output-slot address is retained, but **RCX's origin and any downstream consumer are not in the 12-before/4-after window**.
+
+Critical remaining proof: `FUN_140A444D0` RBX and `FUN_140A48220` R8 might be related, but no effective callsite arguments were recovered. Nor are those objects proven to match the separate `FUN_140124A90` RBX (which dereferences `[RBX+0x2160]` then slot `+0x170` through CFG), much less the independently constructed 0x9B0-byte Falcon HS dispatch. Previous conditional static-template target evaluation (`0x140C06B80` or nonexecutable self-pointer `0x140FE9B70`) remains inconsistent with simply labeling the static table as the known `FUN_140BF3880` HS callback.
+
+## Next bounded, read-only investigation
+
+Prefer incoming **code XREFs** to `FUN_140A48220` and `FUN_140A444D0`, inspect caller's effective R8/RBX object arguments, then recover the origin of RCX at `0x140A475F1` and consumer of its published pointer. Avoid redoing full-driver +0x170/+0x2160 scans or the timed-out whole-function decompilation. No script, driver, firmware, EFI, GPU or audit changes in this turn; physical GA102/AD102 selection, signed production Booter descriptor/source and authentication remain open. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`.
+
+---
+
 # 2026-11-05 14:43 PST — +0x2160 indirect address stores identified; static +0x170 callback hypothesis weakened
 
 ## Input and verification
