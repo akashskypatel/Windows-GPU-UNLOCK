@@ -1,3 +1,19 @@
+# 2026-11-05 15:45–15:46 PST — Complete registration constructor: descriptor source lookup and failure gates
+
+**User evidence:** two `STATUS=COMPLETE`, read-only PyGhidra reports `nvlddmkm-61742-booter-discovery-20261105-154540-478484.txt` (SHA256 `07bc033d51ab467a973b0e83a7b9518d4571e568b363a9a66d775520fe15b4e7`) and `nvlddmkm-61742-booter-discovery-20261105-154644-861376.txt` (SHA256 `810107cc6d58024d79712316b30bff0437276007b0e22c91b0ad93313846b0ea`). Diff verified: **same substantive listing and complete 3,064-character decompilation**, differing only in elapsed time and report path. Do not count as two independent reverse-engineering discoveries. Source Windows driver 617.42, `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`; no hardware or database modifications.
+
+**New acquisition provenance:** `FUN_1417960A0` allocates `0x1BB8` bytes with `FUN_1400FF170` if `param_3 & 2` is clear (failure `0x51`), or reuses existing `*param_1` when bit 2 is set (missing pointer `0x3B`); zeroes buffer then stores flags at `+0x44`. When `param_2` is nonzero, it obtains `lVar5=FUN_14010DC60(param_2,&DAT_140EA93F8)`, with optional fallback `FUN_14010E030(param_2,0x74BC71)` plus renewed same descriptor lookup; separately it obtains `lVar7=FUN_14010DC60(param_2,&DAT_140EA93D0)` with fallback key `0x34A6D6`. Missing required results follow `0x1F` error paths. These values become `RDX=lVar5` and `R8=lVar7` for `FUN_1417930C0(puVar3,lVar5,lVar7)` followed by `FUN_141795D50`, corroborating prior instruction windows. After additional setup/return checks, success executes `FUN_141792A90`, assigns `*param_1=puVar3`, returns `0`. This is a **generic constructor and callback registry path**, *not* demonstrated signed Booter load/permission writes, physical AD102/GA102 selection, or actual call through the registered `+0x150` field.
+
+**Next passive discrimination (one-line command; existing script):**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x14010dc60", "0x14010e030"], "TRACE_DATA_SITES": ["0x140ea93f8", "0x140ea93d0"], "__name__": "__main__"})
+```
+
+Limit further work on this branch to proving descriptor types/selector member, then finding a concrete connection to Booter descriptor production or an invoked callback; otherwise deprioritize. High-priority unsolved proof remains the actual Windows stock signed Booter bytes/signatures and the producer of the third argument at `FUN_140BF3880`, runtime invocation and acceptability. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`; immutable recovery audit untouched. Authoritative plan `research/nvidia_unlock_evidence_to_execution_map.md` updated **in place**; no dated notes inserted there.
+
+---
+
 # 2026-11-05 15:24 PST — Caller provenance of class callback registration and second-stage setup
 
 **Observed source:** user-run passive PyGhidra report `nvlddmkm-61742-booter-discovery-20261105-152456-204455.txt`, 2,956 bytes, SHA-256 `c23fa1fbf82f7fc82dfb7fa3d253b9e8c35b7afc5a47e306f6145863042a0cf6`; correct Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`, `STATUS=COMPLETE` for one instruction window plus focused C decompilation; `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. Unselected parts of caller source were omitted by the focus filter, notwithstanding `excerpt_truncated=False`.
