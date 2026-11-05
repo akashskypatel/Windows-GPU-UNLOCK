@@ -238,6 +238,32 @@ class SlotDisplacementScanTests(unittest.TestCase):
             result = probe.scan_existing_slot_displacements(ProgramWithCode(), 0x170, out.append, 2.0, focus=focus)
         return result, out
 
+    def test_write_focus_selects_qword_store_and_not_memory_read(self):
+        result, out = self.run_scan(b'AB\x70\x01\x00\x00CD',
+                                    'MOV qword ptr [RCX + 0x170],RAX', focus='write')
+        self.assertTrue(result)
+        self.assertEqual(sum('SLOT_CANDIDATE' in line for line in out), 1)
+        self.assertTrue(any('FIELD_WRITE_QWORD' in line for line in out))
+        self.assertTrue(any('selected_candidates=1 focus=write' in line for line in out))
+        result, out = self.run_scan(b'AB\x70\x01\x00\x00CD',
+                                    'MOV RAX,qword ptr [RCX + 0x170]', focus='write')
+        self.assertTrue(result)
+        self.assertFalse(any('SLOT_CANDIDATE' in line for line in out))
+        self.assertTrue(any('selected_candidates=0 focus=write' in line for line in out))
+
+    def test_write_focus_excludes_lea_cmp_and_keeps_simd_store(self):
+        for assembly in ('LEA RAX,[RCX + 0x170]',
+                         'CMP qword ptr [RCX + 0x170],RAX'):
+            with self.subTest(assembly=assembly):
+                result, out = self.run_scan(b'AB\x70\x01\x00\x00CD',
+                                            assembly, focus='write')
+                self.assertTrue(result)
+                self.assertFalse(any('SLOT_CANDIDATE' in line for line in out))
+        result, out = self.run_scan(b'AB\x70\x01\x00\x00CD',
+                                    'MOVUPS xmmword ptr [RCX + 0x170],XMM0', focus='write')
+        self.assertTrue(result)
+        self.assertTrue(any('FIELD_WRITE_XMMWORD' in line for line in out))
+
     def test_transfer_focus_keeps_direct_memory_call(self):
         result, out = self.run_scan(b'AB\x70\x01\x00\x00CD',
                                     'CALL qword ptr [RCX + 0x170]', focus='transfer')
@@ -322,6 +348,33 @@ class SlotDisplacementScanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'SLOT_DISPLACEMENT'):
             probe.scan_existing_slot_displacements(program, 0x20, lambda _: None, 2.0)
 
+
+
+class SlotWriteEvidenceTests(unittest.TestCase):
+    class Instruction:
+        def __init__(self, assembly):
+            self.assembly = assembly
+        def __str__(self):
+            return self.assembly
+
+    def test_explicit_pointer_store_at_2160(self):
+        result = probe._slot_write_evidence(
+            self.Instruction('MOV qword ptr [RBX + 0x2160],RAX'), 0x2160)
+        self.assertEqual(result[0], 'FIELD_WRITE_QWORD')
+
+    def test_exchange_with_memory_as_second_operand(self):
+        result = probe._slot_write_evidence(
+            self.Instruction('XCHG RAX,qword ptr [RBX + 0x2160]'), 0x2160)
+        self.assertEqual(result[0], 'FIELD_EXCHANGE')
+
+    def test_unrelated_field_and_stack_pointer_are_excluded(self):
+        for assembly in ('MOV qword ptr [RBX + 0x170],RAX',
+                         'MOV RAX,qword ptr [RBX + 0x2160]',
+                         'LEA RAX,[RBX + 0x2160]',
+                         'CMP qword ptr [RBX + 0x2160],0x0'):
+            with self.subTest(assembly=assembly):
+                self.assertIsNone(probe._slot_write_evidence(
+                    self.Instruction(assembly), 0x2160))
 
 
 class SlotTransferEvidenceTests(unittest.TestCase):

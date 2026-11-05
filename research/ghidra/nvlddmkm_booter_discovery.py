@@ -418,6 +418,30 @@ def _slot_transfer_evidence(instruction, listing, functions, slot, lookahead=8):
     return None
 
 
+def _slot_write_evidence(instruction, slot):
+    """Identify explicit writes to a field at the requested literal displacement.
+
+    Textual candidate filter only: does not resolve the object type, aliases,
+    memcopy destinations, or stores via nonliteral/computed addresses.
+    """
+    assembly = str(instruction)
+    operand = r'\[[^\]\n]*\+\s*0x%x\b[^\]\n]*\]' % slot
+    # Memory as first operand: ordinary stores, SIMD stores and RMW operations.
+    match = re.match(
+        r'^(?:LOCK\s+)?(MOV|MOVABS|MOVAPS|MOVUPS|MOVDQA|MOVDQU|MOVQ|MOVD|'
+        r'XCHG|XADD|CMPXCHG|AND|OR|XOR|ADD|SUB|INC|DEC)\s+'
+        r'(byte|word|dword|qword|xmmword|ymmword)\s+ptr\s*' + operand + r'\s*(?:,|$)',
+        assembly, re.I)
+    if match is not None:
+        return ('FIELD_WRITE_' + match.group(2).upper(), assembly)
+    # XCHG writes both operands. This form has memory second.
+    if re.match(r'^XCHG\s+[A-Z][A-Z0-9]*\s*,\s*'
+                r'(?:byte|word|dword|qword)\s+ptr\s*' + operand + r'\s*$',
+                assembly, re.I):
+        return ('FIELD_EXCHANGE', assembly)
+    return None
+
+
 def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
     """Find candidate x64 [register+disp32] uses in existing executable code.
 
@@ -428,8 +452,8 @@ def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
     slot = int(str(slot), 0) if isinstance(slot, str) else int(slot)
     if not 0x80 <= slot <= 0x7fffffff:
         raise ValueError('SLOT_DISPLACEMENT must be a positive x64 disp32 >= 0x80')
-    if focus not in ('all', 'transfer'):
-        raise ValueError('SLOT_SCAN_FOCUS must be all or transfer')
+    if focus not in ('all', 'transfer', 'write'):
+        raise ValueError('SLOT_SCAN_FOCUS must be all, transfer or write')
     memory = program.getMemory()
     listing = program.getListing()
     functions = program.getFunctionManager()
@@ -482,6 +506,10 @@ def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
                     evidence = _slot_transfer_evidence(instruction, listing, functions, slot)
                     if evidence is None:
                         continue
+                elif focus == 'write':
+                    evidence = _slot_write_evidence(instruction, slot)
+                    if evidence is None:
+                        continue
                 relevant += 1
                 if recorded >= MAX_SLOT_CANDIDATES:
                     complete = False
@@ -503,7 +531,7 @@ def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
             break
     log('SLOT_SCAN_END scanned_bytes=%d raw_hits=%d distinct_instruction_candidates=%d recorded=%d capped=%s scan_complete=%s selected_candidates=%d focus=%s' % (
         scanned, raw_matches, verified, recorded, relevant>recorded, complete, relevant, focus))
-    log('SLOT_SCAN_LIMIT=Heuristic transfer proximity is not dataflow proof; no dispatch-owner provenance, callback identity, runtime branch, or firmware acceptance proven')
+    log('SLOT_SCAN_LIMIT=Filtered uses are candidate code sites only: no alias/object identity, indirect-call identity, runtime branch, or firmware acceptance proven')
     return complete
 
 

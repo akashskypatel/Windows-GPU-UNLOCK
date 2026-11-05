@@ -1,3 +1,38 @@
+# 2026-11-05 14:03 PST — GPU-context +0x2160 producer unresolved; explicit field-write scan added
+
+## Source evidence and coverage distinction
+
+New user-run passive Ghidra report: nvlddmkm-61742-booter-discovery-20261105-140309-008364.txt. Uploaded 12,852 bytes; SHA-256 **42552890bfc06f5e600a56366339853e53aaa84886aab7f9ef44bb326cb739db**. Loaded Windows NVIDIA nvlddmkm.sys 617.42 MD5 **3fb9afac9d0e394723e830aa14e60512**, base 0x140000000, read-only existing executable bytes and Ghidra instruction listing. SCAN_STRINGS=False, SCAN_SLOT_DISPLACEMENT=0x2160, default SLOT_SCAN_FOCUS=all. Reports HARDWARE_ACTION=NONE, GHIDRA_MUTATION=NONE and **STATUS=PARTIAL**.
+
+Exactly **12 initialized executable blocks**, totaling **19,689,472 bytes**, were scanned (reported time 0.111s). **167 raw displacement-byte matches**, 167 distinct defined instructions, 167 selected by all-mode, but only **80 recorded** due MAX_SLOT_CANDIDATES=80. The remaining **87** matching instructions are **not visible** in this report. The 80 displayed lines comprise **78 MOV qword PTR loads** from [base+0x2160] and **2 LEA** address computations. They contain **zero explicit memory writes to +0x2160**. Critically, this is not evidence that the full driver has no such writer; the 87 omitted instructions may contain stores. Byte coverage was complete; candidate reporting incomplete.
+
+Existing exact consumer in FUN_140124A90 at 0x140124B4C:
+
+    MOV RDX,qword ptr [RBX + 0x2160]
+    MOV RCX,RBX
+    MOV RAX,qword ptr [RDX + 0x170]
+    CALL qword ptr [0x140E02AA8]
+
+The context field at +0x2160 provides a pointer to an object with a +0x170 callback; actual identity as the independently constructed 0x9B0-byte Falcon HS dispatch object is STILL UNPROVEN. No HS-loader invocation, production Booter binary/header/signature, descriptor producer or GPU runtime class selection is established.
+
+## Minimal scanner improvement and independent host verification
+
+Added optional **SLOT_SCAN_FOCUS='write'** to existing research/ghidra/nvlddmkm_booter_discovery.py. This reuses SCAN_SLOT_DISPLACEMENT's same executable-block raw disp32 scan, existing Ghidra instruction map, memory/time/80-entry bounds and complete/PARTIAL/ERROR reporting. It selects only explicit memory-destination writes and read-modify-write operations with a +0xNNNN field in an existing Ghidra assembly instruction (e.g., MOV qword ptr [REG+0x2160],REG; MOVUPS; XCHG including memory-second operand), rather than false-positive loads, comparisons and LEA operations. It annotates output as FIELD_WRITE_QWORD, FIELD_WRITE_XMMWORD, FIELD_EXCHANGE, etc. The reported candidate is NOT proved to be a pointer assignment to the specific GPU-context object; base register, field meaning and original RHS must be traced. The filter is intentionally non-exhaustive: can miss memcopies, computed-index stores, different opcode variants, or writes at an overlapping offset.
+
+Added focused regression tests to existing research/ghidra/test_nvlddmkm_string_leads.py covering integration of stored 64-bit values vs loads, false positive LEA/CMP removal, SIMD stores, exact +0x2160 address validation, memory-second XCHG, and rejecting unrelated offsets. **29/29 tests passed** with the final local sources; Python syntax compilation succeeded. The same source and test Git blob identifiers were recreated on GitHub and matched the tested local files. **Actual Ghidra execution of this new mode remains pending.**
+
+## Next read-only request: find explicit producer candidates
+
+Synchronize main and run this existing Python 3 Ghidra console command (no hardware or DB writes):
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "SCAN_SLOT_DISPLACEMENT": "0x2160", "SLOT_SCAN_FOCUS": "write", "__name__": "__main__"})
+
+If candidates are reported, decompile containing functions and inspect source register pointers, offset width and actual target object's identity. If no literal write is found and scan is COMPLETE, only infer **no matching explicitly encoded displacement stores under this bounded filter**, NOT no producer: initialization may occur through memcpy, struct copy, or an alternate alias. If candidate cap is reached mark STATUS=PARTIAL and preserve uncertainty. Do NOT conflate this context+0x2160 callback table with the outer 0x3550-byte object / embedded +0xF0 / nested +0x170 Falcon HS callback without alias evidence.
+
+No production Booter provenance, signed descriptor origin, accepted signature or AD102/GA102 live branch has been proven. Safety gates CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false. Immutable process/recovery audit remains untouched.
+
+---
+
 # 2026-11-05 13:54 PST — Three guarded +0x170 transfer paths decompiled; GPU-context +0x2160 producer is next proof gate
 
 ## Primary source and completion
