@@ -1,3 +1,57 @@
+# 2026-11-05 — Full 617.42 Ghidra string-inventory review and corrected function classification
+
+## Exact inputs and parsing scope
+
+- User-uploaded Ghidra Defined Strings export: `nvlddmkm-strings.csv`, 1,664,655 bytes, SHA-256 `74334659126c3f5fea4372590f1d50d238a4b44b9728afa4a622768d1075ded1`; **14,419 CSV records**. Use Python `csv.DictReader(..., escapechar='\\')` because this Ghidra CSV escapes quotes with backslashes, not conventional doubled quotes. The export contains **25 anomalous field parses** (mostly data-looking short strings); those rows should not be promoted without reinspection. The 18 selected ASCII labels and VAs below were individually verified as exact CSV pairs, **18/18**.
+- User-uploaded targeted Ghidra decompilation: `nvlddmkm-61742-booter-discovery-20261105-103527-173279.txt`, SHA-256 `3bee4f00ed92a5781f7a4b5a1e7b1e8f1edc9b0f5c34efe8549c8bd2ec074122`; the report completed its two requested decompilations, but the second was output-capped and carried dead-code/restart warnings.
+- Program identity remains Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra base `0x140000000`. CSV addresses are loaded-image **virtual addresses**, not raw PE file offsets.
+- Defined Strings export is not a completeness proof over compressed blobs, unrecognized binary archive data, or string types Ghidra did not define.
+
+## Corrected classification from actual decompiler output
+
+1. **`FUN_1400F35F0` = firmware filename/path-construction helper**, not yet a Booter-image loader. For family selector `param_2=1..3`, `param_1=0,1,2` chooses `gsp_tu10x.bin`, `gsp_log_tu10x.bin`, or `ucodes_tu10x.bin`. For `param_2=4,5,6,8,9,10,11,12`, it chooses `gsp_ga10x.bin`, `gsp_log_ga10x.bin`, or `ucodes_ga10x.bin`. The function converts the selected filename to Unicode, allocates a destination and appends it to an input base path. This verifies family-to-filename behavior, but the semantics of the numeric selector, exact GPU type and actual file reads remain unverified. **First callsite to inspect: `0x1400F338E`**, an existing unconditional caller inside its owning function, then trace the output path consumer.
+2. **`FUN_1415A8FB0` is a display-manager diagnostic serialization routine** (high confidence for the visible portion), not evidence of GSP/Booter dispatch. Its `CDisplayMgrInfo`, `CDisplayMgrDataPart_*`, `m_pDispDbg->pDispGA102`, `m_pDispDbg->pDispAD102`, `CNvDisplay_Ampere_GA102`, and `CNvDisplay_Ada_AD102` strings are selected while building display diagnostic data. The output is clipped and decompiler reports warnings, so do not assert the function could never touch firmware in unseen code; **deprioritize for production Booter provenance**.
+3. Generic `SEC2`, `FALCON`, `FWSEC` and `GSP-RM` references remain leads requiring data-flow attribution, not identified loaders.
+
+## New high-signal string anchors from the 14,419-record inventory
+
+| VA | Exact exported string | Investigative scope / caution |
+|---|---|---|
+| `0x140D2EAE0` | `flcnLoadAndExecuteHsBinaryViaDma_GA10X` | High-priority named Falcon/HS-binary execution diagnostic. Only a literal until code XREF is found. |
+| `0x140D09070` | `GSP_LOAD_EXEC_GENERIC_BOOTLOADER` | GSP load-execution operation name; could be an RPC enum name, not host loader code. |
+| `0x140D090A0` | `GSP_LOAD_EXEC_HS_BINARY` | Second GSP-load-execution operation name; seek XREF owner. |
+| `0x140D150B0` | `.fwsignature_` | Generic GSP ELF signature-section selection pattern; distinct from Booter bundle's 768-byte signatures. |
+| `0x140D1D760` | `.fwsignature_cc_` | Confidential-computing GSP ELF signature-prefix variant. |
+| `0x140D1D780` | `.fwsignature_spdm_lite_` | Additional GSP ELF signature-prefix variant. |
+| `0x140D1D740` | `RmBootGspRmWithBoostClocks` | Registry/configuration label related to GSP boot; not itself a boot call. |
+| `0x140D2C4C0` | `RMAcrExecuteOnSec2` | SEC2/ACR execution configuration or diagnostic clue. |
+| `0x140D06B60` | `RMExecuteFwsecOnSec2` | FWSEC-on-SEC2 execution configuration/diagnostic clue. |
+| `0x140D0CE10` | `RmBootFromHs` | Boot-mode registry/configuration clue. |
+| `0x140D2C520` | `RMEnableAcrRiscv` | ACR/RISC-V configuration string. |
+| `0x140D12550` | `RmDisableGspLoad` | Configuration string; does not establish bypass. |
+| `0x140D0CD10` | `RmDisableSec2Load` | Configuration string; does not establish bypass. |
+| `0x140E557F8` | `Invalid Bindata Access` | Generic error-string lead; does not prove location of Booter archive. |
+| `0x140D17030` | `flcnLoadUcode_GM107` | Older generation code symbol string, lower priority for GA102/AD102. |
+| `0x140D09BB0` | `RmGspBootRetryAttempts` | GSP boot retry configuration; interpretation requires caller. |
+| `0x140D04330` | `gsp_ga10x.bin` | Already-proven filename builder `FUN_1400F35F0`. |
+| `0x140D04360` | `ucodes_ga10x.bin` | Already-proven filename builder `FUN_1400F35F0`. |
+
+Additional contextual labels include `GSP firmware fault detected`, `RmDisableGsp`, `RmGspBootInitialShift`, `SEC2-RISCV`, `lsfmFalconReset_IMPL`, and `RMGspLoad*`-adjacent status names; these do not override the ranking above. **No defined CSV string contains `booter` or `NVUCODES`**, and no exact `kgspGetBinArchiveBooterLoadUcode` name was found in this CSV. This **does not** prove their compiled implementation or binary data is absent.
+
+## Next read-only Ghidra pass
+
+The existing `research/ghidra/nvlddmkm_booter_discovery.py` has an opt-in `SCAN_CSV_LEADS=True` mode. It checks the *exact ASCII bytes* at all 18 fixed CSV virtual addresses under the driver MD5/base identity gate, reuses the already-bounded Ghidra XREF/function-owner reporter, and does **not** rescan 114 MB or create code/data. An unexpected string or uninitialized block refuses with `STATUS=ERROR`. The script has four newly added host-only tests (4/4 pass), local syntax compilation, and 18/18 exact exported CSV address/literal validation. Ghidra execution pending.
+
+Ghidra Python 3 console command, after updating fork main:
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "SCAN_CSV_LEADS": True, "TARGET_FUNCTIONS": ["0x1400f338e"], "__name__": "__main__"})
+~~~
+
+The caller address `0x1400F338E` is supplied as an **inside-function address**; the existing Ghidra function manager will resolve its owner. If it is undefined or cannot be decompiled, status must be PARTIAL, never a fabricated completion. The exact CSV anchor XREFs are printed to a timestamped report, not automatically declared proven. Use that report to choose further narrow decompilations, particularly code owners for the Falcon/HS and GSP execution strings. No Windows production Booter bytes, algorithm, signature acceptance, EFI safety or hardware recovery are established. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`.
+
+---
+
 # 2026-11-05 — Two uploaded reports reviewed; Windows Booter candidate triage
 
 ## Exact input evidence

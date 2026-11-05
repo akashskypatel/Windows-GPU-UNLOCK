@@ -30,6 +30,29 @@ MAX_INCOMING_REFS = 24
 DECOMP_TIMEOUT_SECONDS = 12
 MAX_DECOMP_CHARS = 14000
 
+# Exact ASCII string virtual addresses from the user's Ghidra 617.42 CSV.
+# These are data anchors, not established function addresses or runtime selectors.
+FIRMWARE_STRING_LEADS = (
+    ('flcnLoadAndExecuteHsBinaryViaDma_GA10X', 0x140d2eae0),
+    ('GSP_LOAD_EXEC_GENERIC_BOOTLOADER', 0x140d09070),
+    ('GSP_LOAD_EXEC_HS_BINARY', 0x140d090a0),
+    ('.fwsignature_', 0x140d150b0),
+    ('.fwsignature_cc_', 0x140d1d760),
+    ('.fwsignature_spdm_lite_', 0x140d1d780),
+    ('RmBootGspRmWithBoostClocks', 0x140d1d740),
+    ('RMAcrExecuteOnSec2', 0x140d2c4c0),
+    ('RMExecuteFwsecOnSec2', 0x140d06b60),
+    ('RmBootFromHs', 0x140d0ce10),
+    ('RMEnableAcrRiscv', 0x140d2c520),
+    ('RmDisableGspLoad', 0x140d12550),
+    ('RmDisableSec2Load', 0x140d0cd10),
+    ('Invalid Bindata Access', 0x140e557f8),
+    ('flcnLoadUcode_GM107', 0x140d17030),
+    ('RmGspBootRetryAttempts', 0x140d09bb0),
+    ('gsp_ga10x.bin', 0x140d04330),
+    ('ucodes_ga10x.bin', 0x140d04360),
+)
+
 # Linux source names are search hypotheses, not assumed Windows symbols.
 # Keep these mostly specific to avoid false positives from unrelated strings.
 SEARCH_TERMS = (
@@ -208,6 +231,32 @@ def describe_references(program, hits, log):
     log('CANDIDATE_FUNCTION_COUNT=%d STRING_XREF_ABSENCE_PROVES_NO_EMBEDDED_BOOTER=FALSE' % len(fn_entries))
 
 
+
+def scan_known_string_references(program, log, leads=FIRMWARE_STRING_LEADS):
+    """Examine only verified literal VAs, reusing the existing bounded XREF path.
+
+    Do not assume that a CSV string VA denotes a function or that a named
+    firmware operation is a runtime operation. Match literal bytes before XREFs.
+    """
+    if len(leads) > 24:
+        raise ValueError('too many explicit CSV leads')
+    memory = program.getMemory()
+    hits = []
+    for label, va in leads:
+        address = _address(program, va)
+        block = memory.getBlock(address)
+        if block is None or not block.isInitialized():
+            raise ValueError('CSV lead is not in initialized Ghidra memory: 0x%x' % va)
+        expected = label.encode('ascii')
+        if _memory_bytes(memory, address, len(expected)) != expected:
+            raise ValueError('CSV lead bytes differ from expected literal at 0x%x: %s' % (va, label))
+        hits.append({'term': label, 'encoding': 'CSV_EXACT_ASCII',
+                     'va': va, 'block': str(block.getName())})
+        log('CSV_LEAD_VERIFIED label=%r VA=0x%x' % (label, va))
+    log('CSV_LEAD_COUNT=%d SOURCE=nvlddmkm-strings.csv; selected anchors only' % len(hits))
+    describe_references(program, hits, log)
+
+
 def targeted_decompile(program, addresses, log):
     if not addresses:
         log('DECOMPILATION=SKIPPED no explicit TARGET_FUNCTIONS provided')
@@ -300,6 +349,8 @@ def main():
         else:
             output('SCAN_STRINGS=SKIPPED_BY_CALLER')
             status = 'COMPLETE'
+        if bool(globals().get('SCAN_CSV_LEADS', False)):
+            scan_known_string_references(program, output)
         if not targeted_decompile(program, targets, output) and status == 'COMPLETE':
             status = 'PARTIAL'
             output('TARGETS_COMPLETE=FALSE; at least one requested function was undefined or could not be decompiled')
