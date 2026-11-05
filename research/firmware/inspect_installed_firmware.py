@@ -78,9 +78,40 @@ def inspect_gsp(path: Path) -> dict:
                 raise ValueError(f'ELF section {i} extends beyond firmware')
             result.append({'index': i, 'name': names[nameoff:end].decode('ascii', errors='replace'),
                            'type': typ, 'offset': off, 'size': length})
+    # The version string and per-architecture signature *bytes* are useful
+    # for cross-release comparison. Neither authenticates a signature.
+    section_by_name = {entry['name']: entry for entry in result}
+    fwversion = None
+    fwversion_bytes = None
+    version_section = section_by_name.get('.fwversion')
+    if version_section is not None and version_section['type'] != 8:
+        if version_section['size'] > 256:
+            raise ValueError('oversized GSP .fwversion section')
+        with path.open('rb') as f:
+            raw = _read_at(f, version_section['offset'], version_section['size'])
+        fwversion_bytes = raw.hex()
+        # Preserve raw bytes when the firmware version is not ASCII.
+        fwversion = raw.rstrip(b'\x00').decode('ascii', errors='replace')
+
+    signatures = {}
+    with path.open('rb') as f:
+        for entry in result:
+            if not entry['name'].startswith('.fwsignature_') or entry['type'] == 8:
+                continue
+            name = entry['name']
+            if name in signatures:
+                raise ValueError('duplicate GSP firmware signature section')
+            if entry['size'] > 64 * 1024:
+                raise ValueError('oversized GSP signature section')
+            data = _read_at(f, entry['offset'], entry['size'])
+            signatures[name] = {'bytes': entry['size'], 'sha256': hashlib.sha256(data).hexdigest()}
+
     return {'format': 'ELF64_LE_RISCV_ET_REL', 'bytes': size, 'sha256': _sha256(path),
             'section_header_offset': shoff, 'section_header_count': shnum,
-            'section_name_table_index': shstrndx, 'sections': result}
+            'section_name_table_index': shstrndx, 'sections': result,
+            'fwversion': fwversion, 'fwversion_raw_hex': fwversion_bytes,
+            'signature_section_digests': signatures,
+            'signature_sections_authenticated': False}
 
 
 def inspect_ucodes(path: Path) -> dict:

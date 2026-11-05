@@ -47,6 +47,33 @@ class FirmwareInventoryTests(unittest.TestCase):
             self.assertEqual(parsed['section_header_count'], 3)
             self.assertEqual(parsed['sections'][2]['name'], '.fwsignature_ad10x')
 
+    def test_section_digest_reports_bytes_not_signature_authentication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'gsp.bin'
+            make_gsp(path)
+            parsed = fw.inspect_gsp(path)
+            self.assertEqual(parsed['signature_section_digests']['.fwsignature_ad10x']['bytes'], 4)
+            import hashlib
+            self.assertEqual(parsed['signature_section_digests']['.fwsignature_ad10x']['sha256'],
+                             hashlib.sha256(b'\x11\x22\x33\x44').hexdigest())
+            self.assertFalse(parsed['signature_sections_authenticated'])
+            self.assertIsNone(parsed['fwversion'])
+
+    def test_embedded_firmware_version_is_read_as_raw_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'gsp.bin'
+            make_gsp(path)
+            data = bytearray(path.read_bytes())
+            # Replace the standalone signature sample with a version string
+            # and rename the section in-place, retaining valid ELF structure.
+            nameoff = data.index(b'.fwsignature_ad10x')
+            data[nameoff:nameoff + len(b'.fwsignature_ad10x')] = b'.fwversion\0' + b'\0' * (len(b'.fwsignature_ad10x')-len(b'.fwversion\0'))
+            data[64 + len(b'\0.shstrtab\0.fwsignature_ad10x\0'):64 + len(b'\0.shstrtab\0.fwsignature_ad10x\0') + 4] = b'1234'
+            path.write_bytes(data)
+            parsed = fw.inspect_gsp(path)
+            self.assertEqual(parsed['fwversion'], '1234')
+            self.assertEqual(parsed['fwversion_raw_hex'], b'1234'.hex())
+
     def test_truncated_elf_table_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'gsp.bin'
