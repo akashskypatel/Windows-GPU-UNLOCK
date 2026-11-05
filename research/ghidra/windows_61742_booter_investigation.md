@@ -1,3 +1,51 @@
+# 2026-11-05 13:54 PST — Three guarded +0x170 transfer paths decompiled; GPU-context +0x2160 producer is next proof gate
+
+## Primary source and completion
+
+User-run read-only Ghidra report nvlddmkm-61742-booter-discovery-20261105-135448-028572.txt, actual uploaded 10,209 bytes, SHA-256 b34d5b973a98860dc32b513f3ccc8baf4fc7e8752351a9751cb5f65bbadfd87b. Driver nvlddmkm.sys Windows 617.42, MD5 3fb9afac9d0e394723e830aa14e60512, Ghidra base 0x140000000. All three selected function decompilations are complete (clipped=False), and report STATUS=COMPLETE, SCAN_STRINGS skipped, HARDWARE_ACTION=NONE and GHIDRA_MUTATION=NONE. This is evidence for source/listing interpretation, NOT a physical GPU run.
+
+## Specific guarded calls: offset +0x170 alone does not identify the Falcon dispatch object
+
+1. FUN_140124A90, which is an independently identified GSP-initialization-stage routine with a separate branch invoking FUN_1401B2C10 (GSP cached-argument builder), has the following consecutive machine instructions under a branch conditioned on byte at context+0xEB9:
+
+    0x140124B46 JZ 0x140124DB4
+    0x140124B4C MOV RDX,qword ptr [RBX + 0x2160]
+    0x140124B53 MOV RCX,RBX
+    0x140124B56 MOV RAX,qword ptr [RDX + 0x170]
+    0x140124B5D CALL qword ptr [0x140E02AA8]
+
+   This is a bona fide static sequence selecting a callback from [GPU_context+0x2160]->+0x170 and transferring through Windows CFG guarded-call dispatcher; the Ghidra report DOES NOT determine what object [RBX+0x2160] holds or whether it equals the separately constructed nested Falcon HS dispatch object. FUN_140124A90 reaches context offsets including +0x57E0, +0x57E4 and +0x584C, beyond the standalone 0x3550-byte outer allocation reconstructed earlier; the two structure bases cannot simply be equated. GSP cached args constructed nearby are not proof of production Booter image/header/signature sourcing. Inbound direct calls to FUN_140124A90 are at 0x140125089 and 0x140125225; no runtime evidence for either GPU.
+
+2. FUN_140175B60 is the compact wrapper:
+
+    0x140175B60 MOV RAX,qword ptr [RCX + 0x170]
+    0x140175B67 JMP qword ptr [0x140E02AA8]
+
+   A true guarded indirect *tail transfer* through the caller-supplied RCX object's +0x170 slot (assuming the known Windows CFG dispatch convention), but the object type is unknown. Ghidra decompiled the body as an opaque guard-dispatch call with void(void) prototype; that decompiler prototype is not proof of the actual arguments or return. Only DATA incoming references are listed: 0x140E05EE8, 0x140E599C0, 0x140E5C390. None identifies a Falcon caller.
+
+3. FUN_1403235F0 contains:
+
+    0x1403235F0 MOV RAX,qword ptr [RDX + -0x8]
+    0x1403235F4 ADD RDX,-0x8
+    0x1403235F8 MOV RAX,qword ptr [RAX + 0x170]
+    0x1403235FF JMP qword ptr [0x140E02AA8]
+
+   The +0x170 callback here is relative to an **intermediate pointer loaded from [original_RDX-8]**, not directly relative to RDX. Original RDX is adjusted before tail transfer. This resembles an interface-specific callback indirection but no original type/vtable identity has been recovered. Ghidra DATA references: 0x140E0783C, 0x140E9EB40, 0x140EDADD8, 0x140EE0280, 0x140EE3050. No proven link to the Falcon HS dispatch or any Booter descriptor.
+
+The previous 246 filtered scan matches therefore form a candidate index, not 246 verified Falcon HS loader invocations. The three individually inspected sites establish actual assembly-level transfer mechanics but not nested dispatch object aliasing, physical execution or firmware authentication.
+
+## Highest-value next passive experiment, no changes to scripts or hardware
+
+The immediate missing dataflow fact is the **producer of GPU_context+0x2160**, used as the callback table base by FUN_140124A90. Rather than expand the 80-cap +0x170 scan, run the existing bounded raw-disp32 plus existing-instruction scan on +0x2160:
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "SCAN_SLOT_DISPLACEMENT": "0x2160", "__name__": "__main__"})
+
+This mode searches initialized executable bytes only with a fixed 192-MiB/90-second/80-candidate bound. Results contain potential writers, reads and unrelated fields sharing the offset; do NOT infer producer/object identity until the relevant containing functions are decompiled and their register origins verified. Treat STATUS=PARTIAL accurately if candidates are capped. Specifically test whether the pointer stored at +0x2160 originates from the previously characterized FUN_1417E99B0 / FUN_14056C510 nested 0x9B0-byte Falcon dispatch instance, or whether the +0x170 guarded call in FUN_140124A90 belongs to a separate driver interface. Record a negative result as elimination, not as progress toward HS-loader execution.
+
+Pending proof gates: actual static invoker of nested dispatch+0x170 selecting FUN_140BF3880, its param_3 HS binary descriptor producer, production Booter image/header/signature origin, GA102 versus AD102 runtime branch, cryptographic acceptance and safe reversible testing. CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false. Process/recovery audit unchanged.
+
+---
+
 # 2026-11-05 13:46 PST — Transfer-focused +0x170 scan: 246 candidates, 80 reported; no Falcon dispatch caller proven
 
 ## Source report and scope
