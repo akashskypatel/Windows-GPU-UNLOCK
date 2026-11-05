@@ -1,3 +1,44 @@
+# 2026-11-05 — GA10x HS-loader dispatch slot +0x170 established; CFG metadata separated
+
+## Evidence
+
+User-run Ghidra report: nvlddmkm-61742-booter-discovery-20261105-121819-595158.txt, SHA-256 5db74dd090a510ccede289d565c532382ae6071bfa419a873e795df15324099e, 16,051 bytes. nvlddmkm.sys Windows 617.42 MD5 3fb9afac9d0e394723e830aa14e60512, image base 0x140000000. SCAN_STRINGS was skipped and the report is passive/read-only; HARDWARE_ACTION=NONE and GHIDRA_MUTATION=NONE. STATUS=PARTIAL because the 16,000-plus-character decompilation of FUN_1417E8550 was clipped at 14,000 C characters. The visible assignment is valid evidence; omitted function text is NOT reviewed.
+
+## Function-pointer registration proved in the Windows driver
+
+FUN_1417E8550(longlong param_1,longlong param_2), called directly at 0x1417E9BB8, reads a 16-bit selector from param_2+0x10, separates a group selector via >>5, tests masks for group classes including 0x20 and 0x40, and assigns multiple function-pointer slots in param_1.
+
+At Ghidra label LAB_1417E8E3E the visible decompiled assignment is:
+
+    *(code **)(param_1 + 0x170) = FUN_140bf3880;
+
+Nearby slots include +0x168, +0x178, +0x180, +0x188. This is direct proof that the known GA10x Falcon HS binary load/execute function is installed as a callback/dispatch entry at +0x170 on the branch reaching this statement. It is NOT a proof of runtime invocation, AD102 versus GA102 runtime selector values, production Booter image bytes, signed descriptor origin, crypto acceptance, or any hardware unlock. Other candidate pointer targets vary by the class selector. The precise set of branches reaching +0x170 should be confirmed using a focused decompilation, because the surrounding function is clipped.
+
+## Prior .rdata reference likely Control Flow Guard security metadata, not a Booter callback table
+
+The same report shows Ghidra .rdata site 0x141002A80 belongs to a defined object rooted at 0x141002A00; it has an outbound DATA reference to 0x140E02C20 and its root has an incoming reference from PE-header-region address 0x1400001E0. Earlier report classified site 0x140E19A0C, inside the object at 0x140E02C20, as a DATA reference to FUN_140BF3880.
+
+Difference 0x141002A80 - 0x141002A00 = 0x80: exactly the GuardCFFunctionTable member offset in Windows x64 IMAGE_LOAD_CONFIG_DIRECTORY64. Windows PE CFG metadata has a load configuration record whose GuardCFFunctionTable references a sorted RVA list (GFIDS). The observed chain is therefore strongly consistent with PE load config -> CFG function table -> valid indirect target entry for FUN_140BF3880. This is **not evidence of an actual hardware callback or execution path**. This revises the earlier interpretation that the .rdata object might be an NVIDIA-specific dispatch table. Full binary-specific confirmation would inspect the defined type and header contents at 0x141002A00; report the classification as strongly inferred, not confirmed by a fresh PE structure dump. Microsoft primary references:
+https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-image_load_config_directory64
+https://learn.microsoft.com/en-us/windows/win32/secbp/pe-metadata
+https://learn.microsoft.com/en-us/windows/win32/debug/pe-format
+
+The .pdata reference at 0x141469320 remains probably exception/unwind metadata, not a call. Only the PAGE-region assignment in FUN_1417E8550 is source-level proof of dispatch registration.
+
+## Next discriminating, read-only checks
+
+First decompile the known direct caller to identify who owns param_1 dispatch state, and inspect the PE header source of the suspected Load Config table:
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1417e9bb8"], "TRACE_DATA_SITES": ["0x1400001e0"], "__name__": "__main__"})
+
+Then capture bounded focused evidence from the selector function (no full scan):
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1417e8550"], "DECOMP_FOCUS_TERMS": ["FUN_140bf3880", "param_1 + 0x170", "param_2 + 0x10"], "__name__": "__main__"})
+
+Next identify callsites that invoke slot +0x170 and recover the provider of the HS loader's param_3 signed descriptor using only existing, read-only Ghidra references. NEVER infer signature verification or Windows Booter provenance from assignment alone. No device action, driver/EFI modification, or active unlock. CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false. Immutable recovery audit unchanged.
+
+---
+
 # 2026-11-05 — GA10x Falcon HS loader existing DATA XREF provenance: four sites classified, no descriptor source yet
 
 ## Primary artifact and limits
