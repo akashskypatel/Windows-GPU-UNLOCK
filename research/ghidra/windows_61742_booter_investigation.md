@@ -1,3 +1,35 @@
+# 2026-11-05 — Second Windows GSP boot-argument caller classified; no production Booter source identified
+
+## Verified user Ghidra evidence
+
+Source report: nvlddmkm-61742-booter-discovery-20261105-115716-144155.txt; SHA-256 307f78f05283d10445cabe8091bc343a6770c77e5407c30e25423b7bae273d9c; nvlddmkm.sys 617.42 MD5 3fb9afac9d0e394723e830aa14e60512, base 0x140000000. Requested address 0x140124B86 belongs to fully decompiled FUN_140124A90. Report: STATUS=COMPLETE, clipped=False, HARDWARE_ACTION=NONE, GHIDRA_MUTATION=NONE. Existing direct callers of FUN_140124A90 at 0x140125089 and 0x140125225, plus three DATA references.
+
+## New static classification
+
+FUN_140124A90(param_1,param_2,param_3) is a GSP-related host initialization orchestration routine, not an identified pre-GSP production Booter byte selector:
+
+1. Early exits with success if the int at param_1+0xD8C is 1; subsequent work is conditional. Reads a byte at param_1+0xEB9 to choose alternate flows.
+2. In the nonzero +0xEB9 path, obtains GSP context lVar2 from param_1+0x2238 and another context lVar3 from param_1+0x21F8. Assigns the incoming param_2 and param_3 to locals local_58 and local_54, and calls FUN_1401B2C10(param_1,lVar2,&local_58). This is the already cross-verified NVIDIA GSP_ARGUMENTS_CACHED construction routine containing the mapped UCODES bindataArgs radix3/size.
+3. Performs several guarded indirect calls with lVar2 and uVar7, where uVar7 is selected as one of {1,2,3} based on state flags (for example +0x584C, +0x991, +0x9B1, +0x9AD). The *functions behind the indirect calls and interpretation of uVar7 remain unresolved*. Includes FUN_140303D90(param_1,*(...+0x23B8)) on one branch and status/error propagation.
+4. Writes progress-mask bits 0x10000, 0x20000, 0x40000, 0x80000 into the uint at param_1+0x540C at successive visible sites. These are observable state flags, not verification that the corresponding firmware stages actually finished on the user's GPUs.
+5. Does not directly load an image file, parse ELF/UCODES records, choose a production Booter signature, or prove pre-GSP Falcon execution within this fully visible decompiled body. Indirect callees could still perform relevant work; thus absence of direct Booter logic is a bounded source-level conclusion, not global exclusion.
+
+**Resolution:** the independent caller of FUN_1401B2C10 is now classified. UCODES host-side staging-to-GSP boot-argument handoff is unchanged and already established; do not re-run the general UCODES consumer search. The pre-GSP signed Booter image/header/signature bytes, AD102/GA102 runtime selection and signature acceptance remain OPEN.
+
+## Next discriminating non-mutating Ghidra target
+
+Prior independent reports prove a third direct caller of the generic image mapping/staging function FUN_1401AFD60 at code VA **0x14091F922**, separate from its two callsites within the GSP ELF section-extraction function FUN_1401AB740. Earlier CSV XREF review also associated string RmBootGspRmWithBoostClocks with function **FUN_14091F180** (XREF from 0x14091F5A3), plausibly the containing function at 0x14091F922. It is therefore a focused lead for mapping an *additional* host-side image/staging path. **Do not infer that this path is the production Booter without examining the function.**
+
+Read-only Python 3 Ghidra command, no whole memory scan:
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x14091f922"], "__name__": "__main__"})
+~~~
+
+If it is clipped, report PARTIAL and use narrower DECOMP_FOCUS_TERMS grounded in the new output. Alternatively, continue tracing the known DATA XREFs to high-security Falcon loader FUN_140BF3880 to find who builds its param_3 signed-image descriptor. Do not chase logging helpers or assume stock Windows behavior equals pinned Linux 615.78.08. No driver/firmware/UEFI modification, GPU action or recovery gate change. CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false.
+
+---
+
 # 2026-11-05 — Windows UCODES bindata handoff proven in GSP_ARGUMENTS_CACHED
 
 ## Primary report and independent reference
