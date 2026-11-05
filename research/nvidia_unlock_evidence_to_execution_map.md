@@ -77,7 +77,7 @@ A failed identity, signature/provenance, device-ownership, DMA-lifetime or stage
 
 ## 5. Evidence and output criteria
 
-- **Immutable record:** [`windows_gpu_unlock_process_and_recovery_audit_2026-11-04.md`](windows_gpu_unlock_process_and_recovery_audit_2026-11-04.md), change only to correct a demonstrated factual error.
+- **Immutable record:** `windows_gpu_unlock_process_and_recovery_audit_2026-11-04.md` (a separately supplied audit, not present in the current repository tree); change only to correct a demonstrated factual error.
 - **Cumulative research diary:** [`nvidia-tensor-core-unlock-investigation-v106.md`](nvidia-tensor-core-unlock-investigation-v106.md); new findings and historical notes are recorded there, **not** copied as new sections into this execution map.
 - **Read-only Ghidra ledger / scripts:** [`research/ghidra/windows_61742_booter_investigation.md`](https://github.com/akashskypatel/Windows-GPU-UNLOCK/blob/main/research/ghidra/windows_61742_booter_investigation.md) and existing [`nvlddmkm_booter_discovery.py`](https://github.com/akashskypatel/Windows-GPU-UNLOCK/blob/main/research/ghidra/nvlddmkm_booter_discovery.py); reports must terminate in `STATUS=COMPLETE`, `PARTIAL`, or `ERROR` **and** print the report path. A complete narrow report does not claim end-to-end validation.
 - **Reference implementations are not interchangeable:** upstream [GA102 UEFI Windows](https://github.com/windows-GPU-UNLOCK/Windows-GPU-UNLOCK/tree/fd8bbea5b1db991805ffcd7ba84e73fa7867bd8a), [AD102 Linux](https://github.com/JustAResearcher/gpu-unlock-ada/tree/d28c485418c3d9d034cd4bac19200bc33dd3453b), and this fork's passive Windows dual-card work each have different execution environments and signatures.
