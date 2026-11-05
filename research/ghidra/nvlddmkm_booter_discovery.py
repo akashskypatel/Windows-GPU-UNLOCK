@@ -257,6 +257,46 @@ def scan_known_string_references(program, log, leads=FIRMWARE_STRING_LEADS):
     describe_references(program, hits, log)
 
 
+
+def decompilation_excerpt(code, terms, limit=MAX_DECOMP_CHARS):
+    """Extract bounded line-numbered evidence around requested C identifiers.
+
+    Returns (text, term_counts, truncated); no Ghidra DB interaction.
+    An excerpt is not complete control-flow or a complete decompilation.
+    """
+    if (isinstance(terms, str) or not isinstance(terms, (tuple, list)) or
+            not 0 < len(terms) <= 8 or
+            any(not isinstance(t, str) or not 3 <= len(t) <= 96 or
+                any(c in t for c in '\r\n') for t in terms)):
+        raise ValueError('DECOMP_FOCUS_TERMS requires 1..8 single-line strings of length 3..96')
+    if not 256 <= limit <= 65536:
+        raise ValueError('invalid excerpt size limit')
+    lines = code.splitlines()
+    indices = set()
+    counts = {}
+    capped_matches = False
+    for term in terms:
+        matches = [i for i, line in enumerate(lines) if term.casefold() in line.casefold()]
+        counts[term] = len(matches)
+        if len(matches) > 8:
+            capped_matches = True
+        for i in matches[:8]:
+            indices.update(range(max(0, i-5), min(len(lines), i+8)))
+    output = []
+    size = 0
+    prior = -2
+    clipped = capped_matches
+    for i in sorted(indices):
+        segment = ('... omitted lines ...\n' if i > prior + 1 else '') + ('L%d: %s\n' % (i+1, lines[i]))
+        if size + len(segment) > limit:
+            clipped = True
+            break
+        output.append(segment)
+        size += len(segment)
+        prior = i
+    return ''.join(output), counts, clipped
+
+
 def targeted_decompile(program, addresses, log):
     if not addresses:
         log('DECOMPILATION=SKIPPED no explicit TARGET_FUNCTIONS provided')
@@ -298,8 +338,20 @@ def targeted_decompile(program, addresses, log):
                 continue
             output = result.getDecompiledFunction()
             code = str(output.getC()) if output is not None else ''
-            log('DECOMPILER_BEGIN entry=%s clipped=%s' % (entry, len(code) > MAX_DECOMP_CHARS))
-            log(code[:MAX_DECOMP_CHARS])
+            focus_terms = globals().get('DECOMP_FOCUS_TERMS', ())
+            if focus_terms:
+                excerpt, counts, truncated = decompilation_excerpt(code, focus_terms)
+                log('DECOMPILER_BEGIN entry=%s focus=True total_chars=%d excerpt_truncated=%s' % (
+                    entry, len(code), truncated))
+                for term, count in counts.items():
+                    log('FOCUS_TERM term=%r matches=%d' % (term, count))
+                log(excerpt)
+                if not any(counts.values()) or truncated:
+                    all_targets_completed = False
+                    log('FOCUS_INCOMPLETE=TRUE no selected evidence or some excerpts omitted')
+            else:
+                log('DECOMPILER_BEGIN entry=%s clipped=%s' % (entry, len(code) > MAX_DECOMP_CHARS))
+                log(code[:MAX_DECOMP_CHARS])
             log('DECOMPILER_END')
     finally:
         decompiler.dispose()

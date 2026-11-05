@@ -1,3 +1,58 @@
+# 2026-11-05 — Firmware source-to-reader initialization, GA10X Falcon HS loader, GSP signature-prefix decisions (two Ghidra reports)
+
+## Primary artifacts and identity
+
+- `nvlddmkm-61742-booter-discovery-20261105-105447-498365.txt`: SHA-256 `70b261c69f735587f5dfbfa40eb8b8e6fd82053d5cca9c159b9f83879ed4a550`; targeted entries `0x1400F1310` (truncated, **clipped=True**) and `0x140BF3880` (full, **clipped=False**).
+- `nvlddmkm-61742-booter-discovery-20261105-105502-046855.txt`: SHA-256 `1c2c5de076ed6183b611b5d73720c98cac1212d7a4484c1aa2b100a5a1c49dcb`; targeted entries `0x1409211C0`, `0x140922420`, both **clipped=False**.
+- Both reports confirm `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512` and Ghidra image base `0x140000000`; no hardware or Ghidra DB mutation. Report status COMPLETE means the targeted decompiler ran; **a clipped=True excerpt is not a complete static analysis of that function**.
+
+## Windows firmware path: stronger proven chain
+
+`FUN_1400F1310` calls `IoQueryFullDriverPath(DAT_1413C8F00,...)`, walks backward to the containing directory separator, and requests firmware buffers via the established `FUN_1400F3350` file reader:
+
+- `FUN_1400F3350(0,cVar3,&uStack_1660,&local_15b8)` at displayed call around `0x1400F1826`: GSP image `gsp_ga10x.bin` or `gsp_tu10x.bin` for the family selected by `cVar3`.
+- `FUN_1400F3350(2,cVar3,&uStack_1660,&local_1578)` at displayed call around `0x1400F1847`: UCODES image `ucodes_ga10x.bin` or `ucodes_tu10x.bin`.
+- `FUN_1400F3350(1,cVar3,&uStack_1660,&local_1588)` at displayed call around `0x1400F1899`: conditional `gsp_log_ga10x.bin` or `gsp_log_tu10x.bin`.
+- For the initial two reads, the shown function checks that both returned pointers are nonzero before following a common path. It also contains fallback/alternate flags, so **the real runtime behavior per GPU remains unverified**.
+- The same function reads `EnableGpuFirmware` (shown default `0x12`) and `EnableGpuFirmwareLogs` (shown default `2`), with subsequent masking and helper calls. These are **observed code defaults**, not instructions to modify registry settings.
+- A chip/family bucket is computed from `uVar8` and a revision nibble; the switch selects small numeric internal family IDs that ultimately select filenames. **The exact mapping of AD102/GA102 silicon to these IDs has not been verified from this report.**
+- **Critical current blocker:** `FUN_1400F1310` decompilation was clipped at the first 14,000 characters. Although the three buffer acquisitions appear, their **later consumers, firmware handoff, Booter source, and per-GPU selection** are not in the visible excerpt. Do not infer they are already established.
+
+## Falcon/SEC2 high-security binary execution implementation confirmed at static code level
+
+`FUN_140BF3880` references `flcnLoadAndExecuteHsBinaryViaDma_GA10X` in six control locations and is **not merely a string-printing function**. It consumes a firmware image/descriptor-like argument `param_3`, conditionally creates/mounts a DMA-capable buffer, handles state/controls, transfers data in 0x100-byte increments through the helper `FUN_1406B6470` with register offsets **0x114, 0x11C, 0x118**, and calls several other Falcon control/execute helpers. The routine prepares and performs a high-security binary load/execute sequence in the *static driver logic*. It **does not prove** the image in `param_3` is the production GSP Booter, a matching signed image, or accepted by hardware.
+
+Known **data** references to its function entry (not directly established callsites): `0x141469320`, `0x140E19A0C`, `0x1417E8E3E`, `0x1417E8E45`. These are potential dispatch table/object provenance anchors. Trace the *producer* of `param_3` before assigning any Booter identity. Never call or run a hardware-affecting helper in Ghidra.
+
+## GSP ELF signature section *name selectors*, not crypto verifiers
+
+- `FUN_1409211C0(param_1)` returns `.fwsignature_` by default, switches to `.fwsignature_cc_` when the pointer at `param_1 + 0x2690` is non-null and the byte at that pointer's `+0x249` is nonzero.
+- `FUN_140922420(param_1)` returns `.fwsignature_cc_` if `FUN_14011D9F0()` is nonzero; otherwise returns `.fwsignature_spdm_lite_` when a pointer at `param_1 + 0x2688` is non-null and a byte at its `+0x111` is set; otherwise `.fwsignature_`.
+- Both are short string-returning functions; neither excerpt contains cryptographic verification or complete architecture-suffix resolution. Their data XREFs around `0x140632E6E`, `0x140632E75`, `0x140632EB1`, `0x140632EB8` suggest dispatch/table linkage, which is **unproven without consumer analysis**. `FUN_140633AA0` is another owner of `.fwsignature_` and is a practical next decompilation target.
+- Keep GSP ELF `.fwsignature_ad10x` and `.fwsignature_ga10x` (each 4,096 bytes in the installed GSP file) **separate** from Booter bundle signature records (768 bytes in the Linux reference containers).
+
+## Focused Ghidra follow-up implementation and strictly bounded commands
+
+The earlier script's flat first-14,000-character clipping concealed later `FUN_1400F1310` buffer uses. The existing read-only discovery script is extended with optional `DECOMP_FOCUS_TERMS` (1–8 short literal terms), which emits line-numbered source-code excerpts around matches from the **complete decompiled C string**, with a 14,000-character output limit, explicit term match counts, and PARTIAL status when requested evidence is absent or excerpt windows are omitted. It makes **no Ghidra project changes**, no new decompilation assumptions, and does **not** constitute complete control-flow proof. Four added host-side tests cover later occurrences, missing terms, bounded repeated matches, and invalid input. Together with existing tests, **16/16 local tests passed**; Ghidra execution of this new mode still pending.
+
+**A — Follow the three file buffers after acquisition, without another full memory scan:**
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1400f1310"], "DECOMP_FOCUS_TERMS": ["lStack_1688", "lStack_1678", "lStack_1670", "FUN_1400f3350"], "__name__": "__main__"})
+~~~
+
+**B — Independent ELF section-consumer and GSP boot-path tracing, existing short-function mode:**
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140633aa0", "0x1400ef940"], "__name__": "__main__"})
+~~~
+
+The second command addresses a GSP ELF signature-prefix reference owner and the sole existing direct caller of the long firmware initialization function. Their behavior is not established until these reports are reviewed. Do not repeat the large 114 MB scan or the already completed decompilations of `FUN_140BF3880`, `FUN_1409211C0`, or `FUN_140922420` unless subsequent evidence requires it.
+
+**Remaining proof gates:** actual Windows selected Booter image/header/signatures and their binary source, SEC2/ACR handoff provenance, AD102 versus GA102 dynamic dispatch, GSP signature authentication and firmware boot acceptance, passive dual-GPU pre-Stop safety and recovery. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`.
+
+---
+
 # 2026-11-05 — Exact CSV XREF pass and Windows firmware-file reader confirmed
 
 ## Primary evidence

@@ -105,5 +105,35 @@ class DiscoveryPatternTests(unittest.TestCase):
         self.assertEqual(list(probe.marker_hits(b'not an Nvidia archive path')), [])
 
 
+# This test class is intentionally appended: discovery tests remain unchanged.
+class FocusedDecompileTests(unittest.TestCase):
+    def test_bounded_excerpt_includes_later_use_not_just_function_prefix(self):
+        source = '\n'.join(['line %d' % i for i in range(400)] + ['gsp_buffer_loaded_and_used()'])
+        text, counts, truncated = probe.decompilation_excerpt(source, ['gsp_buffer_loaded_and_used'], limit=1500)
+        self.assertEqual(counts['gsp_buffer_loaded_and_used'], 1)
+        self.assertIn('L401: gsp_buffer_loaded_and_used()', text)
+        self.assertNotIn('L1: line 0', text)
+        self.assertFalse(truncated)
+
+    def test_absent_term_is_not_fabricated(self):
+        text, counts, truncated = probe.decompilation_excerpt('int x = 1;', ['FIRMWARE_SUBSYSTEM'])
+        self.assertEqual(counts, {'FIRMWARE_SUBSYSTEM': 0})
+        self.assertEqual(text, '')
+        self.assertFalse(truncated)
+
+    def test_capped_occurrences_flag_missing_context(self):
+        source = '\n'.join('buffer_use(x);' for _ in range(30))
+        text, counts, truncated = probe.decompilation_excerpt(source, ['buffer_use'])
+        self.assertEqual(counts['buffer_use'], 30)
+        self.assertTrue(truncated)
+        self.assertIn('buffer_use(x)', text)
+
+    def test_excessive_terms_and_multiline_terms_refused(self):
+        with self.assertRaisesRegex(ValueError, 'DECOMP_FOCUS_TERMS'):
+            probe.decompilation_excerpt('code', ['x'] * 9)
+        with self.assertRaisesRegex(ValueError, 'DECOMP_FOCUS_TERMS'):
+            probe.decompilation_excerpt('code', ['line\nline'])
+
+
 if __name__ == '__main__':
     unittest.main()
