@@ -1,3 +1,48 @@
+# 2026-11-05 — Existing callsite assembly clarifies Falcon dispatch ABI and status consumption
+
+## Source and verification
+
+User-run PyGhidra report nvlddmkm-61742-booter-discovery-20261105-124949-471906.txt, 2,289 bytes, SHA-256 8d22e0097242d0764a9625035e089df517d9b96256d3ccdeee1f66bc1212f695; Windows nvlddmkm.sys 617.42 Ghidra MD5 3fb9afac9d0e394723e830aa14e60512, base 0x140000000. SCAN_STRINGS=SKIPPED_BY_CALLER; TRACE_INSTRUCTION_SITES reports two existing executable code sites, STATUS=COMPLETE, HARDWARE_ACTION=NONE, GHIDRA_MUTATION=NONE. No decompilation was requested or performed in this run. The Ghidra listing is the primary evidence; no driver/firmware modification or physical GPU test occurred.
+
+## ABI inconsistency A — now resolved at the machine-code callsite
+
+Site 0x1402E7E6B lies in FUN_1402E7E60. Ghidra prints, in order:
+
+    0x1402E7E60 SUB RSP,0x28
+    0x1402E7E64 MOV qword ptr [RCX + 0x4b0],RDX
+    0x1402E7E6B CALL 0x1406b3fd0
+    0x1402E7E70 XOR EAX,EAX
+    0x1402E7E72 ADD RSP,0x28
+    0x1402E7E76 RET
+
+Under the Windows x64 calling convention, RCX is the first pointer argument. No instruction changes RCX between storing dispatch+0x4B0=parent and invoking FUN_1406B3FD0. Therefore, the separately decompiled FUN_1406B3FD0(longlong param_1) receives the **same dispatch-object pointer** in RCX. Its previously recovered fixed-default writes at offsets +0x3F0 through +0x458 and +0x988 through +0x9A4 are assigned to the nested 0x9B0-byte dispatch object on this path. This supersedes the preceding caution that the helper's pointer argument might target a different object. Earlier decompiler output that printed FUN_1406B3FD0() with no arguments was an incomplete prototype inference. Following the call, FUN_1402E7E60 explicitly sets EAX=0, so its normal return is zero independently of the callee's EAX.
+
+The instruction context establishes register transfer at this site, not runtime GPU behavior or hidden function-side effects outside the separately recovered complete callee.
+
+## ABI inconsistency B — caller's status check established; callee forwarding unresolved
+
+At code site 0x14017B258, within outer-object constructor FUN_14017AF30, listing output includes:
+
+    0x14017B252 MOV RDX,RBP
+    0x14017B255 MOV RCX,RSI
+    0x14017B258 CALL 0x141752aa0
+    0x14017B25D MOV EBX,EAX
+    0x14017B25F TEST EAX,EAX
+    0x14017B261 JNZ 0x14017b2a1
+    0x14017B263 MOV R8,R14
+
+This proves the outer constructor **uses the value in EAX immediately after FUN_141752AA0 as its success/error status**, contradicting a literal reliance on the independent Ghidra decompilation prototype void FUN_141752AA0(...). The caller passes arguments RCX=RSI and RDX=RBP. It does **not**, by itself, prove what value the callee places in EAX or whether FUN_141752AA0 forwards FUN_14056C510's return. The complete earlier decompilation of FUN_141752AA0 ends with FUN_14056C510(param_1), but the final assembly epilogue has not been examined. Therefore keep the precise callee return type/forwarding proof gate **OPEN** and do not assert error-propagation semantics at runtime.
+
+## Updated next read-only task
+
+Use existing committed TRACE_INSTRUCTION_SITES option to inspect exactly the final call and epilogue inside FUN_141752AA0, at previously observed callsite VA 0x141752AF2:
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x141752af2"], "__name__": "__main__"})
+
+If instructions show a call immediately followed by epilogue/RET with no writes to EAX/RAX, status forwarding is strongly established at ABI level; otherwise report the actual result without forcing a semantic label. Next research must identify a **real indirect invocation** of the nested dispatch slot +0x170 and the production signed Falcon/Booter firmware descriptor producer. The 0x3550 outer object, its embedded context at +0xF0, nested dispatch pointer at outer+0x108 and back-pointer at dispatch+0x4B0 remain static construction facts only. AD102/GA102 actual runtime branch, signed Booter image, cryptographic acceptance and active unlock are unproven. CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false; immutable recovery audit untouched.
+
+---
+
 # 2026-11-05 — Outer HAL callback selection and finalization flags; targeted callsite instruction inspection added
 
 ## Uploaded evidence, direct scope and status
