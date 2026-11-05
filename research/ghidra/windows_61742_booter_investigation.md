@@ -1,3 +1,29 @@
+# 2026-11-05 — GSP logging initializer classified; excluded from Booter provenance shortlist
+
+## Source and verification
+
+User-run read-only Ghidra report: `nvlddmkm-61742-booter-discovery-20261105-114128-691537.txt`, SHA-256 `79ce078bdb09428a0f82d628146d518108fa90633ee10114fad8dcffd660d14a`. Same verified `nvlddmkm.sys` 617.42 binary (MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`). `FUN_1401AA580` complete decompilation (`clipped=False`, `STATUS=COMPLETE`); `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. Caller `0x1401B10B6` in `FUN_1401B0E00` is an existing unconditional call, as previously observed.
+
+## Concrete function classification
+
+`FUN_1401AA580(param_1,param_2)` configures **GSP firmware logging buffers**. It reads `RmGspLogBufferSizeTaskInit`, `RmGspLogBufferSizeTaskIntr`, `RmGspLogBufferSizeTaskRm`, and `RmGspLogBufferSizeTaskMnoc`; visible defaults include `0x10000` for several task log buffers, with some descriptors using `0x1000`. It constructs seven logging descriptors indexed through the static `PTR_s_LOGINIT_140E8A790`/associated tables, calls `FUN_1401AEBE0` to set them up, and optionally selects a chip-family/revision-dependent `fwlogging_kernel_*` descriptor for `LOGKRNL`. It references `FUN_140637160`, `FUN_140633AF0`, and calls `FUN_1401A97F0` in a finalization/error branch. No raw `UCODES`, `NVUCODES`, `Booter`, or firmware image-selection logic appears in this complete decompilation.
+
+**Corrected prioritization:** this function was previously nominated as an unknown post-staging UCODES consumer. That hypothesis is not supported by the newly available source; reclassify as a **logging-only initializer** and remove from Booter/SEC2 production-image search targets. Chip-family checks here select *logging resource descriptions*, not production Booter images. The default logging-buffer sizes are static observations, not recommended system settings.
+
+## Most useful next static trace
+
+Previously grounded stages remain: `FUN_1400F3350` opens GSP/UCODES files; `FUN_1401AB740` parses GSP ELF and stages GSP and optional UCODES bytes through `FUN_1401AFD60` into distinct resource contexts (GSP near `param_2+0xB00`; UCODES near `param_2+0x69F70`). `FUN_1401B0E00` subsequently contains the GSP boot-attempt loop, but its former broad decompilation was clipped. The next analysis should **look for code using the staged UCODES resource** before attributing an actual Windows production Booter.
+
+Run a bounded, read-only focused decompilation of `FUN_1401B0E00` at known source-level anchor names/offsets, without repeating the full memory scan:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1401b0e00"], "DECOMP_FOCUS_TERMS": ["0x69f70", "0x69f78", "FUN_1401a7840", "FUN_1401b2c10"], "__name__": "__main__"})
+```
+
+If offset literals are absent, that is **not** proof the UCODES resource is unused: its pointer may be propagated through objects, aliases or indirect dispatch. Use resulting concrete callsites to narrow subsequent analysis. Do not investigate `FUN_1401AEBE0` as Booter-related solely because it is called here; it is a logging-setup lead. **No production Booter source/selection/cryptographic acceptance proven; no device action.** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`.
+
+---
+
 # 2026-11-05 — FUN_1401AFD60 decoded: common GSP/UCODES mapping and copy helper
 
 ## Evidence and scope
