@@ -1,3 +1,34 @@
+# 2026-11-05 14:34 PST — Manual +0x170/+0x2160 Ghidra CSV triage: static pointer-table hypothesis, not proven HS-object alias
+
+## New passive evidence and parsing caveats
+
+User exports `0x2160.csv` (11,885 bytes; SHA-256 `a880c734f0fc1d75161fd5522cf51628ca513b0983ae8ca11f87bda234d7e78b`) and `0x170(1).csv` (172,500 bytes; SHA-256 `70e6d8c2529071f169a80d588581732d32ad4ad4673227261a010b242159c50e`), compared with completed passive report `nvlddmkm-61742-booter-discovery-20261105-143104-624064.txt` from Windows 617.42 `nvlddmkm.sys` (MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra base `0x140000000`). The CSV `Location` field is generally the address of **matched displacement bytes inside an instruction**, not the opcode start; recover the containing instruction before using it as a code address.
+
+`0x2160.csv` has **172 raw matches**: 167 strict `[base+0x2160]` instruction operands and five undefined/data records. The only explicit recognized stores are the already identified instruction starts `0x140A492DE` (16-byte MOVUPS), `0x141568841` (32-bit zero) and `0x1416656EC` (32-bit R14D). **New address-taking leads** at matched-byte locations `0x140A4570E` (`LEA RAX,[RDI+0x2160]`) and `0x140A475D8` (`LEA RAX,[RBX+0x2160]`) may expose implicit helper/copy initialization; a LEA itself is not a write.
+
+`0x170(1).csv` has **2,586 raw matches**; only 1,503 render an exact bracketed `+0x170` memory operand, including 331 textual qword stores and 181 Ghidra-rendered `=>FUN_*` stores. Precisely one of those annotated qword stores names `FUN_140BF3880` (matched-byte VA `0x1417E8E48`, the previously confirmed nested Falcon HS loader registration) and 15 name `FUN_140092D80` (including matched-byte VA `0x1417E8EFC` in the same constructor). The shared offset across many distinct objects is not an object alias or callsite proof. General raw byte counts are not comparable to previous executable-only scan counts without matching their scopes.
+
+## 64-byte template contents resolved by the latest user-run static report
+
+Report ended `STATUS=COMPLETE` and reported `GHIDRA_MUTATION=NONE`, `HARDWARE_ACTION=NONE`. `FUN_140A48220` uses one of two 64-byte groups as SIMD sources for a sequence copying four consecutive 16-byte chunks into `[R8+0x2160..+0x219F]`.
+
+- Static `0x140FE99C0`, eight LE qwords: `0x140FE99C0, 0x140C153C0, 0x140C15460, 0x140C154E0, 0x140C15560, 0, 0, 0`.
+- Static `0x140FE9A00`, eight LE qwords: `0x140FE9A00, 0x140C153C0, 0x140C15460, 0x140C154E0, 0x140C15690, 0x140C15770, 0x140C15DA0, 0x140C16100`.
+
+Both are pointer-shaped groups with **self-referential first qwords**, not all-zero constants. Remaining pointer-shaped values must be validated as executable/defined Ghidra functions before naming them callback tables. There is still **no proof** that the initializer `R8` aliases the `RBX` context in `FUN_140124A90`, nor that `[RBX+0x2160]` is the separately allocated `0x9B0` Falcon HS dispatch object. Under the conditional alias hypothesis alone, reading `[static_table+0x170]` would inspect `0x140FE9B30` or `0x140FE9B70`; these are **beyond** the known 64-byte blocks and could be unrelated neighboring data. Do not assume a callback target there.
+
+## Smallest next read-only acquisition
+
+Execute in the existing PyGhidra Python 3 console (no new code, no broad memory scan, no repeat of timed-out decompilation):
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_STATIC_BYTES": ["0x140fe9b30", "0x140fe9b70"], "TRACE_INSTRUCTION_SITES": ["0x140a4570e", "0x140a475d8", "0x140a492de", "0x140124b4c"], "__name__": "__main__"})
+```
+
+Check the LEA destinations and their downstream uses, the initializer's R8 base and consumer's RBX base, then actual pointer identity. Treat missing/short static reads as PARTIAL. Only follow the real signed `FUN_140BF3880` descriptor after confirming a nested dispatch invocation. No production Booter image/header/signature provider, per-GPU runtime selector, signature acceptance, detach, unlock or flash established. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`; immutable recovery audit unchanged.
+
+---
+
 # 2026-11-05 14:20 PST — +0x2160 writer-site forensics: two constant pools, one proven 32-bit clear, one selector-dependent 32-bit store; decompiler limits explicit
 
 ## Primary user-run evidence and exact run status
