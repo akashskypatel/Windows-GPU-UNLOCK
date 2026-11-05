@@ -17,6 +17,9 @@ class Block:
     def isInitialized(self):
         return self.initialized
 
+    def isExecute(self):
+        return False
+
     def getName(self):
         return '.text'
 
@@ -129,6 +132,61 @@ class DataReferenceSiteTests(unittest.TestCase):
             probe.inspect_data_reference_sites(Program(), ['0x140e19a0c'] * 9, lambda line: None)
         with self.assertRaisesRegex(ValueError, 'TRACE_DATA_SITES'):
             probe.inspect_data_reference_sites(Program(), '0x140e19a0c', lambda line: None)
+
+
+class InstructionSiteTests(unittest.TestCase):
+    class Insn:
+        def __init__(self, addr, op):
+            self.addr, self.op = addr, op
+        def getAddress(self):
+            return self.addr
+        def __str__(self):
+            return self.op
+
+    def test_existing_callsite_context_is_bounded_and_ordered(self):
+        from types import SimpleNamespace
+        base = 0x1402e7e60
+        insns = [self.Insn(base + i, op) for i, op in enumerate(
+            ['mov rcx,rbx', 'mov rdx,rsi', 'call 0x1406b3fd0', 'test eax,eax', 'ret'])]
+        by_addr = {i.getAddress(): i for i in insns}
+        listing = SimpleNamespace(
+            getInstructionContaining=lambda a: by_addr.get(a),
+            getInstructionBefore=lambda a: by_addr.get(a - 1),
+            getInstructionAfter=lambda a: by_addr.get(a + 1))
+        fn = SimpleNamespace(
+            getEntryPoint=lambda: base, getName=lambda: 'test_function',
+            getBody=lambda: SimpleNamespace(contains=lambda a: base <= a < base + 5))
+        class ExecutableBlock(Block):
+            def isExecute(self):
+                return True
+        class TestProgram(Program):
+            def getListing(self):
+                return listing
+            def getFunctionManager(self):
+                return SimpleNamespace(getFunctionContaining=lambda a: fn)
+        p = TestProgram()
+        p.memory.block = ExecutableBlock()
+        out = []
+        with patch.object(probe, '_address', side_effect=lambda program, n: n):
+            self.assertTrue(probe.inspect_instruction_sites(p, [hex(base + 2)], out.append))
+        self.assertEqual(sum('  AT VA=' in line for line in out), 1)
+        self.assertTrue(any('  BEFORE VA=' in line and 'mov rcx,rbx' in line for line in out))
+        self.assertTrue(any('  AT VA=' in line and 'call 0x1406b3fd0' in line for line in out))
+        self.assertTrue(any('  AFTER VA=' in line and 'test eax,eax' in line for line in out))
+        self.assertTrue(any('ABI_OR_RUNTIME_NOT_PROVEN' in line for line in out))
+
+    def test_nonexecutable_site_reports_partial(self):
+        p = Program()
+        out = []
+        with patch.object(probe, '_address', side_effect=lambda program, n: n):
+            self.assertFalse(probe.inspect_instruction_sites(p, ['0x1402e7e6b'], out.append))
+        self.assertTrue(any('INSTRUCTION_SITE_UNAVAILABLE' in line for line in out))
+
+    def test_unbounded_or_scalar_site_input_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'TRACE_INSTRUCTION_SITES'):
+            probe.inspect_instruction_sites(Program(), ['0x1402e7e6b'] * 5, lambda line: None)
+        with self.assertRaisesRegex(ValueError, 'TRACE_INSTRUCTION_SITES'):
+            probe.inspect_instruction_sites(Program(), '0x1402e7e6b', lambda line: None)
 
 if __name__ == '__main__':
     unittest.main()

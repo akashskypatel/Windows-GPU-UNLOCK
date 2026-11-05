@@ -1,3 +1,36 @@
+# 2026-11-05 — Outer HAL callback selection and finalization flags; targeted callsite instruction inspection added
+
+## Uploaded evidence, direct scope and status
+
+Report **nvlddmkm-61742-booter-discovery-20261105-124243-679240.txt**: exact uploaded size 18,724 bytes, SHA-256 **98d35a81225b9dd4c5fdd4cf142d0d6e577566b8d1c43e2f79bb255d4c31cdf4**. Ghidra-loaded Windows 617.42 nvlddmkm.sys MD5 **3fb9afac9d0e394723e830aa14e60512**, base 0x140000000; passive read-only existing function/reference map, no hardware action or database mutation, SCAN_STRINGS disabled.
+
+- FUN_140179580 (direct caller 0x14017B23E, DATA reference 0x1413DCC50): **clipped=True**, visible C capped at 14,000 characters, so combined report ends **STATUS=PARTIAL**. Do not claim the function's full body/selector logic was reviewed.
+- FUN_1401793C0 (direct caller 0x14017B2DF): **clipped=False**, complete decompiled function. Both were called from the previously established FUN_14017AF30 outer 0x3550-byte constructor (setup, then post-initialization).
+
+## Distinguish outer callback table from the nested Falcon HS dispatch slot
+
+FUN_140179580(longlong param_1,longlong param_2,longlong param_3) initializes an **architecture-dependent callback table in the outer object**. The visible code loads uVar1 = *(ushort *)(param_2+0x10), uVar2 = *(ushort *)(param_3+0x10), then derives a high-bit group uVar3 = uVar1 >> 5 and low 5-bit subselector uVar7 = uVar1 & 0x1f, and selects among many named function addresses and fallback implementations. Visible assignments include outer-object fields **+0x1B0, +0x1B8, +0x1C0, +0x1C8, ... through at least +0x278**. The extent and further conditions of the clipped suffix are NOT determined. Both descriptor inputs are observed as reads; the visible decisions mostly use the first descriptor. No visible proof of an HS Booter image parse, signed-image selector, or invocation of FUN_140BF3880.
+
+This *outer* callback table must not be conflated with the separately constructed 0x9B0-byte **nested** dispatch object at outer+0xF0+0x18 = outer+0x108, whose own **slot +0x170** is conditionally assigned to FUN_140BF3880 or alternative FUN_140092D80 in FUN_1417E8550. The slot offset +0x170 is relative to the nested dispatch object, not to the outer 0x3550-byte allocation.
+
+FUN_1401793C0(longlong param_1,longlong param_2,longlong param_3) is a **class-dependent feature/state initializer** for that outer object. The complete body reads class selectors at param_2+0x10 and param_3+0x10, sets conditional flags at outer +0x58, +0x3C4, +0x3C5, +0x3C6, +0x3CB, +0x3E0, +0x3E1; clears or defaults +0x3C3, +0x3C8, +0x3CA, +0x3CC, +0x3D0, +0x3D8, +0x104; and returns. It does not directly reference the nested +0x170 dispatch slot or provide any signed image descriptor. Static GPU generation-specific groups are not runtime evidence for the user's two physical GPUs.
+
+## Targeted resolution of previously recorded ABI contradictions
+
+Two **unresolved**, not-yet-proven decompiler ABI issues remain from earlier turns:
+1. FUN_1402E7E60 writes dispatch+0x4B0 = parent and calls FUN_1406B3FD0(), but the separately decompiled callee has a required pointer argument and many field writes. Actual RCX and other register contents at **0x1402E7E6B** have not been checked.
+2. FUN_14017AF30's decompiler shows assignment/checking an integer result from FUN_141752AA0 at **0x14017B258**; independently, the helper was decompiled as returning void. Check whether the machine code tests the return register after the call and whether the argument/return ABI inference is sound. Neither contradictory interpretation should be declared proven until instruction-level evidence is collected.
+
+A small additive option **TRACE_INSTRUCTION_SITES** was implemented in existing research/ghidra/nvlddmkm_booter_discovery.py: accepts at most four explicit loaded virtual addresses in executable blocks, uses already existing Ghidra Listing instructions (no disassemble/reanalyze/write) to print up to 12 earlier and 4 later instructions within the same Ghidra function, and emits explicit final STATUS=COMPLETE/PARTIAL/ERROR plus report path. Unavailable/executable mismatch yields PARTIAL, not a false success. The focused output is **instruction context, not ABI or runtime proof**. Regression tests in existing research/ghidra/test_nvlddmkm_string_leads.py cover exact bounded instruction order, invalid site handling and request-size/input rejection. Initial local tests exposed missing properties in the test mocks; these were fixed without weakening checks. **Final host Python syntax compilation passed, and 24/24 local unit tests passed.** Ghidra execution of the new option has not happened.
+
+Read-only next command after syncing repository main:
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x1402e7e6b", "0x14017b258"], "__name__": "__main__"})
+
+For the truncated outer-table function, any later investigation must use DECOMP_FOCUS_TERMS driven by actual target offsets/functions; do not assume its omitted tail is irrelevant. The main remaining execution proof is a **real indirect invocation** through the *nested* dispatch object's +0x170 field, including its third-argument signed-image descriptor provider, signed production Booter origin, per-AD102/GA102 branch and signature acceptance. Those gates remain open and untested. No firmware flash, unlock, detach, driver/UEFI mutation or GPU execution authorized by these static findings. CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false. Immutable recovery audit unchanged.
+
+---
+
 # 2026-11-05 — Outer 0x3550-byte object contains HS dispatch-owner subobject; field defaults and ABI ambiguities recovered
 
 ## User-run Ghidra evidence

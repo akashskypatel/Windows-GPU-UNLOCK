@@ -28,6 +28,7 @@ MAX_REFS_PER_HIT = 10
 MAX_TARGETS = 4
 MAX_INCOMING_REFS = 24
 MAX_DATA_SITES = 8
+MAX_INSTRUCTION_SITES = 4
 DECOMP_TIMEOUT_SECONDS = 12
 MAX_DECOMP_CHARS = 14000
 
@@ -309,6 +310,59 @@ def inspect_data_reference_sites(program, sites, log):
     return complete
 
 
+
+def inspect_instruction_sites(program, sites, log):
+    """Print bounded existing instruction listings around explicit call sites.
+
+    Read-only: no disassembly, analysis, database writes, or implied ABI interpretation.
+    """
+    if (isinstance(sites, (str, bytes)) or not isinstance(sites, (list, tuple)) or
+            len(sites) > MAX_INSTRUCTION_SITES):
+        raise ValueError('TRACE_INSTRUCTION_SITES requires at most %d explicit addresses' % MAX_INSTRUCTION_SITES)
+    memory = program.getMemory()
+    complete = True
+    for raw in sites:
+        address = _address(program, int(str(raw), 0))
+        block = memory.getBlock(address)
+        if block is None or not block.isExecute():
+            log('INSTRUCTION_SITE_UNAVAILABLE VA=%s not in executable block' % address)
+            complete = False
+            continue
+        listing = program.getListing()
+        functions = program.getFunctionManager()
+        insn = listing.getInstructionContaining(address)
+        fn = functions.getFunctionContaining(address)
+        if insn is None or fn is None:
+            log('INSTRUCTION_SITE_UNAVAILABLE VA=%s existing instruction/function missing' % address)
+            complete = False
+            continue
+        log('INSTRUCTION_SITE VA=%s actual=%s function=%s(%s)' % (
+            address, insn.getAddress(), fn.getName(), fn.getEntryPoint()))
+        preceding = []
+        cursor = insn
+        for _ in range(12):
+            older = listing.getInstructionBefore(cursor.getAddress())
+            if older is None or not fn.getBody().contains(older.getAddress()):
+                break
+            preceding.append(older)
+            cursor = older
+        following = []
+        cursor = insn
+        for _ in range(4):
+            newer = listing.getInstructionAfter(cursor.getAddress())
+            if newer is None or not fn.getBody().contains(newer.getAddress()):
+                break
+            following.append(newer)
+            cursor = newer
+        for current in reversed(preceding):
+            log('  BEFORE VA=%s asm=%s' % (current.getAddress(), current))
+        log('  AT VA=%s asm=%s' % (insn.getAddress(), insn))
+        for current in following:
+            log('  AFTER VA=%s asm=%s' % (current.getAddress(), current))
+        log('  INSTRUCTION_CONTEXT_ONLY=TRUE ABI_OR_RUNTIME_NOT_PROVEN')
+    return complete
+
+
 def decompilation_excerpt(code, terms, limit=MAX_DECOMP_CHARS):
     """Extract bounded line-numbered evidence around requested C identifiers.
 
@@ -458,6 +512,10 @@ def main():
             status = 'COMPLETE'
         if bool(globals().get('SCAN_CSV_LEADS', False)):
             scan_known_string_references(program, output)
+        instruction_sites = globals().get('TRACE_INSTRUCTION_SITES', ())
+        if instruction_sites and not inspect_instruction_sites(program, instruction_sites, output):
+            status = 'PARTIAL'
+            output('INSTRUCTION_SITES_COMPLETE=FALSE; one or more sites unavailable')
         sites = globals().get('TRACE_DATA_SITES', ())
         if sites and not inspect_data_reference_sites(program, sites, output):
             status = 'PARTIAL'
