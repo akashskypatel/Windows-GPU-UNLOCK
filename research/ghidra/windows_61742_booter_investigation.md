@@ -1,3 +1,45 @@
+# 2026-11-05 — Windows 617.42 GSP ELF version/image/signature section extraction traced
+
+## Evidence and verification
+
+Two user-executed, read-only PyGhidra reports from the previously verified nvlddmkm.sys 617.42 (MD5 3fb9afac9d0e394723e830aa14e60512, base 0x140000000):
+
+- nvlddmkm-61742-booter-discovery-20261105-112154-719245.txt — SHA-256 aa0b1222732c0cea4922b57be3e0cbb2cf9037fd2b615108a693ed4506fb7a71. Target FUN_1401AB740; total decompiled C 7,207 characters, but broad focused search (param_3, FUN_1401) exceeded the script's 8 matches per term, and the excerpt omitted source lines. STATUS=PARTIAL; excerpt_truncated=True. Meaningful excerpts remain valid; missing lines are unreviewed.
+- nvlddmkm-61742-booter-discovery-20261105-112158-471883.txt — SHA-256 578ce9f1dda88a53006c84bff4bb047fa566e96d6ed21dd2518663c0f5d0cbfd. Target FUN_1401A7840; 2,844 C characters, selected term excerpts complete, STATUS=COMPLETE for request, but only excerpts displayed. This does not demonstrate firmware runtime success or full function coverage.
+
+## Major advance: installed Windows GSP ELF is processed by the driver
+
+The composite firmware structure previously populated by FUN_1400F3350 and passed by FUN_1401B0E00 reaches FUN_1401AB740(param_1,param_2,param_3). The observed code:
+
+1. Assigns local_a8=".fwversion" and calls FUN_1401A9AE0(param_1,param_2,*param_3,*(undefined4 *)(param_3+1)), twice in the visible path, with output pointers configured in adjacent local variables. It checks the returned version section is non-null and NUL-terminated; on failure logs an error and returns a nonzero status. Exact function calling convention/extra stack arguments are not fully recovered by the decompiler.
+2. Assigns local_a8=".fwimage"; sets output-pointer locations to param_3+2 and param_3+3, and calls FUN_1401A9AE0 again. This strongly supports GSP ELF section discovery with image pointer and length returned into the composite firmware structure, but precise struct types and bounds require inspection.
+3. Obtains a section-name prefix via an indirect call through Ghidra's guard dispatch mechanism, then calls FUN_1401AA0E0(param_1,param_2,local_68,0x20). It subsequently passes local_68 as the requested section name to FUN_1401A9AE0 with output locations at param_3+4 and param_3+5. In combination with earlier FUN_140631750 slot +0x938 dispatch, this supports a path for selecting an appropriate GSP ELF .fwsignature_* section, **but the exact indirect target and complete constructed name have not yet been proven at runtime**.
+4. Allocates/initializes a DMA-capable resource via FUN_1401B9020, using the newly located section's length rounded up to a 0x100-byte boundary, and invokes mapping helpers (e.g. FUN_1401B87B0 and FUN_1401BC180). This is static code for staging a section; it is not proof of signature authentication or hardware acceptance.
+
+**Important scope distinction:** These sections are from the external Windows GSP ELF. The known 4,096-byte ELF .fwsignature_ad10x / .fwsignature_ga10x are separate from the 768-byte production Booter signature records in the verified Linux archive comparison. This new evidence does **not** identify the signed Windows Booter image, prove it comes from NVUCODES, or demonstrate an unlock sequence.
+
+## Boot-attempt wrapper FUN_1401A7840
+
+The displayed excerpt validates a non-null output flag param_5, clears it, checks several device-context flags, and makes a crucial indirect call with (param_1,param_2,param_3), returning on nonzero error. It also references RmGspScanWprEndMargin in a later conditional branch. The indirect call target and exact semantics of param_3 are NOT resolved; it is not yet supportable to identify it as Booter execution, attestation, signature acceptance, or GSP start without tracing the vtable slot and complete decompilation. The visible excerpt is incomplete even though requested focus matches were covered.
+
+## Required next static evidence
+
+Priority 1: **Full decompilation** of FUN_1401AB740 and FUN_1401A7840, both short enough for the current MAX_DECOMP_CHARS 14,000 limit. Set SCAN_STRINGS=False, do not supply DECOMP_FOCUS_TERMS, and capture complete readable bodies before making data-flow claims:
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1401ab740", "0x1401a7840"], "__name__": "__main__"})
+~~~
+
+Priority 2: Inspect the exact ELF section lookup and generated signature-name helper to determine their input/output contracts. Initial bounded decompilation:
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1401a9ae0", "0x1401aa0e0"], "__name__": "__main__"})
+~~~
+
+Next after these: identify the function-pointer target of the GSP signature-prefix call, the param_3 pointer/size layout, and the origin of Windows 617.42's actual GA102/AD102 Booter image/signature records. No firmware/driver/UEFI changes or hardware execution are authorized by these findings; CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false.
+
+---
+
 # 2026-11-05 — Firmware-structure validation and GSP ELF signature-prefix vtable slot resolved
 
 ## New evidence (two actual Ghidra runs)
