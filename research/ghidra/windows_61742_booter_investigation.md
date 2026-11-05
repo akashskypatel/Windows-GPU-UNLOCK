@@ -1,3 +1,38 @@
+# 2026-11-05 — Falcon HS dispatch object linked bidirectionally to parent; parent initializer classified
+
+## New complete passive decompilation
+
+Report nvlddmkm-61742-booter-discovery-20261105-123324-990179.txt, SHA-256 06578432093815b551c1f8850c83627f461488961adb67f33d37568967899334 (3,501 bytes). Target nvlddmkm.sys Windows driver 617.42, MD5 3fb9afac9d0e394723e830aa14e60512, image base 0x140000000. Ghidra script: SCAN_STRINGS=SKIPPED_BY_CALLER, no database mutation, no hardware action, both decompilations clipped=False, STATUS=COMPLETE. These are static decompiler results, not runtime validation.
+
+## Concrete low-level observations
+
+1. FUN_1402E7E60(longlong param_1, undefined8 param_2), direct call from 0x14056C5CF in FUN_14056C510:
+   - Stores *(undefined8 *)(param_1 + 0x4B0) = param_2.
+   - Calls FUN_1406B3FD0(), which is NOT decompiled in this report. Because the call has no explicit decompiled parameters, do not assume it has no side effects or infer its purpose.
+   - Returns 0 on the visible normal control path. There are no conditional error returns in this complete function.
+   - Earlier FUN_14056C510 passes (local_18,param_1) to this helper. Therefore, in this caller, param_1 of the helper is the 0x9B0-byte dispatch object constructed by FUN_1417E99B0 and param_2 is the parent context.
+   - The parent stores the dispatch object at *(parent+0x18) = local_18 following successful initialization. Thus parent+0x18 -> dispatch object and dispatch+0x4B0 -> parent are BOTH proved by source-level assignments on the successful path.
+
+2. FUN_141752AA0(longlong param_1,longlong param_2), containing previous target 0x141752AF2:
+   - Uses a 16-bit group/bit selector *(ushort *)(param_2+0x10), as in the previously recovered constructor's architecture/class-dependent table initializer.
+   - Writes byte 1 to param_1+0x10; writes class/feature-conditioned bytes to +0x12 and +0x13; writes byte 0 to +0x14.
+   - Calls FUN_14056C510(param_1), with decompiled return type void. It does not examine the integer returned from FUN_14056C510. That means this wrapper does not itself propagate a builder error, NOT that the builder cannot fail.
+   - Sixteen existing incoming direct call references: 0x14174C74A, 0x14017B258, 0x1417E4F86, 0x1417E72F6, 0x141801A96, 0x141703D6C, 0x141774F31, 0x14179DD74, 0x14179E841, 0x1417A94C3, 0x1417DECB7, 0x1417D46F3, 0x1417D6061, 0x1417D9BEE, 0x1417EB408, 0x1417EDDD2. The varied locations establish widespread source-level use but are not physical-GPU runtime evidence.
+
+## Evidence-to-execution status and next bounded action
+
+Resolved: allocation and initialization of the 0x9B0-byte dispatch object, class-dependent assignment of slot +0x170 to FUN_140BF3880 or alternative FUN_140092D80, post-registration feature flag initialization that does not overwrite +0x170, parent-to-dispatch link at parent+0x18, and dispatch-to-parent back-pointer at dispatch+0x4B0. These are separate from the earlier Windows GSP ELF and UCODES bindata startup-argument chain.
+
+Unresolved: actual call through dispatch slot +0x170; the image descriptor passed to the HS loader, production Booter image/header/signature provenance, cryptographic acceptance and physical RTX 4090/3080 runtime branch values. The group/bit selector comes from a descriptor at +0x10 and its exact meaning remains unrecovered. Do not assert it is the GPU PCI/device ID or a literal NVIDIA generation code.
+
+Next read-only PyGhidra command, checking the parent initializer's caller and unexamined post-link callee without a full driver scan:
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x14017b258", "0x1406b3fd0"], "__name__": "__main__"})
+
+If either is clipped, report STATUS=PARTIAL and narrow by observed terms. Continue to search for an actual loaded parent+0x18 / dispatch+0x170 indirect call using real Ghidra evidence; do not assume any callsite from generic class initializers. Do not run firmware/driver/UEFI modifications or touch hardware. Safety gates CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false. Immutable process/recovery audit untouched.
+
+---
+
 # 2026-11-05 — HS dispatch object attachment and post-registration flags resolved
 
 ## Primary evidence and validation boundary
