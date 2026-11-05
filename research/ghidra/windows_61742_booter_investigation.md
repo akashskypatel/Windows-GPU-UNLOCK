@@ -1,3 +1,19 @@
+# 2026-11-05 — Direct shared-object callsite confirmed for FUN_140A444D0 and FUN_140A48220
+
+**Primary evidence:** user-provided Ghidra xrefs, decompiled C and exact machine instructions in `FUN_140A47B50` for Windows 617.42 `nvlddmkm.sys`. At `0x140A47B6D`, `MOV RDI,R8` preserves the third argument. At `0x140A47BEB` `MOV R8,RDI` prepares the call to `FUN_140A444D0` (`0x140A47C4C`). At `0x140A47C51`, `MOV R8,RDI` explicitly prepares the second function; after restoring nonvolatile registers, `0x140A47C74 JMP FUN_140A48220` tail-jumps to the initializer. **Therefore the two functions receive the same third-argument object on this call path.** The Ghidra `CALL_RETURN` flow override does not change the machine-code jump semantics. The return-value semantics are not established by inferred `void` prototypes.
+
+The previous ledger's statement that effective callsite arguments were still unavailable is now superseded. Nonetheless this caller proof is **not** proof that `RBX` *inside* `FUN_140A444D0` equals incoming `R8`, nor that either initializer's object aliases `RBX` in `FUN_140124A90` or the nested `0x9B0` Falcon HS dispatch object. If internal `R8 -> RBX` binding holds, the previously proven `[RBX+0x21A0]` construction and `[R8+0x21A0]` template selection compose into one initialization flow. Verify the exact prologue instead of extrapolating from matching offsets.
+
+**Next read-only PyGhidra command** uses the existing script, preserves the bounded final `STATUS`/`REPORT` output, runs no generic scan and asks for one short decompilation plus four instruction windows. The two `FUN_140A444D0` addresses are *sampling anchors* that will resolve to containing existing instructions, not asserted opcode boundaries:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x140a444e8", "0x140a44510", "0x140a47c4c", "0x140a47c74"], "TARGET_FUNCTIONS": ["0x140a47b50"], "__name__": "__main__"})
+```
+
+Follow the constructor's internal parameter-base binding, then the separate published `[RCX] = &RBX+0x2160` at `0x140A475F1`; do not infer an actual `FUN_140BF3880` callback or signed Windows Booter descriptor. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`; immutable process/recovery audit unchanged.
+
+---
+
 # 2026-11-05 14:51 PST — +0x21A0 is the actual +0x2160 template selector; published embedded-object address still untraced
 
 ## Primary evidence and scope
