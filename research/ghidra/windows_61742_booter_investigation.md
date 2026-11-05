@@ -1,3 +1,35 @@
+# 2026-11-05 14:14 PST — Writer-focused +0x2160 scan resolves three static stores, no confirmed GPU-context pointer producer
+
+## Source, integrity and completion status
+
+New user-run Ghidra report: nvlddmkm-61742-booter-discovery-20261105-141443-070611.txt. Original uploaded file **2,695 bytes**, SHA-256 **5b47e7e59a21fdcccdf2f11223256dfe6db86a192f20a787f1b912c6a4544b1e**. Driver nvlddmkm.sys Windows 617.42, MD5 3fb9afac9d0e394723e830aa14e60512, Ghidra image base 0x140000000. Mode: passive read-only existing executable-byte/instruction scan, SCAN_STRINGS skipped, SLOT_SCAN_DISPLACEMENT=0x2160, SLOT_SCAN_FOCUS=write, no Ghidra database or GPU modifications.
+
+Final Ghidra report **STATUS=COMPLETE** (elapsed 0.130s). All **12 initialized executable blocks** and **19,689,472 bytes** covered within fixed budget. **167 raw disp32 matches**, **167 distinct existing instruction matches**, **3 selected field-write candidates**, **3 recorded**, **capped=False**, **scan_complete=True**. Therefore the writer-filter output was not truncated. This is exhaustive only for the specific raw-displacement/opcode/textual filter; it does not exclude computed-address writes, struct copies, aliases, or other instruction forms.
+
+## Three observed explicit write candidates (object identity unknown)
+
+| Instruction VA | Existing Ghidra containing function | Exact instruction | Interpretive boundary |
+|---|---|---|---|
+| 0x140A492DE | FUN_140A48220 | MOVUPS xmmword ptr [R8 + 0x2160],XMM0 | Writes 16 bytes starting at this field, potentially clears or initializes a region; XMM0 value and R8 object provenance not yet observed |
+| 0x141568841 | FUN_141568760 | MOV dword ptr [RCX + 0x2160],0x0 | Writes a 32-bit zero; does NOT by itself establish a 64-bit pointer assignment |
+| 0x1416656EC | FUN_141662D70 | MOV dword ptr [RBX + 0x2160],R14D | Writes 32-bit contents of R14D; does NOT by itself establish a 64-bit pointer assignment |
+
+The consumer previously established in FUN_140124A90 reads a **64-bit pointer** by MOV RDX,qword ptr [RBX+0x2160], then MOV RAX,qword ptr [RDX+0x170] and CALL qword ptr [0x140E02AA8] via Windows Control Flow Guard. It has **not** been proved that the register bases of any of the three static writers alias the consumer's RBX GPU/context object. Even if a write aliases it, the 128-bit store is not necessarily construction of a callback-object pointer; it may clear two qwords, and the 32-bit writes are partial. No initialization to the nested Falcon 0x9B0-byte dispatch-object address has been shown.
+
+The earlier FUN_140001040 dword +0x170 bitfield unpacker is an unrelated false positive from the original broad slot scan: it writes 0/1 to a 32-bit output field, not a 64-bit callback. This is a separate confirmed exclusion and does not affect the current +0x2160 write scan.
+
+## Next bounded, read-only evidence acquisition
+
+Investigate ALL THREE containing functions at their exact write sites, but focus decompilation output on relevant +0x2160 references because first and third functions may be very large. Existing script supports both bounded existing-instruction context and DECOMP_FOCUS_TERMS (no change/test necessary):
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x140a492de", "0x141568841", "0x1416656ec"], "TARGET_FUNCTIONS": ["0x140a492de", "0x141568841", "0x1416656ec"], "DECOMP_FOCUS_TERMS": ["0x2160"], "__name__": "__main__"})
+
+Read the instruction windows to locate XMM0/R8/RCX/RBX/R14D definitions; inspect surrounding decompiled lines and called helper semantics. If focus excerpts are capped or absent, retain PARTIAL rather than claiming whole-function proof. Under no circumstances identify a function as producer of the **specific GPU context+0x2160 pointer** without evidence of base-object identity and full 64-bit pointer value.
+
+Current boundaries unchanged: actual invocation of nested HS dispatch +0x170, param_3 signed binary descriptor provenance, Windows production Booter source, AD102/GA102 runtime selection, cryptographic signature acceptance, unlock/detach/flash all unproven or not authorized. CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false. Immutable process/recovery audit untouched.
+
+---
+
 # 2026-11-05 14:03 PST — GPU-context +0x2160 producer unresolved; explicit field-write scan added
 
 ## Source evidence and coverage distinction
