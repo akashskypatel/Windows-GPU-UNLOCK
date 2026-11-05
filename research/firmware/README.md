@@ -70,3 +70,22 @@ Expected success status: `STATUS=REFERENCE_BYTES_MATCH_COMPATIBILITY_UNPROVEN CA
 The embedded scripts, manifests and NOTICE are copied from the pinned GPL-2.0-only research repository. Extracted NVIDIA firmware remains subject to NVIDIA's separate license. The wrapper preserves the upstream `NVIDIA-LICENSE` text and NOTICE in the generated output; do not commit, redistribute or relabel the binaries as open source. Reproduce from legal source inputs on the local machine.
 
 The next hardware-dependent decisions remain open: proof of the actual card/VBIOS provenance, signed asset acceptance, post-GOP-Stop cold state, SEC2/FWSEC execution, and unmodified Windows 617.42 driver handoff. No current test of this Windows preparation tool certifies those gates.
+
+
+## Passive inspection of the installed Windows 617.42 firmware pair
+
+The stock Windows 617.42 installer (SHA-256 `f115c92760f1d677ae88f7ee114be20c10ef28a9e725736821a08218054867ca`) ships the two separate GA10x files `gsp_ga10x.bin` (27,043,992 bytes) and `ucodes_ga10x.bin` (58,215,936 bytes). These are NOT interchangeable with the pinned 610.43.03 reference firmware above. The installed GPUs independently report GSP firmware version 615.78.05, which is not the Windows KMD version.
+
+Run the host-only structural inspector to enumerate RISC-V ELF sections and decode the 24-byte NVIDIA-defined `NVUCODES` container header. It can compare the installed files with the extracted stock installer using SHA-256. It does not extract executable firmware, inspect encrypted ucode payloads, validate vendor signatures, or interact with a GPU.
+
+```powershell
+python -m unittest discover -s research/firmware -p test_inspect_installed_firmware.py -v
+```
+
+```powershell
+python .\research\firmware\inspect_installed_firmware.py --gsp 'C:\Windows\System32\DriverStore\FileRepository\nv_dispsi.inf_amd64_ccd7fbb71bb72370\gsp_ga10x.bin' --ucodes 'C:\Windows\System32\DriverStore\FileRepository\nv_dispsi.inf_amd64_ccd7fbb71bb72370\ucodes_ga10x.bin' --package-dir 'D:\Projects\gpu-unlock\nvidia-61742-inspect\Display.Driver' --output 'D:\Projects\gpu-unlock\windows-61742-gsp-ucodes-inventory.json'
+```
+
+The report path must be new; no existing report is overwritten. The inspector prints `STATUS=COMPLETE` for successful structurally valid inventory, `STATUS=PARTIAL` if installed and extracted package files do not match, or `STATUS=ERROR` on parser or I/O failure, along with `REPORT=...`. A complete report does **not** establish that GSP and ucodes are accepted by the driver or that secure firmware can run on either exact GPU.
+
+Reference: NVIDIA public `src/nvidia/src/kernel/core/bin_data_pvt.h` at tag `615.78.08` describes `BINDATA_UCODES_BIN_HEADER` with little-endian magic, version, declared entries, and the filename-order fingerprint. The fingerprint is pairing metadata, not a code-signing check. `inspect_installed_firmware.py` intentionally does not parse the undocumented entry bodies.
