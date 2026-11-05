@@ -1,3 +1,49 @@
+# 2026-11-05 — Firmware-structure validation and GSP ELF signature-prefix vtable slot resolved
+
+## New evidence (two actual Ghidra runs)
+
+Program identity remains `nvlddmkm.sys` 617.42, MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra base `0x140000000`. Read-only reports:
+
+- `nvlddmkm-61742-booter-discovery-20261105-111652-902437.txt`, SHA-256 `9a304133da55d6b1b7ee47904ad1d46fab91a1d619fe6746ff601a8721b069cf`: `FUN_1401B0E00` clipped, `FUN_140633180` complete; accurately reports **STATUS=PARTIAL**.
+- `nvlddmkm-61742-booter-discovery-20261105-111656-249203.txt`, SHA-256 `0f8d0ea51dc7e3a7df5dee3319aa7d0f77a211bd079e20a7066a273bb959f9c1`: focused `FUN_140631750`, 31,705 decompiled characters, all three requested function-name excerpts retained, **STATUS=COMPLETE** for excerpt coverage (not whole-function visibility).
+
+## GSP file-read structure: stronger data flow and correction
+
+`FUN_1400F1310` calls `FUN_1401B0E00(lVar12, *(...+0x2238), &local_15b8)`, after obtaining GSP and UCODES images from `FUN_1400F3350`. `FUN_1401B0E00` types this third argument as `longlong *param_3`, validates `param_3 != NULL`, `*param_3 != 0` and `(int)param_3[1] != 0` (failure returns `0x1f`), and checks `param_3[6]` in a later branch.
+
+**Correction:** `&local_15b8` was previously described as simply a file-size output; that was inaccurate. The earlier reader's fourth argument points at a pointer-output location, with a distinct fifth stack argument for its size. The decompiler's contiguous locals `local_15b8` and `uStack_15b0` correspond to the leading pointer/size entries passed to `FUN_1401B0E00`. The apparent `param_3[6]` at +0x30 aligns with `local_1588` (optional GSP-log buffer) and `param_3[8]` at +0x40 with `local_1578` (UCODES pointer), assuming the shown stack layout. **Treat that mapping as an inferred layout until all callee accesses are independently checked**, not a validated structure declaration.
+
+The callee forwards the composite `param_3` to **`FUN_1401AB740(param_1,param_2,param_3)`**, then later executes a boot-retry loop using `FUN_1401A7840(param_1,param_2,param_3,local_54)`. Registry/config labels `RmGspBootRetryAttempts` and `RmGspBootInitialShift` are read in this loop; no register modifications are requested or implied by this investigation. This is the strongest observed static consumer chain, **but neither exact UCODES record extraction nor the production Booter image/signature origin has been established**. The `FUN_1401B0E00` decompilation was clipped at 14,000 characters; do not treat its omitted tail as analyzed.
+
+## Signature-prefix dispatch: exact slot and prior source
+
+`FUN_140633180` allocates and initializes a large object, resolves two provider objects `lVar4`/`lVar6`, calls `FUN_140631750(puVar2,lVar4,lVar6)`, then performs later setup and stores the object. It does **not** by itself establish a specific AD102/GA102 device mapping.
+
+The focused `FUN_140631750` excerpt now proves an assignment to **function-pointer slot `param_1 + 0x938`**, chosen among:
+- `FUN_140633AA0`: constant normal `.fwsignature_` prefix.
+- `FUN_1409211C0`: normal/CC prefix dependent on a context flag.
+- `FUN_140922420`: normal/CC/SPDM-lite prefix dependent on context flags.
+
+Branch inputs include the 16-bit fields at `param_2 + 0x10` and `param_3 + 0x10`; the excerpt tests bit masks/architecture-class-like values, **not independently verified Windows GPU hardware IDs**. A separate nearby function-pointer slot `+0x940` selects other providers. Do not equate prefix selection with GSP ELF section parsing, signature authentication, or the production SEC2/Falcon Booter signature records.
+
+## Next high-value, read-only PyGhidra runs
+
+First inspect the earliest composite firmware consumer (existing function, no full string scan):
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1401ab740"], "DECOMP_FOCUS_TERMS": ["param_3", "FUN_1401"], "__name__": "__main__"})
+```
+
+Then inspect the boot-loop consumer in a **separate** bounded report:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1401a7840"], "DECOMP_FOCUS_TERMS": ["param_3", "FUN_1401"], "__name__": "__main__"})
+```
+
+Matching many occurrences may intentionally produce `STATUS=PARTIAL` and limited first-eight windows; this is valid partial evidence and must be followed by narrower source identifiers. No firmware execution, device changes, Ghidra DB writes, or active unlock performed. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`.
+
+---
+
 # 2026-11-05 — Ghidra 11:09 reports: firmware handoff and device-specific dispatch
 
 ## Evidence provenance and coverage
