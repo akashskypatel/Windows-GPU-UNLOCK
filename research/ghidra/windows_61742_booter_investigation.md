@@ -1,3 +1,65 @@
+# 2026-11-05 — Windows UCODES bindata handoff proven in GSP_ARGUMENTS_CACHED
+
+## Primary report and independent reference
+
+- User-run read-only Ghidra report: nvlddmkm-61742-booter-discovery-20261105-115119-418340.txt. SHA-256: 9bfdda59024cb64997bf384806c8a2f6d94fca85189cb2184ddc346233bfd7f1. Program nvlddmkm.sys 617.42, MD5 3fb9afac9d0e394723e830aa14e60512, base 0x140000000. Function FUN_1401B2C10 fully decompiled (clipped=False), STATUS=COMPLETE; no hardware action, no Ghidra DB modification.
+- NVIDIA pinned Linux 615.78.08 public declaration, gsp_init_args.h: https://github.com/NVIDIA/open-gpu-kernel-modules/blob/615.78.08/src/nvidia/inc/kernel/gpu/gsp/gsp_init_args.h
+- NVIDIA pinned Linux 615.78.08 implementation, kgspPopulateGspRmInitArgs_IMPL in kernel_gsp.c: https://github.com/NVIDIA/open-gpu-kernel-modules/blob/615.78.08/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c#L5675-L5765
+- Distinct pinned Linux 615.78.08 GSP boot-image preparation, kgspPrepareBootBinaryImage_IMPL, loads GSP boot-image/descriptor via kgspGetGspRmBootUcodeStorage_HAL, same file beginning at L5767. The equivalent *Windows* source of the pre-GSP boot image still has NOT been traced.
+
+## Windows decompilation matched to the published ABI, field-for-field
+
+FUN_1401B2C10(param_1,param_2,param_3) loads the destination buffer from *(param_2+0xAC0), clears 0xB8 bytes, writes the magic 0x20505347 ("GSP " in little-endian ASCII), and writes the U16 structure length 0xB8 at byte offset +0x04.
+
+Independent standard C ABI field-layout computation against pinned NVIDIA GSP_ARGUMENTS_CACHED declaration gives:
+| Field | Byte offset | Bytes | Windows matching behavior |
+|---|---:|---:|---|
+| magic | 0x00 | 4 | 0x20505347 |
+| size | 0x04 | 2 | 0xB8 |
+| flags | 0x08 | 8 | stack-placement / transition flags |
+| messageQueueInitArguments | 0x10 | 0x40 | copies fields from *(param_2+0x9A8) |
+| srInitArguments | 0x50 | 0x10 | default/optional recovery-related inputs |
+| gpuInstance | 0x64 | 4 | copies *(param_1+0xD34) |
+| profilerArgs | 0x68 | 0x10 | optional mapped descriptor/size |
+| sysmemHeapArgs | 0x78 | 0x10 | optional mapped descriptor/size |
+| rmStateMonitorBufferArgs | 0x88 | 0x10 | optional mapped descriptor/size |
+| **bindataArgs.radix3** | **0x98** | 8 | **address returned by FUN_1401BB0B0(staged UCODES resource,1,0)** |
+| **bindataArgs.size** | **0xA0** | 8 | **size from param_2+0x69F78** |
+| vbiosOverrideArgs | 0xA8 | 0x10 | optional mapped descriptor/size |
+| **total size** | | **0xB8** | 0xB8 |
+
+In Windows, puVar1 is uint32_t*; thus (puVar1+0x26) is byte offset +0x98 and (puVar1+0x28) is +0xA0. The exact source:
+~~~c
+if (*(longlong *)(param_2 + 0x69f70) != 0) {
+    uVar7 = FUN_1401bb0b0(*(longlong *)(param_2 + 0x69f70),1,0);
+    *(undefined8 *)(puVar1 + 0x26) = uVar7;
+    *(undefined8 *)(puVar1 + 0x28) = *(undefined8 *)(param_2 + 0x69f78);
+}
+~~~
+
+The cited Linux 615.78.08 implementation has equivalent semantics: if pKernelGsp->pExternalBindata is non-null, it assigns memdescGetPhysAddr(...,AT_GPU,0) to pGspArgs->bindataArgs.radix3 and externalBindataSize to bindataArgs.size. This is an **exceptionally strong cross-version structural correspondence**. The Windows driver class/function name remains a static semantic match, not a directly recovered original C symbol. Do not call the radix3 field a raw UCODES data pointer: it is an address to the mapping root/descriptor used by GSP.
+
+## Confirmed Windows firmware-data path and its limits
+
+Previously shown static chain: external ucodes_ga10x.bin selected in FUN_1400F35F0, opened/read by FUN_1400F3350, carried through composite load context in FUN_1400F1310 → FUN_1401B0E00 → FUN_1401AB740, staged with FUN_1401AFD60 at resource state param_2+0x69F70/0x69F78, and **now conclusively referenced in FUN_1401B2C10 as GSP_ARGUMENTS_CACHED.bindataArgs**. That resolves the previously uncertain downstream *host-side* use: the external UCODES archive is handed to GSP-RM through its initialization arguments. It does not identify which firmware routines running on GSP parse the individual bindata entries; the host assembly does not parse those records here.
+
+The Windows decompilation also has incoming direct-call XREFs at 0x140124B86 and 0x1401B15B3; the second lies inside the previously studied FUN_1401B0E00 GSP boot-initialization path. The GSP init arguments clearly contain a UCODES mapping, but the report does NOT prove a particular GSP runtime consumed it.
+
+**Key architecture boundary:** Linux 615.78.08 uses a separately obtained GSP boot image/descriptor in kgspPrepareBootBinaryImage_IMPL *before* GSP-RM starts. Booter production image/signature bytes are not identified by this bindata handoff. Do not conflate GSP ELF 4,096-byte .fwsignature_* records, GSP-RM boot image/descriptor, Booter load image/signature, and external UCODES/bindata. Linux source semantics are useful corroboration, not exact proof of Windows Booter provenance.
+
+## Updated next evidence and execution gates
+
+1. Archive this host-side UCODES consumer as **resolved static handoff**; stop searching FUN_1401B0E00 for raw 0x69F70 references and stop classifying FUN_1401B2C10 as a parser.
+2. **Trace the pre-GSP Falcon/Booter load path** as a *separate* investigation. Earlier FUN_140BF3880 ("flcnLoadAndExecuteHsBinaryViaDma_GA10X") loads/executed HS image data from descriptor param_3, but its descriptor producer, exact signed image bytes and relationship to GSP boot remain unknown. Review existing data-XREF dispatch tables at function entry and call targets without hardware invocation. The alternative caller of GSP args builder at code VA 0x140124B86 is another bounded route to classify GSP init order; do not assume it yields Booter image bytes.
+3. Suggested next read-only Ghidra Python 3 command to classify the *other* boot-arguments caller and its context:
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140124b86"], "__name__": "__main__"})
+~~~
+4. If that caller does not illuminate the pre-GSP loader, shift to identifying FUN_140BF3880's production HS descriptor producer by following only its already reported DATA references; do not repeat the memory-wide scan or run any Falcon code.
+5. Runtime-selected architecture and external UCODES *consumption by the actual GPU*, host production Booter image/header/signature origin, signature authentication, detachment/recovery readiness, unlock and flash remain UNPROVEN. CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false. Immutable recovery audit untouched.
+
+---
+
 # 2026-11-05 — UCODES offset search inconclusive in GSP initialization function
 
 ## Evidence reviewed
