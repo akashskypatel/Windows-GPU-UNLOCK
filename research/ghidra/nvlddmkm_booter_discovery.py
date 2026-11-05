@@ -13,7 +13,6 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 import re
-import sys
 import time
 import traceback
 
@@ -316,7 +315,6 @@ def main():
             stream.close()
         print('STATUS=%s | REPORT=%s | ELAPSED=%.3fs' % (
             status, report_path if report_path is not None else '<not-created>', time.monotonic() - started))
-        sys.stdout.flush()
     return status
 
 

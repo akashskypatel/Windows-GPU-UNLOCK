@@ -1,7 +1,9 @@
 """Host-only checks for raw discovery heuristics (no Ghidra runtime needed)."""
 import importlib.util
+import sys
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 MODULE = Path(__file__).with_name('nvlddmkm_booter_discovery.py')
 spec = importlib.util.spec_from_file_location('nvlddmkm_booter_discovery', MODULE)
@@ -36,6 +38,33 @@ class DiscoveryPatternTests(unittest.TestCase):
         overlap = before[-(probe.MAX_MARKER_BYTES - 1):]
         self.assertEqual([x[1] for x in probe.combine_chunk_hits(b'', before)], ['gsprmboot'])
         self.assertEqual(list(probe.combine_chunk_hits(overlap, after)), [])
+
+    def test_ghidra_console_without_flush_still_emits_final_status(self):
+        # Ghidra's proxy.PyConsole implements write(), but has no flush().
+        # A deliberate identity mismatch exercises the unconditional finally
+        # path without needing Java or modifying a Ghidra program.
+        class PyConsoleLike:
+            def __init__(self):
+                self.output = []
+
+            def write(self, value):
+                self.output.append(value)
+
+        class WrongProgram:
+            def getExecutableMD5(self):
+                return '0' * 32
+
+            def getImageBase(self):
+                return type('Base', (), {'getOffset': lambda self: 0})()
+
+            def getName(self):
+                return 'wrong.sys'
+
+        console = PyConsoleLike()
+        with patch.object(sys, 'stdout', console), patch.dict(probe.__dict__, {'currentProgram': WrongProgram()}):
+            result = probe.main()
+        self.assertEqual(result, 'ERROR')
+        self.assertIn('STATUS=ERROR | REPORT=<not-created>', ''.join(console.output))
 
     def test_no_assertion_from_missing_raw_strings(self):
         self.assertEqual(list(probe.marker_hits(b'not an Nvidia archive path')), [])
