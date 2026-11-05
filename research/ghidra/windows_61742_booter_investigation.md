@@ -1,3 +1,45 @@
+# 2026-11-05 14:20 PST — +0x2160 writer-site forensics: two constant pools, one proven 32-bit clear, one selector-dependent 32-bit store; decompiler limits explicit
+
+## Primary user-run evidence and exact run status
+
+Report: nvlddmkm-61742-booter-discovery-20261105-142004-899582.txt, verified uploaded **5,865 bytes**, SHA-256 **f49c23913e5a3ec30de64af544a90470c898e36db039518af57e46c2cff8128b**. Ghidra loaded Windows NVIDIA nvlddmkm.sys 617.42 MD5 3fb9afac9d0e394723e830aa14e60512 at image base 0x140000000. Passive, read-only existing instructions and decompiler; SCAN_STRINGS skipped, no reported Ghidra DB write or hardware action. **STATUS=PARTIAL** after 13.794 s: FUN_140A48220 decompilation timed out; FUN_141662D70 produced 51,015 C characters but its DECOMP_FOCUS_TERMS=['0x2160'] matched zero lines, so no decompiled excerpt was captured; FUN_141568760 yielded a matching bounded excerpt (full generated C 1,414 chars). Do NOT classify a successful decompiler run that yielded zero focused excerpts as source-level inspection of that function.
+
+## Three write candidates — source-level distinctions
+
+1. **FUN_140A48220** at 0x140A492DE:
+   - 0x140A4929C..0x140A492B1 loads XMM0..XMM3 from static 16-byte chunks at 0x140FE9A00/10/20/30; an alternative branch 0x140A492BA..0x140A492CF loads XMM0..XMM3 from 0x140FE99C0/D0/E0/F0.
+   - Before store the code compares [R8+0x2240] to zero; 0x140A492DE..0x140A492F6 writes 16 bytes each from XMM0..XMM3 to [R8+0x2160], [R8+0x2170], [R8+0x2180], [R8+0x2190] = **64 consecutive bytes initialized from one of two constant groups**.
+   - This is NOT evidence of a single pointer-width assignment; some or all bytes may happen to be zero, fixed scalar values, or pointers. Exact constant bytes are **not present in this report**, and R8's relationship to GPU_context used by FUN_140124A90 is still unknown.
+   - Whole-function decompilation timed out and must not be called complete.
+
+2. **FUN_141568760** at 0x141568841:
+   - Before store, code invokes a CFG-guarded indirect function, obtains a returned pointer in RAX, then reads RCX=[RAX+0x49B0]. It executes MOV AL,0x1 followed by **MOV dword ptr [RCX+0x2160],0x0** and later sets a flag at an unrelated RBX+0x2C. RCX source is not proven to be the main GPU-context base.
+   - Focused decompiled expression confirms: *(undefined4 *)(*(longlong *)(lVar2+0x49b0)+0x2160)=0, under branch where lVar2 != 0 and *(char *)(lVar2+0xF3A) != 0; returns 1 on that branch.
+   - This is **32-bit clearing** of a field, not a proven producer of a 64-bit Falcon callback-owner pointer.
+
+3. **FUN_141662D70** at 0x1416656EC:
+   - Listing shows a selector/state sequence at RBX+0x212C; loads RCX=[RBX+0x21F8], checks [RCX+0x4450] < 0x160, tests dword [RBX+0x2160] nonzero, and conditionally stores **MOV dword ptr [RBX+0x2160],R14D**, followed by setting dword [RBX+0x218C]=1.
+   - It is a **conditional 32-bit overwrite**; the value of R14D and object identity are not established by this 12-before/4-after instruction window. Function's full 51,015-character C was generated, but focused term 0x2160 appeared **zero times**; decompiler may have expressed it indirectly or optimized it, and the report does not contain its body.
+   - Do not infer a 64-bit pointer writer from the 32-bit store, or that R14D equals zero absent assembly evidence.
+
+This reinforces the previously established distinction: FUN_140124A90 obtains RDX=[RBX+0x2160], loads RAX=[RDX+0x170], then makes a CFG-guarded call. **There is still no static proof that this callback object is the nested 0x9B0-byte Falcon HS dispatch instance**, or that any of the three +0x2160 writers alias the consumer RBX base.
+
+## New tiny, read-only data-inspection option and limited verification
+
+Extended the existing research/ghidra/nvlddmkm_booter_discovery.py with optional **TRACE_STATIC_BYTES**, accepting up to four explicit VA strings; each reads exactly **64 bytes** from an initialized, nonexecutable Ghidra memory block (refuses block overruns), using the existing _memory_bytes helper. It prints four 16-byte hex lines and first qword in little-endian hexadecimal without labeling the bytes as pointers, and returns PARTIAL if any region is unavailable. No disassembly, Ghidra DB writes, GPU operations, new dependency, or extra file. Existing source validation against the expected MD5/image base remains. Four **standalone** local logic tests and Python syntax check passed on an independently copied helper, covering successful two-address read, invalid region rejection, short read and malformed/capped requests. Four equivalent regression cases were added to the repo's existing test file, but **the complete repository test suite and actual PyGhidra execution of this option were NOT run in this environment**; do not misreport 4 helper tests as full repository test results.
+
+Next Ghidra Python 3 console run after syncing main, without repeating the timed-out decompilation:
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_STATIC_BYTES": ["0x140fe99c0", "0x140fe9a00"], "TRACE_INSTRUCTION_SITES": ["0x140a49292", "0x1416656c9"], "__name__": "__main__"})
+
+A static constant whose first 8 bytes resemble an address does not alone prove pointer semantics; verify expected PE image range and data/function references before drawing conclusions. Trace R8 origin at FUN_140A48220 and R14D definition in FUN_141662D70 only from actual listing. If neither constant block yields an object pointer and no 64-bit literal writer is seen, consider computed-offset or aggregate-copy producers and separately trace the dynamic constructor path. No unsafe GPU action permitted.
+
+## Remaining gates
+
+The signed production Booter source/header/signature, third-argument descriptor producer of FUN_140BF3880, direct **verified** invocation via nested dispatch+0x170, actual GA102/AD102 runtime selector, cryptographic acceptance and any unlock remain unproven. No device/driver/UEFI/firmware changes; CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false. Immutable process/recovery audit untouched.
+
+---
+
 # 2026-11-05 14:14 PST — Writer-focused +0x2160 scan resolves three static stores, no confirmed GPU-context pointer producer
 
 ## Source, integrity and completion status

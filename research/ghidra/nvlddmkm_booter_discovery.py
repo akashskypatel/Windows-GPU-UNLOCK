@@ -535,6 +535,38 @@ def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
     return complete
 
 
+def inspect_static_bytes(program, sites, log):
+    """Read at most four 64-byte initialized nonexecutable regions, without mutation."""
+    if (isinstance(sites, (str, bytes)) or not isinstance(sites, (list, tuple)) or
+            len(sites) > 4):
+        raise ValueError('TRACE_STATIC_BYTES requires at most four explicit addresses')
+    memory = program.getMemory()
+    complete = True
+    for raw in sites:
+        address = _address(program, int(str(raw), 0))
+        block = memory.getBlock(address)
+        if (block is None or not block.isInitialized() or block.isExecute() or
+                int(block.getEnd().getOffset()) - int(address.getOffset()) < 63):
+            log('STATIC_BYTES_UNAVAILABLE VA=%s reason=uninitialized_executable_or_short_block' % address)
+            complete = False
+            continue
+        try:
+            data = _memory_bytes(memory, address, 64)
+            if len(data) != 64:
+                raise ValueError('short static-byte read')
+        except Exception as exc:
+            log('STATIC_BYTES_UNAVAILABLE VA=%s error_type=%s' %
+                (address, type(exc).__name__))
+            complete = False
+            continue
+        log('STATIC_BYTES VA=%s length=64 interpretation=unknown' % address)
+        for offset in range(0, 64, 16):
+            chunk = data[offset:offset+16]
+            log('  STATIC_HEX offset=0x%02x data=%s' % (offset, chunk.hex()))
+        log('  STATIC_QWORD0_LE=0x%016x' % int.from_bytes(data[:8], 'little'))
+    return complete
+
+
 def decompilation_excerpt(code, terms, limit=MAX_DECOMP_CHARS):
     """Extract bounded line-numbered evidence around requested C identifiers.
 
@@ -690,6 +722,10 @@ def main():
                 focus=globals().get('SLOT_SCAN_FOCUS', 'all')):
             status = 'PARTIAL'
             output('SLOT_SCAN_COMPLETE=FALSE; results incomplete or candidate cap reached')
+        static_sites = globals().get('TRACE_STATIC_BYTES', ())
+        if static_sites and not inspect_static_bytes(program, static_sites, output):
+            status = 'PARTIAL'
+            output('STATIC_BYTES_COMPLETE=FALSE; one or more regions unreadable')
         instruction_sites = globals().get('TRACE_INSTRUCTION_SITES', ())
         if instruction_sites and not inspect_instruction_sites(program, instruction_sites, output):
             status = 'PARTIAL'

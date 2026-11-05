@@ -444,5 +444,83 @@ class SlotTransferEvidenceTests(unittest.TestCase):
             probe.scan_existing_slot_displacements(Program(), 0x170, lambda line: None,
                                                    1.0, focus='all_and_everything')
 
+class StaticBytesInspectionTests(unittest.TestCase):
+    class Address:
+        def __init__(self, value):
+            self.value = value
+        def getOffset(self):
+            return self.value
+        def __str__(self):
+            return '0x%x' % self.value
+
+    class Section:
+        def __init__(self, end, initialized=True, executable=False):
+            self.end = end
+            self.initialized = initialized
+            self.executable = executable
+        def isInitialized(self):
+            return self.initialized
+        def isExecute(self):
+            return self.executable
+        def getEnd(self):
+            return StaticBytesInspectionTests.Address(self.end)
+
+    def test_two_static_constant_blocks_are_read_exactly_and_reported(self):
+        from types import SimpleNamespace
+        a, b = 0x140fe99c0, 0x140fe9a00
+        memory = SimpleNamespace(getBlock=lambda addr: self.Section(addr.getOffset()+63))
+        program = SimpleNamespace(getMemory=lambda: memory)
+        first = bytes(range(64))
+        second = bytes(reversed(range(64)))
+        observed = []
+        with patch.object(probe, '_address',
+                          side_effect=lambda p, n: self.Address(n)), \
+             patch.object(probe, '_memory_bytes', side_effect=[first, second]) as read:
+            self.assertTrue(probe.inspect_static_bytes(
+                program, [hex(a), hex(b)], observed.append))
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual([x for x in observed if x.startswith('STATIC_BYTES VA=')].__len__(), 2)
+        self.assertEqual(sum('STATIC_HEX' in x for x in observed), 8)
+        self.assertIn(first[:16].hex(), '\n'.join(observed))
+        self.assertIn(second[:16].hex(), '\n'.join(observed))
+        self.assertTrue(any('STATIC_QWORD0_LE=0x0706050403020100' in x for x in observed))
+
+    def test_uninitialized_executable_and_short_regions_are_partial_without_read(self):
+        from types import SimpleNamespace
+        addr = 0x140fe99c0
+        for section in (self.Section(addr+63, initialized=False),
+                        self.Section(addr+63, executable=True),
+                        self.Section(addr+62)):
+            with self.subTest(section=(section.initialized, section.executable, section.end)):
+                program = SimpleNamespace(getMemory=lambda: SimpleNamespace(
+                    getBlock=lambda address: section))
+                out = []
+                with patch.object(probe, '_address',
+                                  side_effect=lambda p, n: self.Address(n)), \
+                     patch.object(probe, '_memory_bytes') as read:
+                    self.assertFalse(probe.inspect_static_bytes(program, [hex(addr)], out.append))
+                read.assert_not_called()
+                self.assertTrue(any('STATIC_BYTES_UNAVAILABLE' in line for line in out))
+
+    def test_short_static_byte_result_is_partial(self):
+        from types import SimpleNamespace
+        addr = 0x140fe99c0
+        program = SimpleNamespace(getMemory=lambda: SimpleNamespace(
+            getBlock=lambda address: self.Section(addr+63)))
+        out = []
+        with patch.object(probe, '_address',
+                          side_effect=lambda p, n: self.Address(n)), \
+             patch.object(probe, '_memory_bytes', return_value=b'\x00' * 63):
+            self.assertFalse(probe.inspect_static_bytes(program, [hex(addr)], out.append))
+        self.assertTrue(any('STATIC_BYTES_UNAVAILABLE' in line for line in out))
+
+    def test_invalid_static_byte_requests_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'TRACE_STATIC_BYTES'):
+            probe.inspect_static_bytes(Program(), '0x140fe99c0', lambda line: None)
+        with self.assertRaisesRegex(ValueError, 'TRACE_STATIC_BYTES'):
+            probe.inspect_static_bytes(Program(), ['0x140fe99c0'] * 5, lambda line: None)
+
+
+
 if __name__ == '__main__':
     unittest.main()
