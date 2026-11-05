@@ -59,8 +59,11 @@ def inspect_backup(data: bytes, *, vendor_id: int, device_id: int) -> dict:
     cursor = 0
     images = []
     for _ in range(MAX_IMAGES):
-        if len(data) - cursor < 512 or data[cursor:cursor + 2] != b'\x55\xaa':
-            raise InvalidBackup('missing PCI option-ROM signature or truncated image')
+        if len(data) - cursor < 512:
+            raise InvalidBackup(f'truncated PCI option-ROM image at byte offset 0x{cursor:x}')
+        if data[cursor:cursor + 2] != b'\x55\xaa':
+            first = data[cursor:cursor + 16].hex(' ')
+            raise InvalidBackup(f'missing PCI option-ROM signature at byte offset 0x{cursor:x}; first 16 bytes: {first}')
         pcir_offset = u16(data, cursor + 0x18)
         if pcir_offset < 0x1A or pcir_offset > len(data) - cursor - 0x16:
             raise InvalidBackup('invalid PCIR pointer')
@@ -105,7 +108,10 @@ def build_report(rom_4090: bytes, rom_3080: bytes) -> dict:
     cards = []
     for label, contents in (('rtx4090', rom_4090), ('rtx3080', rom_3080)):
         expected = EXPECTED[label]
-        details = inspect_backup(contents, vendor_id=expected['vendor_id'], device_id=expected['device_id'])
+        try:
+            details = inspect_backup(contents, vendor_id=expected['vendor_id'], device_id=expected['device_id'])
+        except InvalidBackup as exc:
+            raise InvalidBackup(f'{label}: {exc}') from exc
         cards.append({'gpu': label, 'claimed_bdf': expected['bdf'],
                       'claimed_subsystem': expected['subsystem'],
                       'pci_vendor_device_matched': True,
@@ -136,7 +142,13 @@ def main() -> int:
     try:
         if args.rtx4090.resolve() == args.rtx3080.resolve():
             raise InvalidBackup('two distinct card backup paths are required')
-        report = build_report(read_backup(args.rtx4090), read_backup(args.rtx3080))
+        inputs = {}
+        for label, path in (('rtx4090', args.rtx4090), ('rtx3080', args.rtx3080)):
+            try:
+                inputs[label] = read_backup(path)
+            except (OSError, InvalidBackup) as exc:
+                raise InvalidBackup(f'{label} ({path}): {exc}') from exc
+        report = build_report(inputs['rtx4090'], inputs['rtx3080'])
     except (OSError, InvalidBackup) as exc:
         parser.error(f'backup evidence rejected: {exc}')
     output = json.dumps(report, indent=2, sort_keys=True) + '\n'
