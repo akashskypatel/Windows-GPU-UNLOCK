@@ -211,12 +211,13 @@ def describe_references(program, hits, log):
 def targeted_decompile(program, addresses, log):
     if not addresses:
         log('DECOMPILATION=SKIPPED no explicit TARGET_FUNCTIONS provided')
-        return
+        return True
     if len(addresses) > MAX_TARGETS:
         raise ValueError('too many explicit target addresses; limit=%d' % MAX_TARGETS)
     from ghidra.app.decompiler import DecompInterface
     from ghidra.util.task import TaskMonitor
     decompiler = DecompInterface()
+    all_targets_completed = True
     try:
         if not decompiler.openProgram(program):
             raise RuntimeError('decompiler failed to open program')
@@ -229,6 +230,7 @@ def targeted_decompile(program, addresses, log):
             fn = program.getFunctionManager().getFunctionContaining(target)
             if fn is None:
                 log('TARGET_NOT_DEFINED VA=%s no Ghidra function; no creation attempted' % target)
+                all_targets_completed = False
                 continue
             entry = fn.getEntryPoint()
             log('TARGET_FUNCTION entry=%s name=%s supplied=%s' % (entry, fn.getName(), target))
@@ -241,6 +243,7 @@ def targeted_decompile(program, addresses, log):
                 n += 1
             result = decompiler.decompileFunction(fn, DECOMP_TIMEOUT_SECONDS, TaskMonitor.DUMMY)
             if result is None or not result.decompileCompleted():
+                all_targets_completed = False
                 log('DECOMPILE_UNAVAILABLE entry=%s reason=%s' % (
                     entry, result.getErrorMessage() if result is not None else 'null-result'))
                 continue
@@ -251,6 +254,7 @@ def targeted_decompile(program, addresses, log):
             log('DECOMPILER_END')
     finally:
         decompiler.dispose()
+    return all_targets_completed
 
 
 def main():
@@ -296,7 +300,9 @@ def main():
         else:
             output('SCAN_STRINGS=SKIPPED_BY_CALLER')
             status = 'COMPLETE'
-        targeted_decompile(program, targets, output)
+        if not targeted_decompile(program, targets, output) and status == 'COMPLETE':
+            status = 'PARTIAL'
+            output('TARGETS_COMPLETE=FALSE; at least one requested function was undefined or could not be decompiled')
         output('STOCK_WINDOWS_BOOTER_ORIGIN_PROVEN=FALSE')
         output('AD102_GA102_RUNTIME_SELECTOR_PROVEN=FALSE')
         output('FIRMWARE_SIGNATURE_AUTHENTICATED=FALSE')

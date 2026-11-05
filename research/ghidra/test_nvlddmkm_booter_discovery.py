@@ -66,6 +66,41 @@ class DiscoveryPatternTests(unittest.TestCase):
         self.assertEqual(result, 'ERROR')
         self.assertIn('STATUS=ERROR | REPORT=<not-created>', ''.join(console.output))
 
+    def test_target_not_defined_does_not_report_complete(self):
+        # The scan already succeeded, but an unrecognized target must not
+        # be presented as a completed decompilation.
+        import tempfile
+
+        class CorrectProgram:
+            def getExecutableMD5(self):
+                return probe.EXPECTED_MD5
+
+            def getImageBase(self):
+                return type('Base', (), {'getOffset': lambda self: probe.EXPECTED_IMAGE_BASE})()
+
+            def getName(self):
+                return 'nvlddmkm.sys'
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.dict(probe.__dict__, {
+                'currentProgram': CorrectProgram(),
+                'SCAN_STRINGS': False,
+                'TARGET_FUNCTIONS': ['0x140d0c790'],
+                'REPORT_DIR': temporary,
+            }), patch.object(probe, 'targeted_decompile', return_value=False):
+                status = probe.main()
+            self.assertEqual(status, 'PARTIAL')
+            reports = list(Path(temporary).glob('nvlddmkm-61742-booter-discovery-*.txt'))
+            self.assertEqual(len(reports), 1)
+            report = reports[0].read_text()
+            self.assertIn('TARGETS_COMPLETE=FALSE', report)
+            self.assertIn('STATUS=PARTIAL REPORT=', report)
+
+    def test_no_targets_preserves_completed_scan_semantics(self):
+        logs = []
+        self.assertTrue(probe.targeted_decompile(None, [], logs.append))
+        self.assertIn('DECOMPILATION=SKIPPED no explicit TARGET_FUNCTIONS provided', logs)
+
     def test_no_assertion_from_missing_raw_strings(self):
         self.assertEqual(list(probe.marker_hits(b'not an Nvidia archive path')), [])
 

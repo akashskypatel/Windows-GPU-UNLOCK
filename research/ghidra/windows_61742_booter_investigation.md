@@ -1,3 +1,43 @@
+# 2026-11-05 — Two uploaded reports reviewed; Windows Booter candidate triage
+
+## Exact input evidence
+
+- Full scan: nvlddmkm-61742-booter-discovery-20261105-100845-857761.txt; SHA-256 16a125aef649df811adb2af831234ddd1cb0b72ee63972e9cc8dda400ac3f778.
+- Targeted attempt: nvlddmkm-61742-booter-discovery-20261105-101049-266126.txt; SHA-256 b652ed8ccdbbcbb6342781ab9e6a4139f4c086f8f75069f3574994a7b4d5d2a0.
+- Exact Windows binary identity: nvlddmkm.sys 617.42, MD5 3fb9afac9d0e394723e830aa14e60512, Ghidra image base 0x140000000.
+- Complete read-only scan: 33 initialized blocks out of 34; 114,516,048 bytes scanned; 38 bounded string hits recorded; 28 existing function owners. Counts: SEC2 37, FALCON 12, GA102 3, GSP-RM 2, FWSEC 2, AD102 2, bindata 1, and one each for gsp_ga10x.bin, ucodes_ga10x.bin, gsp_tu10x.bin, ucodes_tu10x.bin.
+- No raw matches for literal BooterLoadUcode, kgspGetBinArchiveBooterLoadUcode, GspRmBoot, BINDATA_LABEL_IMAGE_PROD or BINDATA_LABEL_SIG_PROD. Absence does not prove that compiled or compressed Booter data is missing.
+
+## Ranked candidate functions
+
+| Rank | Entry VA (Ghidra) | Grounded string/XREF evidence | Investigation hypothesis, not proof |
+|---|---|---|---|
+| 1 | 0x1400F35F0 | Four DATA references: gsp_ga10x.bin at 0x1400F3668, ucodes_ga10x.bin at 0x1400F3656, gsp_tu10x.bin at 0x1400F3694, ucodes_tu10x.bin at 0x1400F3682 | Firmware-file selection/inventory/open helper. Establish whether it obtains bytes or merely logs filenames. |
+| 2 | 0x1415A8FB0 | GA102 string XREFs 0x1415A9836 / 0x1415A984F; AD102 XREFs 0x1415A9A6C / 0x1415A9A85; underlying strings in PAGE_DD | Cross-architecture lead; may be actual dispatch, a diagnostic, or static enumeration. |
+| 3 | 0x1401858E0 | FWSEC/SEC2 XREFs 0x140185CE6 / 0x140185D2E | Secure firmware/SEC2 lead, not automatically GSP Booter. |
+| 4 | 0x140BF4F00 | Five XREFs to GA102 string at 0x140D2EAD9 | GA102-specific lead; AD102 counterpart unknown. |
+| Reserve | 0x1400FFAB0, 0x1401AAA20, 0x14027A2F0, other SEC2/FALCON candidates | Lower-specificity generic GSP-RM, SEC2, FALCON matches | Deprioritize until caller or data-flow evidence justifies them. |
+
+The bindata string VA 0x140E55800 has DATA reference 0x1411A66F8 with function owner UNKNOWN; no Booter archive is proven. Some literal strings reside inside sections called .text; their VA is not a function address.
+
+## Second report status and corrective implementation
+
+Targeted attempt supplied 0x140D0C790, not one of the 28 candidate function entries. Ghidra reported TARGET_NOT_DEFINED VA=140d0c790, so no function was decompiled. Original STATUS=COMPLETE misleadingly represented successful script termination rather than successful targeted analysis. New common script returns PARTIAL if any requested target has no existing Ghidra function or its decompilation fails, and logs TARGETS_COMPLETE=FALSE. This is a reporting fix; the earlier full-scan coverage result remains COMPLETE. Eight host-side synthetic tests passed, including the regression and a no-target control; real corrected PyGhidra run remains pending.
+
+## Next execution — start with only two concrete addresses
+
+With the verified driver open in Ghidra Python 3, run this single console command (no full rescan):
+
+~~~python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1400f35f0", "0x1415a8fb0"], "__name__": "__main__"})
+~~~
+
+After reading that report, if needed, separately inspect 0x1401858e0 and 0x140bf4f00. Each decompilation is capped at 12 seconds and 14,000 characters; existing functions only, no analysis/disassembly/database mutations.
+
+Evidence needed next: defined functions, incoming callers, file I/O API resolution, data-source and firmware-container provenance, per-architecture selector branch, and actual selected production Booter image/header/signature bytes before any independently hashed comparison. Matching filenames or Linux reference hashes do not establish runtime selection or firmware signature acceptance. Active unlock, detachment, flashing, GSP/SEC2 execution and EFI changes are blocked.
+
+---
+
 # 2026-11-05 — First Windows 617.42 Ghidra scan completed; console cleanup defect isolated
 
 **Evidence supplied by user (Ghidra Python 3 console):** current program `nvlddmkm.sys`, MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000` matched the original investigation identity gate. The first read-only discovery run scanned **114,516,048 bytes** with `SCAN_COMPLETE=True`, recorded **38** bounded string matches, and identified **28** candidate function owners. A timestamped report was successfully written to `D:\Projects\gpu-unlock\ghidra\nvlddmkm-61742-booter-discovery-20261105-100845-857761.txt`; the user's transcript shows `STATUS=COMPLETE` and the report path.
