@@ -1,3 +1,41 @@
+# 2026-11-05 — FUN_141752AA0 is a tail-call thunk to the dispatch builder; EAX status propagation proven
+
+## Primary evidence
+
+User-submitted read-only Ghidra instruction report: nvlddmkm-61742-booter-discovery-20261105-130201-823136.txt, 1,921 bytes, SHA-256 9163e32a133e60d824e1503790d4f3d8d6ebc035586648cfea240d1dfdaeb9da. Ghidra target: NVIDIA Windows nvlddmkm.sys driver 617.42, MD5 3fb9afac9d0e394723e830aa14e60512, loaded base 0x140000000. TRACE_INSTRUCTION_SITES of 0x141752AF2 with SCAN_STRINGS=False. Existing listing only, no decompilation, no new disassembly or database writes, no physical GPU operation; STATUS=COMPLETE applies to bounded instruction-site output, not runtime behavior.
+
+## Machine-code resolution of previous EAX/void prototype disagreement
+
+The report identifies entry FUN_141752AA0 and ends its main visible path at the following instruction sequence:
+
+    0x141752AEA MOV byte ptr [R9 + 0x14],0x0
+    0x141752AEF MOV RCX,R9
+    0x141752AF2 JMP 0x14056c510
+
+**This is an unconditional tail jump**, not CALL followed by RET. R9 holds the embedded parent/dispatch-owner context on this path; its address is transferred into Windows x64 first-argument register RCX for FUN_14056C510. Under normal return mechanics the target function returns directly to FUN_141752AA0's original caller, rather than returning to FUN_141752AA0. No EAX/RAX overwrite is visible at this tail jump. The previous independently recorded caller of FUN_141752AA0 at 0x14017B258 immediately executes MOV EBX,EAX; TEST EAX,EAX; JNZ 0x14017B2A1. Thus **the caller's status test receives FUN_14056C510's result on this tail-call path**.
+
+This **supersedes** prior descriptions of FUN_141752AA0 as having a meaningful void-return interface or as necessarily ignoring the builder's status. The separately decompiled void prototype reflected Ghidra's incomplete type inference, not reliable machine-level result semantics. The return status is meaningful for the caller. The previously proven FUN_14056C510 source has distinct error results and passes FUN_1402E7E60's zero status through the successful construction path.
+
+Important control-flow nuance: the instruction-inspection tool lists AFTER 0x141752AF2, e.g. at 0x141752AF7 CMP R10D,0x2, purely as **spatial listing context**. These following instructions are not executed as sequential fall-through from the unconditional JMP. Do not infer a post-jump EAX adjustment from the displayed AFTER lines; those instructions belong to other reachable branches of FUN_141752AA0.
+
+## Current evidence gates and next bounded step
+
+The dispatch-object construction ABI is now structurally established end-to-end at the static code level:
+
+1. 0x3550-byte outer object contains embedded context at outer+0xF0.
+2. Embedded context stores 0x9B0-byte nested dispatch object at context+0x18 (outer+0x108).
+3. Nested object records embedded context in dispatch+0x4B0; machine-level RCX continuity into FUN_1406B3FD0 proves the fixed defaults apply to the same dispatch object.
+4. Architecture-dependent FUN_1417E8550 registers FUN_140BF3880 or alternative FUN_140092D80 at nested dispatch slot +0x170.
+5. FUN_141752AA0 tail-jumps to FUN_14056C510 and the outer constructor checks the result in EAX, so this portion of static status propagation is confirmed.
+
+**Still unresolved:** actual runtime code consuming/calling nested dispatch+0x170; argument contract and signed production Booter descriptor source at that indirect call; which selector branches physical GA102/AD102 take; signature acceptance and any safe reversible hardware testing. The alternative slot function FUN_140092D80 has not been classified. Next read-only Ghidra command decompiles that alternative function and the known HS-loader implementation as a paired **comparison of callbacks** (no binary scan; new finding should guide search for a real dispatch invoker):
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140092d80", "0x140bf3880"], "__name__": "__main__"})
+
+If clipped, report PARTIAL and obtain selective excerpts; do not interpret a successful decompile as evidence the callback is ever invoked. Avoid mistaking the external GSP UCODES bindataArgs or GSP SR metadata for the production Booter image. No unlock/detach/flash or firmware/driver/UEFI modification. CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false. Immutable audit untouched.
+
+---
+
 # 2026-11-05 — Existing callsite assembly clarifies Falcon dispatch ABI and status consumption
 
 ## Source and verification
