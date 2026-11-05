@@ -1,3 +1,19 @@
+# 2026-11-05 15:24 PST — Caller provenance of class callback registration and second-stage setup
+
+**Observed source:** user-run passive PyGhidra report `nvlddmkm-61742-booter-discovery-20261105-152456-204455.txt`, 2,956 bytes, SHA-256 `c23fa1fbf82f7fc82dfb7fa3d253b9e8c35b7afc5a47e306f6145863042a0cf6`; correct Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`, `STATUS=COMPLETE` for one instruction window plus focused C decompilation; `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. Unselected parts of caller source were omitted by the focus filter, notwithstanding `excerpt_truncated=False`.
+
+**Verified call sequence:** `FUN_1417960A0` prepares `R8=RBP` at `0x141796358`, `RDX=R14` at `0x141796376`, and `RCX=RDI` at `0x141796380` before calling `FUN_1417930C0` at `0x141796386`. Immediately afterward `0x14179638B..0x141796394` restores that same register tuple and calls `FUN_141795D50`. Ghidra C corroborates `FUN_1417930c0(puVar3,lVar5,lVar7);` followed by `FUN_141795d50(puVar3,lVar5,lVar7);`. `RDI` points at the caller's initialized object with `[RDI]=0x140EDCDF0` and `[RDI+0xF0]=0x140EDCEA8` before the registry call, and related objects receive other static pointers. The full object type, `R14`/`RBP` source, selector value/meaning, callback invoke site and HS loader relationship remain unknown. Do NOT label either RTX 4090 AD102 or RTX 3080 GA102 as selector 5..9 without separate direct evidence.
+
+**Priority:** recover the **full 3,064-character decompiled `FUN_1417960A0` body** (no focus terms) for the definitions of `lVar5`/`R14` and `lVar7`/`RBP`; then trace actual use of registered `+0x150` callback only if a link to the independently established production Booter HS-byte/descriptor flow appears. A registered callback is not an invoked loader. Existing one-line read-only script:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1417960a0"], "__name__": "__main__"})
+```
+
+**Implementation status:** current `research/nvidia_unlock_evidence_to_execution_map.md` updated in place for this observation; no new active stage passed. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Immutable audit untouched.
+
+---
+
 # 2026-11-05 15:16 PST — class-selector callback registration for FUN_140A47B50 located; still separate from HS dispatch
 
 ## New evidence and scope
