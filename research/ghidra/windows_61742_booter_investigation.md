@@ -1,3 +1,33 @@
+# 2026-11-05 15:10 PST — Internal shared-object alias verified; constructor-to-CFG consumer remains open
+
+## Primary source
+
+User-run passive report `nvlddmkm-61742-booter-discovery-20261105-151042-298386.txt` (5,761 bytes, SHA-256 `85da9ddd2f2ee4b5886181c77559df39d3972fca4afa5215791fc9d5d1e85593`). Correct Windows NVIDIA `nvlddmkm.sys` 617.42 MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra base `0x140000000`, read-only; four bounded existing-instruction windows and the unclipped `FUN_140A47B50` decompilation completed (`STATUS=COMPLETE`). No Ghidra DB or GPU changes (`HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`). Complete is scoped to this output, not whole-driver flow or hardware execution.
+
+## Decisive new link
+
+- `FUN_140A47B50` at `0x140A47B6D MOV RDI,R8` preserves third argument `param_3`. It passes `R8=RDI` to `FUN_140A444D0` via `CALL 0x140A47C4C`, then again restores `R8=RDI` before the tail `JMP FUN_140A48220` at `0x140A47C74`. Thus both initializers receive the same third-argument object.
+- **Newly proven internal alias:** the `FUN_140A444D0` prologue has `0x140A444F9 MOV RBX,R8`. Consequently prior `[RBX+0x21A0]` updates and `LEA [RBX+0x2160]` address publications in the first initializer are on the same object seen as `[R8+0x21A0]` and `[R8+0x2160]` in the second. Previously open internal RBX/R8 alias **closed in static code**.
+- `0x140A444EF MOV RDI,R9` also shows the first initializer's `RDI` starts as the **fourth argument**, not the shared third-argument object. On the guarded `TEST RDI,RDI` path, `LEA RAX,[RDI+0x2160]` points into that distinct input if nonzero. The `CMOVZ RAX,R9` fallback uses volatile R9 at the later instruction, which cannot automatically be equated with entry R9 across intervening calls.
+- Static template choice remains `[R8+0x21A0]==0` -> template `0x140FE99C0`; nonzero -> `0x140FE9A00`; four MOVUPS stores initialize `R8+0x2160..0x219F`. `+0x2240` is a subsequent branch condition, not the chooser.
+- The indirect `MOV [RCX], &RBX+0x2160` at `0x140A475F1` still lacks `RCX` provenance and a proven consumer.
+
+## Important unresolved interface boundary
+
+**Do not yet equate this constructor object with `FUN_140124A90`'s RBX**, which loads `RDX=[RBX+0x2160]`, then `RAX=[RDX+0x170]` and executes a CFG-guarded indirect call. The earlier conditional static-template `+0x170` results `0x140C06B80` and nonexecutable `0x140FE9B70` differ from known Falcon HS loader `FUN_140BF3880`; those were hypothesis-level dereferences, not proven runtime paths. The separate 0x9B0-byte Falcon dispatch construction is established, but actual invocation, signed third-argument descriptor, production Booter image/header/signature source, silicon-specific runtime selection, cryptographic acceptance, and any unlock remain **unverified**.
+
+## Next bounded read-only step
+
+Analyze the existing **code DATA references** to `FUN_140A47B50` inside `FUN_1417930C0` (at `0x14179322C` and `0x14179325A`) and actual direct callsites of `FUN_140124A90` (`0x140125089`, `0x140125225`). Prefer the current PyGhidra `TRACE_INSTRUCTION_SITES` mode plus one focused decompilation; no full scan or new code needed. If a requested focused term does not appear, `STATUS=PARTIAL` for excerpt proof rather than asserting absence.
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x14179322c", "0x14179325a", "0x140125089", "0x140125225"], "TARGET_FUNCTIONS": ["0x1417930c0"], "DECOMP_FOCUS_TERMS": ["FUN_140a47b50"], "__name__": "__main__"})
+```
+
+No EFI/driver/GPU/firmware changes. `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`. Immutable recovery audit untouched.
+
+---
+
 # 2026-11-05 — Direct shared-object callsite confirmed for FUN_140A444D0 and FUN_140A48220
 
 **Primary evidence:** user-provided Ghidra xrefs, decompiled C and exact machine instructions in `FUN_140A47B50` for Windows 617.42 `nvlddmkm.sys`. At `0x140A47B6D`, `MOV RDI,R8` preserves the third argument. At `0x140A47BEB` `MOV R8,RDI` prepares the call to `FUN_140A444D0` (`0x140A47C4C`). At `0x140A47C51`, `MOV R8,RDI` explicitly prepares the second function; after restoring nonvolatile registers, `0x140A47C74 JMP FUN_140A48220` tail-jumps to the initializer. **Therefore the two functions receive the same third-argument object on this call path.** The Ghidra `CALL_RETURN` flow override does not change the machine-code jump semantics. The return-value semantics are not established by inferred `void` prototypes.
