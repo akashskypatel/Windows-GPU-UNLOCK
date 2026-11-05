@@ -1,3 +1,34 @@
+# 2026-11-05 13:46 PST — Transfer-focused +0x170 scan: 246 candidates, 80 reported; no Falcon dispatch caller proven
+
+## Source report and scope
+
+User-run read-only PyGhidra report: nvlddmkm-61742-booter-discovery-20261105-134631-021861.txt, 17,758 bytes, SHA-256 4ef5fe9d208c7c206d5d3208291cb68a72326df81b5478d1c39d66d4629fb5a7. Target driver Windows 617.42 nvlddmkm.sys MD5 3fb9afac9d0e394723e830aa14e60512, Ghidra base 0x140000000. Mode SCAN_SLOT_DISPLACEMENT=0x170, SLOT_SCAN_FOCUS=transfer, SCAN_STRINGS=False. No hardware action or Ghidra DB changes. Report STATUS=PARTIAL due to capped reported candidates.
+
+All 12 executable initialized blocks were scanned, 19,689,472 bytes; 2,445 raw byte-pattern matches, 1,901 existing instruction-level +0x170 memory-operand matches, 246 transfer-focused heuristic matches, **80 recorded and 166 omitted**. All 80 recorded belong to GUARD_TRANSFER_NEARBY, covering 67 unique functions. The remaining 166 are not available for inspection in this report; their classification is unknown. Reported elapsed time 1.617 seconds. The coverage of executable bytes was complete, but selected-candidate reporting was not complete. Do not mislabel this as a full caller inventory.
+
+## Guard-transfer candidate is not object provenance
+
+The focused heuristic recognizes a 64-bit memory load such as MOV RAX,qword ptr [base+0x170] followed within eight existing same-function instructions by Windows CFG-guarded CALL or JMP through the dispatch pointer at 0x140E02AA8. It does not prove the base object equals the known Falcon 0x9B0-byte nested dispatch object, the pointer remains unmodified, or this branch executes in any GPU runtime path. The 246 matches are NOT 246 Falcon calls or an established producer of signed Booter bytes.
+
+## Next bounded investigation targets
+
+- FUN_140124A90 at 0x140124B56: MOV RAX,qword ptr [RDX+0x170], guarded CALL one instruction later. Independently linked to GSP boot-args construction, but RDX identity unknown; do not merge GSP argument builder and signed production Booter provenance.
+- FUN_140175B60 at 0x140175B60: MOV RAX,qword ptr [RCX+0x170], guarded JMP one instruction later. Compact apparent tail-transfer; base object unknown.
+- FUN_1403235F0 at 0x1403235F8: MOV RAX,qword ptr [RAX+0x170], guarded JMP one instruction later. Compact apparent tail-transfer; base object unknown.
+- Secondary 0x14012B802 and 0x14013AE27 have larger gaps and need register-liveness proof.
+
+Run the existing read-only script in the Ghidra Python 3 console:
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140124a90", "0x140175b60", "0x1403235f0"], "TRACE_INSTRUCTION_SITES": ["0x140124b56", "0x140175b60", "0x1403235f8"], "__name__": "__main__"})
+
+Inspect origin of the load's base register in each decompiled function and whether it can be traced to outer+0xF0 embedded context, nested pointer at outer+0x108, then nested slot+0x170. If a function clips, leave overall status PARTIAL, then request targeted DECOMP_FOCUS_TERMS. No new scanner changes are warranted solely to raise candidate caps.
+
+## Evidence-to-execution boundary
+
+Static hierarchy established: outer object 0x3550 bytes, embedded context at +0xF0, dispatch pointer at outer+0x108, nested dispatch 0x9B0 bytes, back-pointer at dispatch+0x4B0, and +0x170 function pointer conditionally selecting FUN_140BF3880 (Falcon HS binary DMA load/execute) or FUN_140092D80 (constant 0x56). Actual invocation of THIS nested dispatch slot, third-argument signed HS binary descriptor producer, production Booter image/header/signature, cryptographic acceptance and physical AD102/GA102 selected branch remain unproven. CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false. Immutable process/recovery audit unchanged.
+
+---
+
 # 2026-11-05 13:25 PST — 0x170 scan completed executable-byte coverage but omitted 1,821 candidate instructions; transfer-focused scan added
 
 ## User report and precise interpretation
