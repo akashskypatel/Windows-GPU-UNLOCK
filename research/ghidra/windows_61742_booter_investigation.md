@@ -1,3 +1,34 @@
+# 2026-11-05 — FUN_1401AFD60 decoded: common GSP/UCODES mapping and copy helper
+
+## Evidence and scope
+
+User-run read-only Ghidra report: `nvlddmkm-61742-booter-discovery-20261105-113623-765552.txt`, SHA-256 `e9ea9187bdd3d964eb0ca5454556dee66e3c04918a2636833b70b387d2e19c6d`. Driver `nvlddmkm.sys` 617.42 (MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`). Function `FUN_1401AFD60` decompiled in full (`clipped=False`, `STATUS=COMPLETE`); original Ghidra report says `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`.
+
+### Grounded callee contract and behavior
+
+Decompiler prototype: `int FUN_1401AFD60(undefined8 param_1, undefined8 param_2, longlong *param_3, longlong param_4, longlong param_5, longlong param_6)`. The observed behavior gives a probable semantic model, **not an ABI-independent type definition**:
+
+- `param_3` is a pointer to an output resource handle. Null is rejected, and the first field is populated on allocation.
+- It rejects a simultaneous non-null `param_4` (existing descriptor/resource) and `param_5` (host-source pointer). With `param_5 != 0` and `param_4 == 0`, `param_6` supplies the data length. With `param_5 == 0`, it may obtain a length from the existing descriptor at `param_4 + 0x30` if no explicit size is provided.
+- It computes 4-KiB page counts, page-table-related sizes and an allocation region; `FUN_1401B9020(param_3,param_1,lVar5,0x1000)` allocates; `FUN_1401BD1C0`, `FUN_1401B87B0`, `FUN_1401BBE70`, `FUN_1401BB110`, and `FUN_1401BD4C0` perform setup/mapping steps. The allocated resource has an observed type-like field `*(uint *)(*param_3+0x9C)=0x32` in the path shown. Return/error paths include allocation failure, unsupported mapping geometry and resource cleanup.
+- In the host-buffer copy branch, `local_a8=param_5` and the exact operation is `FUN_1400DF7C0(lVar2+local_50,param_6,local_a8,param_6)`, followed by clearing unused allocation space. The copy proves the helper can stage supplied bytes. It **does not parse** NVUCODES entries, choose an AD102/GA102 Booter, inspect Booter signatures or establish cryptographic verification.
+
+### Caller provenance and next gate
+
+Existing direct callsites: `0x1401ABB83` and `0x1401ABC5A` within `FUN_1401AB740`, and `0x14091F922` in a separate caller. The earlier complete `FUN_1401AB740` decompilation prepares source pointers/sizes for (1) GSP `.fwimage` and (2) the separate, optional UCODES file, with output resource state at `param_2 + 0xB00` and `param_2 + 0x69F70`. This six-parameter callee **strengthens** that interpretation; however, Ghidra printed only four arguments at these callsites, so the exact two stack-passed arguments must be verified from actual callsite assembly before the source pointer/length binding is marked definitive.
+
+The next highest-value post-staging operation is `FUN_1401AA580(param_1,param_2)`, which `FUN_1401B0E00` invokes after `FUN_1401AB740` and before the boot-attempt loop. Check whether it consumes the staged UCODES resource, delegates to a record selector, or performs unrelated work. Do not decompile the common mapping helper again.
+
+**Next read-only Ghidra Python 3 command (existing script, no 114-MB scan):**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1401aa580"], "__name__": "__main__"})
+```
+
+If that function is clipped, retain the `PARTIAL` report and use evidence-driven focused terms. Optionally verify the two `FUN_1401AFD60` caller argument layouts by read-only Ghidra Listing/disassembly before claiming final source/size provenance. No EFI/driver change, firmware flash, GPU mutation or actual Booter signature acceptance has occurred. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`.
+
+---
+
 # 2026-11-05 — Windows GSP ELF64 parser, signature architecture suffix, and GSP/UCODES staging
 
 ## Evidence from user-run Ghidra
