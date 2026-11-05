@@ -1,3 +1,48 @@
+# 2026-11-05 13:10 PST — Windows 617.42 HS-loader alternative is a not-supported return; real Falcon DMA consumer descriptor mapped
+
+## Primary evidence and status
+
+User-run passive Ghidra report nvlddmkm-61742-booter-discovery-20261105-131018-348907.txt; exact uploaded size **9,897 bytes**, SHA-256 **07ed5e47971eacd5fd6cc6ccbe55ce041a775d339461029fb9ee994073e121e1**. Expected driver nvlddmkm.sys Windows 617.42 MD5 **3fb9afac9d0e394723e830aa14e60512**, Ghidra image base 0x140000000. Two complete unclipped function decompilations, reported STATUS=COMPLETE, SCAN_STRINGS=SKIPPED_BY_CALLER, HARDWARE_ACTION=NONE, GHIDRA_MUTATION=NONE. A completed static decompilation **does not** prove a GPU ever executes either implementation.
+
+## Two possible dispatch slot +0x170 implementations are semantically distinct
+
+- **FUN_140092D80:** Entire decompiled body is simply return 0x56. This is a constant error path, not a second Falcon image loader. NVIDIA open-gpu-kernel-modules 615.78.08 declares NV_ERR_NOT_SUPPORTED = 0x00000056 ("Call not supported") in src/common/sdk/nvidia/inc/nvstatuscodes.h: https://github.com/NVIDIA/open-gpu-kernel-modules/blob/615.78.08/src/common/sdk/nvidia/inc/nvstatuscodes.h. That is an independent cross-version symbolic match only; no original Windows 617.42 symbolic status definition has been recovered. The function has many unrelated direct call and data references; broad xrefs do not establish it is a specific Booter selector.
+- **FUN_140BF3880:** Full decompiled body is int FUN_140bf3880(longlong param_1,longlong param_2,undefined8 *param_3), and uses string "flcnLoadAndExecuteHsBinaryViaDma_GA10X". It implements Falcon high-security binary DMA loading/execution operations when called. The first two arguments appear to be GPU/context objects; their recovered high-level C types remain UNKNOWN. The third is a descriptor consumed by this generic HS binary loader, NOT automatically an authenticated production GSP Booter descriptor.
+
+## Third-argument consumer-side layout (all offsets from param_3 in bytes)
+
+| Offset | Direct evidence | Qualification |
+|---|---|---|
+| +0x00 | *param_3 supplied as byte-copy source to FUN_1400DF7C0 when a fresh allocation is needed | Image source pointer; provenance unresolved |
+| +0x08 | 32-bit length is rounded up via (value + 0xFF) & 0xFFFFFF00, stored back into descriptor | Only when param_3+0x40 is null |
+| +0x0C | 32-bit subfield used to compute a GPU address with length/offset subtraction | Exact semantics unknown |
+| +0x10 | first transfer-loop byte count, increments by 0x100 | No formal field type recovered |
+| +0x14 | first transfer-loop target offset | Used with 0x114 register programming |
+| +0x18 | first transfer-loop secondary offset | Used with 0x11C register programming |
+| +0x1C | addend for another GPU-read address calculation | Exact field name unknown |
+| +0x20 | second-phase transfer byte count | Increments by 0x100 |
+| +0x24 | second-phase target offset | Used with 0x114 programming |
+| +0x28 | 32-bit offset value, 0xFFFFFFFF sentinel special case | Used in second-phase base/counters |
+| +0x2C | byte tested for equality to 1 | Controls optional final FUN_1406A40F0 call |
+| +0x30, +0x34, +0x38, +0x3C | additional integer arguments / control words read near completion | No name/signature fields yet |
+| +0x40 | optional pointer to an existing memory descriptor (param_3[8]); otherwise create/map/copy a temporary allocation and clean it up | A pre-provisioned pointer suppresses the new-copy path |
+
+Visible callback sequence includes FUN_1401B9020 descriptor allocation, FUN_1401B87B0 storage alloc, FUN_1401BC180 mapping, FUN_1400DF7C0 byte copy, FUN_1401BB0B0 mapped GPU address, FUN_1406A2460 state setup, FUN_1406A2310, FUN_1406A23B0 progression checks, FUN_1406B6470 programming offsets 0x114/0x11C/0x118 with configured values, FUN_140754610 near completion, conditional FUN_1406A40F0, and optional resource cleanup with FUN_1401BABD0 and FUN_1401BA330. Guarded indirect calls printed as PTR__guard_dispatch_icall_140E02AA8 do not reveal actual destination functions; do not attribute them without instruction-level proof.
+
+## Next targeted, passive search for actual invocation
+
+The incoming direct refs to FUN_140BF3880 are DATA, not ordinary CALLs, and its assignment into the nested dispatch-object +0x170 is established by separate earlier FUN_1417E8550 evidence. Finding the actual **indirect invoker of +0x170**, and tracing its third-argument descriptor backward, is now the primary blocker.
+
+The existing PyGhidra discovery script was extended, without adding dependencies, by the optional SCAN_SLOT_DISPLACEMENT=0x170 mode. It scans **initialized executable memory blocks only**, not firmware/hardware or nonexecuting driver data; finds x64 little-endian disp32 bytes 70 01 00 00 with cross-chunk handling; accepts candidates only if already-defined Ghidra instruction text contains a bracketed +0x170 operand; reports containing function entry, VA, and assembly. Search is bounded by 192 MiB, 90 seconds and 80 recorded instruction candidates, and issues STATUS=PARTIAL if a budget/recording cap prevents complete coverage. Candidate displacement usage alone is NOT proof of dispatch-object identity, callback invocation, argument provenance or runtime selection. Local Python compilation passed and **16/16 relevant local unit tests passed**, including cross-chunk matching, rejection of unrelated immediates, incomplete byte budget, exact multi-block budget boundary, capped candidates and invalid offset rejection. **This scan option has NOT been run inside Ghidra.**
+
+Next Ghidra Python 3 command, after syncing main:
+
+    exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "SCAN_SLOT_DISPLACEMENT": "0x170", "__name__": "__main__"})
+
+Follow only actual candidate instructions showing plausible indirect invocation and then recover the third-argument descriptor's producer and source signed image/header/signature from static references; even a code match does not prove runtime invocation. Physical RTX 4090/3080 class selection, Windows production Booter image origin, cryptographic signature acceptance and live unlock remain UNPROVEN. Keep CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false. Immutable process/recovery audit unchanged.
+
+---
+
 # 2026-11-05 — FUN_141752AA0 is a tail-call thunk to the dispatch builder; EAX status propagation proven
 
 ## Primary evidence

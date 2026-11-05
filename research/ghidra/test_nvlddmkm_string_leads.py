@@ -188,5 +188,124 @@ class InstructionSiteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'TRACE_INSTRUCTION_SITES'):
             probe.inspect_instruction_sites(Program(), '0x1402e7e6b', lambda line: None)
 
+
+class SlotDisplacementScanTests(unittest.TestCase):
+    class Instruction:
+        def __init__(self, addr, assembly):
+            self.addr, self.assembly = addr, assembly
+        def getAddress(self):
+            return self.addr
+        def __str__(self):
+            return self.assembly
+
+    def run_scan(self, data, asm, *, max_bytes=512, chunk_bytes=4):
+        from types import SimpleNamespace
+        base = 0x140000000
+        starts = [n for n in range(len(data)) if data.startswith(b'\x70\x01\x00\x00', n)]
+        assert len(starts) <= 1
+        instruction = self.Instruction(base + starts[0], asm) if starts else None
+
+        class ExecutableMemoryBlock:
+            def isInitialized(self):
+                return True
+            def isExecute(self):
+                return True
+            def getName(self):
+                return '.text'
+            def getStart(self):
+                return SimpleNamespace(getOffset=lambda: base)
+            def getSize(self):
+                return len(data)
+
+        class MemoryWithCode:
+            def getBlocks(self):
+                return [ExecutableMemoryBlock()]
+
+        class ProgramWithCode:
+            def getMemory(self):
+                return MemoryWithCode()
+            def getListing(self):
+                return SimpleNamespace(getInstructionContaining=lambda a: instruction if instruction is not None and a >= instruction.addr and a < instruction.addr + 4 else None)
+            def getFunctionManager(self):
+                return SimpleNamespace(getFunctionContaining=lambda a: SimpleNamespace(getName=lambda: 'FUN_target', getEntryPoint=lambda: base))
+
+        out = []
+        with patch.object(probe, '_address', side_effect=lambda program, integer: integer), \
+             patch.object(probe, '_memory_bytes', side_effect=lambda mem, addr, n: data[addr-base:addr-base+n]), \
+             patch.object(probe, 'CHUNK_BYTES', chunk_bytes), \
+             patch.object(probe, 'MAX_SCAN_BYTES', max_bytes), \
+             patch.object(probe.time, 'monotonic', return_value=1.0):
+            result = probe.scan_existing_slot_displacements(ProgramWithCode(), 0x170, out.append, 2.0)
+        return result, out
+
+    def test_disp32_spanning_chunk_boundary_matches_existing_instruction(self):
+        result, out = self.run_scan(b'AB\x70\x01\x00\x00CD', 'MOV RAX,qword ptr [RCX + 0x170]')
+        self.assertTrue(result)
+        found = [x for x in out if x.startswith('SLOT_CANDIDATE')]
+        self.assertEqual(len(found), 1)
+        self.assertIn('FUN_target', found[0])
+        self.assertTrue(any('raw_hits=1 distinct_instruction_candidates=1' in x for x in out))
+
+    def test_unrelated_immediate_does_not_become_a_dispatch_candidate(self):
+        result, out = self.run_scan(b'AB\x70\x01\x00\x00CD', 'MOV EAX,0x170')
+        self.assertTrue(result)
+        self.assertFalse(any(x.startswith('SLOT_CANDIDATE') for x in out))
+        self.assertTrue(any('raw_hits=1 distinct_instruction_candidates=0' in x for x in out))
+
+    def test_incomplete_byte_budget_is_reported_as_partial(self):
+        result, out = self.run_scan(b'ABCDEFGHIJKLMNO', '', max_bytes=4)
+        self.assertFalse(result)
+        self.assertTrue(any('SLOT_SCAN_TRUNCATED' in x for x in out))
+        self.assertTrue(any('scan_complete=False' in x for x in out))
+
+    def test_candidate_cap_marks_scan_partial(self):
+        with patch.object(probe, 'MAX_SLOT_CANDIDATES', 0):
+            result, out = self.run_scan(b'AB\x70\x01\x00\x00CD',
+                                        'MOV RAX,qword ptr [RCX + 0x170]')
+        self.assertFalse(result)
+        self.assertTrue(any('distinct_instruction_candidates=1 recorded=0 capped=True' in x for x in out))
+
+    def test_exact_budget_on_first_of_two_blocks_does_not_report_complete(self):
+        from types import SimpleNamespace
+        class Section:
+            def __init__(self, base):
+                self.base = base
+            def isInitialized(self):
+                return True
+            def isExecute(self):
+                return True
+            def getName(self):
+                return '.text'
+            def getStart(self):
+                return SimpleNamespace(getOffset=lambda: self.base)
+            def getSize(self):
+                return 4
+        class MemoryWithTwoBlocks:
+            def getBlocks(self):
+                return [Section(0x1000), Section(0x2000)]
+        class ProgramWithTwoBlocks:
+            def getMemory(self):
+                return MemoryWithTwoBlocks()
+            def getListing(self):
+                return SimpleNamespace(getInstructionContaining=lambda addr: None)
+            def getFunctionManager(self):
+                return SimpleNamespace(getFunctionContaining=lambda addr: None)
+        out = []
+        with patch.object(probe, '_address', side_effect=lambda p, n: n), \
+             patch.object(probe, '_memory_bytes', return_value=b'ABCD'), \
+             patch.object(probe, 'MAX_SCAN_BYTES', 4), \
+             patch.object(probe.time, 'monotonic', return_value=1.0):
+            result = probe.scan_existing_slot_displacements(ProgramWithTwoBlocks(), 0x170, out.append, 2.0)
+        self.assertFalse(result)
+        self.assertTrue(any('SLOT_SCAN_UNVISITED_BLOCKS count=1' in x for x in out))
+        self.assertTrue(any('scan_complete=False' in x for x in out))
+
+    def test_invalid_slot_displacement_is_rejected(self):
+        from types import SimpleNamespace
+        program = SimpleNamespace()
+        with self.assertRaisesRegex(ValueError, 'SLOT_DISPLACEMENT'):
+            probe.scan_existing_slot_displacements(program, 0x20, lambda _: None, 2.0)
+
+
 if __name__ == '__main__':
     unittest.main()

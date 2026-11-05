@@ -29,6 +29,7 @@ MAX_TARGETS = 4
 MAX_INCOMING_REFS = 24
 MAX_DATA_SITES = 8
 MAX_INSTRUCTION_SITES = 4
+MAX_SLOT_CANDIDATES = 80
 DECOMP_TIMEOUT_SECONDS = 12
 MAX_DECOMP_CHARS = 14000
 
@@ -363,6 +364,102 @@ def inspect_instruction_sites(program, sites, log):
     return complete
 
 
+
+
+def _slot_displacement_hits(previous, current, needle):
+    """Return raw offsets relative to current chunk, including boundary hits."""
+    if len(needle) != 4:
+        raise ValueError('expected x64 disp32 bytes')
+    combined = previous + current
+    pos = 0
+    while True:
+        at = combined.find(needle, pos)
+        if at < 0:
+            return
+        if at + len(needle) > len(previous):
+            yield at - len(previous)
+        pos = at + 1
+
+
+def scan_existing_slot_displacements(program, slot, log, deadline):
+    """Find candidate x64 [register+disp32] uses in existing executable code.
+
+    Bytes are never disassembled; raw matches are accepted only when already
+    defined Ghidra instructions contain the exact displacement in brackets.
+    Matches are *candidates*, not validated indirect calls or object aliases.
+    """
+    slot = int(str(slot), 0) if isinstance(slot, str) else int(slot)
+    if not 0x80 <= slot <= 0x7fffffff:
+        raise ValueError('SLOT_DISPLACEMENT must be a positive x64 disp32 >= 0x80')
+    memory = program.getMemory()
+    listing = program.getListing()
+    functions = program.getFunctionManager()
+    blocks = [b for b in memory.getBlocks() if b.isInitialized() and b.isExecute()]
+    blocks.sort(key=lambda b: int(b.getStart().getOffset()))
+    raw_needle = slot.to_bytes(4, 'little')
+    operand_re = re.compile(r'\[[^\]\n]*\+\s*0x%x\b[^\]\n]*\]' % slot, re.I)
+    scanned = 0
+    raw_matches = 0
+    verified = 0
+    recorded = 0
+    seen_instructions = set()
+    complete = True
+    log('SLOT_SCAN_BEGIN slot=0x%x block_count=%d max_bytes=%d deadline_bounded=True' % (
+        slot, len(blocks), MAX_SCAN_BYTES))
+    for block_index, block in enumerate(blocks):
+        base = int(block.getStart().getOffset())
+        length = int(block.getSize())
+        log('SLOT_SCAN_BLOCK name=%s va=0x%x bytes=%d' % (block.getName(), base, length))
+        offset = 0
+        previous = b''
+        while offset < length:
+            if scanned >= MAX_SCAN_BYTES or time.monotonic() > deadline:
+                complete = False
+                log('SLOT_SCAN_TRUNCATED block=%s remaining=%d reason=budget_or_deadline' % (
+                    block.getName(), length-offset))
+                break
+            take = min(CHUNK_BYTES, length-offset, MAX_SCAN_BYTES-scanned)
+            try:
+                current = _memory_bytes(memory, _address(program, base+offset), take)
+            except Exception as exc:
+                complete = False
+                log('SLOT_SCAN_READ_ERROR block=%s va=0x%x error_type=%s' % (
+                    block.getName(), base+offset, type(exc).__name__))
+                break
+            for relative in _slot_displacement_hits(previous, current, raw_needle):
+                raw_matches += 1
+                where = _address(program, base+offset+relative)
+                instruction = listing.getInstructionContaining(where)
+                if instruction is None or not operand_re.search(str(instruction)):
+                    continue
+                entry = str(instruction.getAddress())
+                if entry in seen_instructions:
+                    continue
+                seen_instructions.add(entry)
+                verified += 1
+                if recorded >= MAX_SLOT_CANDIDATES:
+                    complete = False
+                    continue
+                recorded += 1
+                fn = functions.getFunctionContaining(instruction.getAddress())
+                log('SLOT_CANDIDATE VA=%s block=%s asm=%s function=%s(%s)' % (
+                    instruction.getAddress(), block.getName(), instruction,
+                    fn.getName() if fn is not None else 'UNKNOWN',
+                    fn.getEntryPoint() if fn is not None else 'UNKNOWN'))
+            previous = (previous + current)[-3:]
+            offset += take
+            scanned += take
+        if scanned >= MAX_SCAN_BYTES or time.monotonic() > deadline:
+            if offset < length or block_index < len(blocks)-1:
+                complete = False
+                log('SLOT_SCAN_UNVISITED_BLOCKS count=%d' % (len(blocks)-block_index-1))
+            break
+    log('SLOT_SCAN_END scanned_bytes=%d raw_hits=%d distinct_instruction_candidates=%d recorded=%d capped=%s scan_complete=%s' % (
+        scanned, raw_matches, verified, recorded, verified>recorded, complete))
+    log('SLOT_SCAN_LIMIT=Candidate offsets only: no dispatch-owner provenance, indirect-call identity, runtime branch, or firmware acceptance proven')
+    return complete
+
+
 def decompilation_excerpt(code, terms, limit=MAX_DECOMP_CHARS):
     """Extract bounded line-numbered evidence around requested C identifiers.
 
@@ -512,6 +609,11 @@ def main():
             status = 'COMPLETE'
         if bool(globals().get('SCAN_CSV_LEADS', False)):
             scan_known_string_references(program, output)
+        slot_displacement = globals().get('SCAN_SLOT_DISPLACEMENT', None)
+        if slot_displacement is not None and not scan_existing_slot_displacements(
+                program, slot_displacement, output, time.monotonic() + MAX_SCAN_SECONDS):
+            status = 'PARTIAL'
+            output('SLOT_SCAN_COMPLETE=FALSE; results incomplete or candidate cap reached')
         instruction_sites = globals().get('TRACE_INSTRUCTION_SITES', ())
         if instruction_sites and not inspect_instruction_sites(program, instruction_sites, output):
             status = 'PARTIAL'
