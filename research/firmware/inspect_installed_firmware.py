@@ -126,11 +126,54 @@ def inspect_ucodes(path: Path) -> dict:
             'records_parsed': False}
 
 
+def _find_fingerprint_in_fwimage(path: Path, gsp_info: dict, fingerprint: bytes) -> dict:
+    """Count raw bytes within the ELF .fwimage section, never outside it."""
+    images = [section for section in gsp_info['sections'] if section['name'] == '.fwimage']
+    if not images:
+        return {'search_performed': False, 'reason': 'no .fwimage section',
+                'occurrences': None, 'first_file_offset': None,
+                'first_fwimage_relative_offset': None, 'unique_occurrence': False}
+    if len(images) != 1 or images[0]['type'] == 8:
+        raise ValueError('ambiguous or non-file-backed GSP .fwimage section')
+    section = images[0]
+    first = None
+    occurrences = 0
+    remaining = section['size']
+    absolute = section['offset']
+    overlap = b''
+    with path.open('rb') as stream:
+        stream.seek(absolute)
+        while remaining:
+            data = stream.read(min(1024 * 1024, remaining))
+            if not data:
+                raise ValueError('GSP file changed while scanning firmware fingerprint')
+            chunk = overlap + data
+            start = absolute - len(overlap)
+            pos = chunk.find(fingerprint)
+            while pos != -1:
+                occurrences += 1
+                if first is None:
+                    first = start + pos
+                pos = chunk.find(fingerprint, pos + 1)
+            overlap = chunk[-(len(fingerprint) - 1):]
+            absolute += len(data)
+            remaining -= len(data)
+    return {'search_performed': True, 'occurrences': occurrences,
+            'first_file_offset': first,
+            'first_fwimage_relative_offset': first - section['offset'] if first is not None else None,
+            'unique_occurrence': occurrences == 1}
+
+
 def inspect_pair(gsp: Path, ucodes: Path, package_dir: Path | None = None) -> dict:
     gsp_info = inspect_gsp(gsp)
     ucodes_info = inspect_ucodes(ucodes)
+    fingerprint = bytes.fromhex(ucodes_info['filename_index_fingerprint'][2:])[::-1]
+    pairing = _find_fingerprint_in_fwimage(gsp, gsp_info, fingerprint)
+    pairing['fingerprint_hex'] = ucodes_info['filename_index_fingerprint']
+    pairing['runtime_pairing_verified'] = False
     output = {'schema': 'nvidia-windows-gsp-container-inventory/1',
               'gsp': gsp_info, 'ucodes': ucodes_info,
+              'static_fingerprint_comparison': pairing,
               'source': 'user-supplied file paths',
               'firmware_signature_verified': False,
               'gsp_ucodes_pair_accepted_by_driver': False,

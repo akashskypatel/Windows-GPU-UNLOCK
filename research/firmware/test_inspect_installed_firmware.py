@@ -24,6 +24,20 @@ def make_gsp(path: Path):
     path.write_bytes(bytes(hdr) + names + b'\x11\x22\x33\x44' + b''.join(sections))
 
 
+def make_gsp_with_fwimage(path: Path, payload: bytes):
+    names = b'\0.shstrtab\0.fwimage\0'
+    hdr = bytearray(64)
+    hdr[:16] = b'\x7fELF\x02\x01\x01' + b'\0' * 9
+    payload_offset = 64 + len(names)
+    shoff = payload_offset + len(payload)
+    struct.pack_into('<HHIQQQIHHHHHH', hdr, 16, 1, 243, 1, 0, 0, shoff, 0, 64, 0, 0, 64, 3, 1)
+    sections = [b'\0'*64,
+                fw.ELF_SECTION.pack(1, 3, 0, 0, 64, len(names), 0, 0, 1, 0),
+                fw.ELF_SECTION.pack(11, 1, 0, 0, payload_offset, len(payload), 0, 0, 1, 0)]
+    path.write_bytes(bytes(hdr) + names + payload + b''.join(sections))
+    return payload_offset
+
+
 def make_ucodes(path: Path, *, fingerprint=0x2d38befecdb703a6):
     path.write_bytes(fw.UCODES_HEADER.pack(b'NVUCODES', 1, 1293, fingerprint) + b'\0' * 16)
 
@@ -119,6 +133,54 @@ class FirmwareInventoryTests(unittest.TestCase):
             self.assertTrue(result['package_comparison']['gsp']['same_sha256'])
             self.assertFalse(result['package_comparison']['ucodes']['same_sha256'])
             self.assertFalse(result['can_unlock'])
+
+    def test_fingerprint_found_exactly_once_inside_fwimage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fp = (0x2d38befecdb703a6).to_bytes(8, 'little')
+            offset = make_gsp_with_fwimage(root/'gsp.bin', b'!'*13 + fp + b'#'*20)
+            make_ucodes(root/'ucodes.bin')
+            report = fw.inspect_pair(root/'gsp.bin', root/'ucodes.bin')
+            found = report['static_fingerprint_comparison']
+            self.assertTrue(found['search_performed'])
+            self.assertTrue(found['unique_occurrence'])
+            self.assertEqual(found['occurrences'], 1)
+            self.assertEqual(found['first_file_offset'], offset + 13)
+            self.assertEqual(found['first_fwimage_relative_offset'], 13)
+            self.assertFalse(found['runtime_pairing_verified'])
+            self.assertFalse(report['gsp_ucodes_pair_accepted_by_driver'])
+
+    def test_boundary_spanning_fingerprint_not_missed_or_double_counted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fp = (0x2d38befecdb703a6).to_bytes(8, 'little')
+            relative = 1024 * 1024 - 4
+            base = make_gsp_with_fwimage(root/'gsp.bin', b'!'*relative + fp + b'#'*11)
+            make_ucodes(root/'ucodes.bin')
+            found = fw.inspect_pair(root/'gsp.bin', root/'ucodes.bin')['static_fingerprint_comparison']
+            self.assertEqual(found['occurrences'], 1)
+            self.assertEqual(found['first_file_offset'], base + relative)
+
+    def test_no_fingerprint_is_not_a_pairing_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_gsp_with_fwimage(root/'gsp.bin', b'0'*48)
+            make_ucodes(root/'ucodes.bin')
+            found = fw.inspect_pair(root/'gsp.bin', root/'ucodes.bin')['static_fingerprint_comparison']
+            self.assertTrue(found['search_performed'])
+            self.assertEqual(found['occurrences'], 0)
+            self.assertIsNone(found['first_file_offset'])
+            self.assertFalse(found['unique_occurrence'])
+
+    def test_duplicate_fingerprint_not_reported_unique(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fp = (0x2d38befecdb703a6).to_bytes(8, 'little')
+            make_gsp_with_fwimage(root/'gsp.bin', fp + b'-'*10 + fp)
+            make_ucodes(root/'ucodes.bin')
+            found = fw.inspect_pair(root/'gsp.bin', root/'ucodes.bin')['static_fingerprint_comparison']
+            self.assertEqual(found['occurrences'], 2)
+            self.assertFalse(found['unique_occurrence'])
 
     def test_existing_report_refused(self):
         with tempfile.TemporaryDirectory() as directory:

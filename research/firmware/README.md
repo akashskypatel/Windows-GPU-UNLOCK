@@ -91,3 +91,12 @@ The report path must be new; no existing report is overwritten. The inspector pr
 Reference: NVIDIA public `src/nvidia/src/kernel/core/bin_data_pvt.h` at tag `615.78.08` describes `BINDATA_UCODES_BIN_HEADER` with little-endian magic, version, declared entries, and the filename-order fingerprint. The fingerprint is pairing metadata, not a code-signing check. `inspect_installed_firmware.py` intentionally does not parse the undocumented entry bodies.
 
 The 2026-11-05 Windows 617.42 inventory reported a structurally consistent 19-section ELF and 1,293-entry `NVUCODES` header. The extended inspector also records `.fwversion` text/raw bytes and SHA-256 digests for each `.fwsignature_*` section, for byte-level version/architecture comparisons only. Signature *digests are not cryptographic verification*. Always use a fresh report path when rerunning the tool.
+
+
+### Static GSP–NVUCODES fingerprint cross-check
+
+The host-only inspector now scans exactly the ELF .fwimage section in bounded 1 MiB chunks for the 8-byte little-endian fingerprint taken from the supplied NVUCODES header. It records static_fingerprint_comparison with occurrence count, first absolute and section-relative offset, and a unique-match boolean. No match and multiple matches are reported accurately, not converted to pairing success. The fields runtime_pairing_verified=false and gsp_ucodes_pair_accepted_by_driver=false remain unchanged regardless of outcome.
+
+For the user's Windows 617.42-installed GSP 615.78.05 pair, a separate read-only console check observed fingerprint 0x2d38befecdb703a6 **once** at file offset 17492248 (0x010ae918), relative to .fwimage offset 64 at 17492184 (0x010ae8d8). The result is user-supplied static evidence, not a run of this newly integrated inspector.
+
+Use the same --gsp, --ucodes, and --package-dir arguments shown above, but choose a **new** --output path such as windows-61742-gsp-ucodes-inventory-v3.json. The matching bytes support file-pair provenance, not verified signature validity, hardware execution, or a driver/firmware ABI guarantee.
