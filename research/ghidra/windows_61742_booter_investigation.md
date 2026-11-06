@@ -1,3 +1,26 @@
+# 2026-11-05 16:20 PST — Static Falcon interface table XREFs closed, no executable invoker
+
+**User-run source:** `nvlddmkm-61742-booter-discovery-20261105-162054-788737.txt`, 2,212 bytes, SHA-256 `bb22716045a90d4af84db35e092e669171b6cbcbd9c8d5467d58878c9fc68536`. Read-only Ghidra of `nvlddmkm.sys` Windows 617.42, MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. Three `TRACE_DATA_SITES` inspections completed, no caps or decompilation (`STATUS=COMPLETE`; `DECOMPILATION=SKIPPED`; `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`).
+
+| Exact defined .rdata source | Outbound DATA target | Inbound existing Ghidra DATA refs |
+|---|---|---|
+| `0x140F27640` | `0x140F275A0` | `0x1417E9BAE`, `0x1417E9BB5` in `FUN_1417E99B0`, plus `0x140F27618` |
+| `0x140F27658` | `0x140E8EC18` | `0x1417E9B92`, `0x1417E9B9C` in `FUN_1417E99B0`, plus `0x140F27620` |
+| `0x140F27670` | `0x140EBEB20` | `0x1417E9BA3`, `0x1417E9BAA` in `FUN_1417E99B0`, plus `0x140F27628` |
+
+For each source Ghidra reported `defined=True`, inbound `count=3 capped=False`, and **DATA** reference types. These links confirm only that `FUN_1417E99B0` initializes the three static interface-table pointers and that neighboring data points to them. The table sources are not proven callable entrypoints and the references are not executable consumers of the 0x9B0-byte nested Falcon dispatch, much less a call to `FUN_140BF3880`.
+
+**Disposition:** exact three-table XREF task **CLOSED (STATIC)** with no new execution gate passed. Avoid repeated generic table metadata XREF enumeration. The object-rooted proof gate is a caller that fetches the actual dispatch pointer at outer+0x108 (embedded context +0x18), and invokes its **instance-relative** +0x170 loader/fallback callback. The previously documented `FUN_140BF3880` third-argument binary-descriptor fields are the *callee contract*, not evidence of the producer; production Windows signed Booter bytes/header/signature and crypto acceptance remain open. An existing read-only `SCAN_SLOT_DISPLACEMENT=0x170` with `SLOT_SCAN_FOCUS=transfer` can yield candidates **if not already run**; never interpret candidates as object aliases without callsite argument tracing. This is targeted filtering, not permission for another unfiltered broad scan.
+
+**Next one-line Ghidra console command (bounded candidate work, not executable proof):**
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "SCAN_SLOT_DISPLACEMENT": "0x170", "SLOT_SCAN_FOCUS": "transfer", "__name__": "__main__"})
+```
+
+`CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. No driver, UEFI, firmware, registry, Ghidra database or GPU modification; immutable recovery/process audit untouched. Current execution-plan status updated in place; cumulative research notes now v112.
+
+---
+
 # 2026-11-05 16:09 PST — resolved interface consumer in 0x9B0 Falcon dispatch construction
 
 **Primary evidence:** user-run passive PyGhidra report `nvlddmkm-61742-booter-discovery-20261105-160902-590021.txt` (3,892 bytes; SHA-256 `36d76d89ee795e8578cb103dab0a2a8f91f75cee524ff0895d8c641e12221989`). Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. `STATUS=COMPLETE` for single **full, unclipped** `FUN_1417E99B0` decompilation; no Ghidra DB or hardware mutations. This does not imply verified runtime firmware operation.
