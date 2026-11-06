@@ -1,3 +1,36 @@
+# 2026-11-06 14:09 PST — HS overlay signature callback registered at nested Falcon initializer +0x250
+
+## User-supplied report and verification boundary
+
+Report: nvlddmkm-61742-booter-discovery-20261106-140949-974069.txt. Locally verified file SHA-256: 5e8f31b87959ad7bece299fe2742acddc64dddd622cdda33a722bf0f7f623a01; 4,370 bytes, 75 CRLF lines. Ghidra original Windows 617.42 nvlddmkm.sys MD5 3fb9afac9d0e394723e830aa14e60512, base VA 0x140000000. SCAN_STRINGS=False; TRACE_INSTRUCTION_SITES 0x1417E9835/0x1417E983C; TRACE_DATA_SITES 0x1414692CC/0x140E199F0/0x140D2C460/0x140D17080. STATUS=COMPLETE, ELAPSED_SECONDS=0.017, DECOMPILATION=SKIPPED, HARDWARE_ACTION=NONE, GHIDRA_MUTATION=NONE. No full new function decompilation or runtime action occurred in this report.
+
+## Exact new callback registration: proven by existing machine instructions
+
+Both Ghidra instruction windows identify FUN_1417E8550. At 0x1417E9835: LEA RAX,[0x140BF2740]; at 0x1417E983C: MOV qword ptr [R9+0x250],RAX. Thus FUN_140BF2740, already decompiled as a Falcon HS overlay 32-bit signature-blob transform, is **conditionally installed in callback slot +0x250** on the R9 receiver in the same initializer previously shown to register the HS DMA loader at +0x170 and Falcon reset/wait at +0x130. At 0x1417E9843/0x1417E984A, adjacent FUN_1406B4360 is installed to [R9+0x258] on that visible path; its body and actual use are UNREVIEWED. These are machine-proven registration writes, NOT invocation.
+
+The visible condition at 0x1417E981B..0x1417E9833 uses (R8D & 0xFFFFFFE0) == 0x20 on one ingress, then tests ((R10D << (R8D & 0x1F)) & 0x01F0F800) != 0. Bitmask 0x01F0F800 has set bit positions 11..15 and 20..24. The earlier 0x1417E980B branch jumps directly to 0x1417E9826 and can bypass the visible group comparison, so **do not claim the group condition holds on every reachable ingress**. The source/value of R10D and complete R9 receiver/class mapping are not established by this bounded window. On mask-test failure the branch goes to 0x1417E9853; subsequent fallback/default fields are not yet inspected. No runtime selector or per-GPU eligibility claim is supported.
+
+The known +0x130 and +0x170 callback registration and the newly proven +0x250/+0x258 callbacks share FUN_1417E8550 and use its R9 object-receiver register, providing a stronger **structural registration** relationship between HS blob transformation and HS DMA loading. The complete 14:01 body of FUN_140BF2740 did not directly invoke FUN_140BF3880. Neither a return/call chain nor the loader's third-argument signed-image descriptor producer nor actual nested Falcon callback invocation is yet proven.
+
+## Resolved secondary DATA references and reset strings
+
+| Reference anchor | Exact report result | Interpretation |
+|---|---|---|
+| 0x1414692CC (.pdata) | One outbound DATA pointer to FUN_140BF2740; no incoming refs to that site | Exception/unwind-related static metadata, not a runtime caller; precise table layout unreviewed |
+| 0x140E199F0 (.rdata), defined-data root 0x140E02C20 | One outbound DATA pointer to FUN_140BF2740; none inbound to exact leaf, one DATA ref from 0x141002A80 to root | Static pointer metadata, no established invocation |
+| lsfmFalconReset_IMPL at 0x140D2C460 | Five inbound DATA refs, all in FUN_140AEC8E0: 0x140AEC92A/937/9ED/9F8 and 0x140AECA56 | Reset-string owner known; function-body semantics/call relation not established here |
+| flcnWaitForResetToFinish_v04_00 at 0x140D17080 | Five inbound DATA refs, all in FUN_1406B8BA0: 0x1406B8C5F/6C/D59/D64/D97 | Consistent with previously identified alternative reset/wait callback at +0x130; not a Booter byte source |
+
+## Outcome and next evidence gate
+
+**Closed by this report:** whether the named HS overlay function is actually stored in a callback slot (YES, on a conditionally visible path at R9+0x250); whether adjacent +0x258 registration exists (YES). **Still OPEN:** exact branch reachability and default callbacks, R10D selector meaning, GPU-specific mapping, R9 live instance identity, any indirect invocation of +0x250 or +0x170, producer/consumer dataflow from HS overlay output to signed loader descriptor, production signed Booter sources, cryptographic acceptance and recovery. Secondary reset name owners do not close the main signed-image producer gap.
+
+**Next bounded read-only Ghidra task:** inspect existing instruction windows at 0x1417E980B, 0x1417E9853 and 0x1417E98A4; single-target decompile FUN_1406B4360 to classify the paired +0x258 handler. Optionally use SCAN_SLOT_DISPLACEMENT=0x250, SLOT_SCAN_FOCUS=transfer to find candidate +0x250 indirect invokers; this is a heuristic, bounded full-executable scan, and may return PARTIAL at its 192 MiB/90 sec/80 candidate cap. Neither a missed scan nor a candidate is enough to rule out or prove a dynamic invocation. Separate proof must follow exact receiver and argument provenance to FUN_140BF3880. No GPU/UEFI/driver operations.
+
+CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false; RECOVERY_VERIFIED=false. Earlier chronological notes retained unchanged below.
+
+---
+
 # 2026-11-06 14:01 PST — Complete overlay-signature transformation and direct carveout-lead closure
 
 ## Identity and execution scope
