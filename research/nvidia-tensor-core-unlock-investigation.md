@@ -1,3 +1,28 @@
+# 2026-11-06 13:34 PST — Same outer construction path proven for PAGEdBIN callbacks and nested Falcon HS dispatcher
+
+Primary Ghidra report: nvlddmkm-61742-booter-discovery-20261106-133402-701773.txt, uploaded SHA-256 09f119d59eaf7678eeca9574f4a789001b6d0b9f32b661a9a06fbccdd8c9bf05. Driver MD5 3fb9afac9d0e394723e830aa14e60512, VA base 0x140000000. One full unclipped FUN_14179E530 decompilation plus three resolved instruction sites, STATUS=COMPLETE, HARDWARE_ACTION=NONE, GHIDRA_MUTATION=NONE. Expanded header listing Pasted text(3).txt, uploaded SHA-256 806afe7cf2675794575178ea532a6dee00fbcdc5bb9ee2342f0959ba60b6bfcc.
+
+## MAJOR NEW PROVEN STATIC OBJECT LINK
+
+FUN_14179E530 allocates or reuses a 0x588-byte outer object and zeroes it. It resolves two interface descriptors: lVar8 via DAT_140EA93F8 or fallback id 0x74BC71, and lVar10 via DAT_140EA93D0 or fallback id 0x34A6D6. On the successful path it sets outer+0x118=outer+0x08, outer+0x120=outer+0xF0, outer+0x110=outer+0x10, outer+0x128=outer. It calls FUN_14173CE10(outer+0x08), FUN_141752B20(outer+0xF0,lVar8), FUN_14179DE70(outer,lVar8,lVar10), and FUN_14173CE00(outer+0x08). If that succeeds it DIRECTLY calls FUN_141752AA0(outer+0xF0,lVar8). The earlier proven FUN_141752AA0 -> FUN_14056C510 -> FUN_1417E99B0/FUN_1417E8550 chain constructs a separate 0x9B0 Falcon dispatch object and, on successful initialization, publishes it at (outer+0xF0)+0x18 = outer+0x108, with nested+0x4B0 back-pointer to outer+0xF0.
+
+Therefore the PAGEdBIN callback registrations of FUN_14179DE70 (including outer+0x148=FUN_140A74E50 conditionally) and the nested Falcon HS dispatch builder belong to the SAME 0x588-byte outer allocation/construction flow, not merely shared unrelated helpers. However, the OUTER +0x170 data-pointer callback and the NESTED +0x170 HS loader/fallback callback are in two different allocations, despite identical offsets. Construction/registration is not actual invocation. Separately documented FUN_14017AF30 constructs a 0x3550-byte outer type with a similar outer+0xF0 owner and nested outer+0x108 pointer; do not assume the two outer allocations are identical.
+
+Successful status requires descriptor lookups and later zero-return status checks. FUN_14179E530 reads 16-bit selectors at lVar8+0x10 and lVar10+0x10 and sets conditional feature bytes at outer+0x1BA, +0x1BB and +0x58; no observed live GA102/AD102 class values. An ABI/decompiler discrepancy remains: caller renders FUN_14179DE70 with three arguments while its prior decompilation displayed two; site 0x14179E820 has an R8 register assignment, but callee use/meaning is unproved. The exact signed-image third argument into FUN_140BF3880 and ANY actual indirect HS callback invocation remain OPEN.
+
+Static interface heads installed by this outer constructor include PTR_DAT_140EDE0D0 at outer+0x00, PTR_DAT_140EDE0E8 at outer+0x08, PTR_DAT_140EDE100 at outer+0x10 and PTR_DAT_140EDE188 at embedded outer+0xF0. These provide four grounded read-only vtable-head reference targets to search for an actual consumer of the published nested pointer outer+0x108. The direct constructor build call is NOT such a consumer.
+
+## Expanded DOS/Rich/PE header: lower priority
+
+The expanded header confirms MZ, e_lfanew 0x108, a DanS/Rich MSVC toolchain metadata block with compiler/linker build values 33145/34808, x64 Machine 0x8664, PE32+ 0x20B, 32 sections, native subsystem, image base 0x140000000 and SizeOfImage 0x06D45000. DOS reserved bytes include an apparent NV02 text marker, which is NOT an identified GPU family or Booter version. COFF PointerToSymbolTable=0 and NumberOfSymbols=0, despite Ghidra's auto-created FUN labels. IMAGE_DEBUG_DIRECTORY and IMAGE_LOAD_CONFIG_DIRECTORY exist but the listing supplies no NVIDIA private PDB symbols, signed Booter record, verification or loader call. The 1,911 static XREF summary at the MZ header is NOT a Booter invoker count. Header bytes that Ghidra prints as ADD instructions are not executed code evidence.
+
+## Next bounded read-only discriminator
+
+Use the existing Ghidra read-only discovery script with TRACE_DATA_SITES=[0x140EDE0D0,0x140EDE0E8,0x140EDE100,0x140EDE188] to inspect static installed interface heads; combine with TRACE_INSTRUCTION_SITES=[0x14179E837,0x14179E84A] to confirm the guarded nested-builder sequence in machine instructions. Follow only grounded method/vtable/receiver dataflow toward outer+0x108 and nested+0x170. Do not repeat full decompilation, scan 79 MiB PAGErGEN, or infer runtime invocation from registration. Stop if a vtable is only generic infrastructure.
+
+CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false; RECOVERY_VERIFIED=false. No GPU/driver/EFI/Ghidra DB mutation. Stable research filenames updated IN PLACE, new cumulative note prepended, recovery process audit untouched.
+
+---
 # 2026-11-06 13:26 PST — Expanded PE headers, PAGErGEN indexed-pointer samples, and shared constructor helpers: static classification
 
 ## Input identity, completion, and limits

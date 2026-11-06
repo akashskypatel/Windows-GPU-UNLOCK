@@ -1,3 +1,14 @@
+# 2026-11-06 13:34 PST — PAGEdBIN and nested HS dispatch co-constructed under the same 0x588 outer
+
+Report nvlddmkm-61742-booter-discovery-20261106-133402-701773.txt, SHA-256 09f119d59eaf7678eeca9574f4a789001b6d0b9f32b661a9a06fbccdd8c9bf05; source 617.42 nvlddmkm.sys MD5 3fb9afac9d0e394723e830aa14e60512, complete unclipped FUN_14179E530, three instruction windows, STATUS=COMPLETE, no database or GPU changes. Expanded headers Pasted text(3).txt SHA-256 806afe7cf2675794575178ea532a6dee00fbcdc5bb9ee2342f0959ba60b6bfcc.
+
+FUN_14179E530 allocates/reuses 0x588-byte outer, reads interfaces 0x74BC71 / 0x34A6D6, calls FUN_141752B20(outer+0xF0), registers PAGEdBIN callback table via FUN_14179DE70(outer,...), calls FUN_14173CE00(outer+0x08), then on success CALLS FUN_141752AA0(outer+0xF0), which previously proved the nested 0x9B0 Falcon HS dispatch builder. Published nested pointer at outer+0x108 (embedded+0x18). PAGEdBIN callback outer+0x148 and nested HS callback nested+0x170 belong to the same outer construction but distinct objects. Outer+0x170 data-pointer callback is NOT nested+0x170 HS loader. Two outer allocation sizes 0x588 and 0x3550 occur on separately decompiled constructor paths. Physical selectors, real callback invoker and signed Booter image/header/signature/patch provenance OPEN.
+
+Exact 0x588 static interface heads: 0x140EDE0D0, 0x140EDE0E8, 0x140EDE100, 0x140EDE188. Next bounded read-only TRACE_DATA_SITES on those four heads and TRACE_INSTRUCTION_SITES at 0x14179E837 / 0x14179E84A; infer no invocation from a constructor call or DATA XREF.
+
+Expanded MZ/DanS/Rich/PE header adds standard build metadata, 32 sections, 0 COFF symbols, debug/load-config directories, but no signed Booter source or private PDB. Large MZ header XREF total is static, not Booter executions. Audit immutable, all active gates false.
+
+---
 # 2026-11-06 13:26 PST — PAGEdBIN callback direct-leads closed, PAGErGEN nested index; construction helper overlap found
 
 User report `nvlddmkm-61742-booter-discovery-20261106-132623-568677.txt` SHA-256 `b0b4ad25cad51ec9633ee8604381f683aa48742c6f8b20753ad558f7ec18cdb8`; expanded PE header `Pasted text(2).txt` SHA-256 `388d641ece8594b0cee9db4dcad087a5456524d7cd1be8bf094587d8c6817576`. Windows 617.42 driver MD5 `3fb9afac9d0e394723e830aa14e60512`. Complete `clipped=False` static bodies `FUN_140A75B10`, `FUN_140A74A20`, `FUN_140A74A50`; bounded two 64-byte PAGErGEN samples; `STATUS=COMPLETE`, no Ghidra/GPU/firmware writes.
