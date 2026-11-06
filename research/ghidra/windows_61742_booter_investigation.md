@@ -1,3 +1,29 @@
+# 2026-11-05 16:37 PST — Four +0x170 guarded-transfer windows; direct Falcon dispatch object alias still not found
+
+## Primary bounded evidence and result scope
+
+User-run report `nvlddmkm-61742-booter-discovery-20261105-163745-577020.txt` (4,677 bytes; SHA-256 `db6f1524c1dea69da08d8217ecd19cfd449763068d662fcfdcd31fb8d8fc5fed`). Windows NVIDIA 617.42 `nvlddmkm.sys` identity MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. Read-only four requested existing-instruction windows; `SCAN_STRINGS=SKIPPED_BY_CALLER`, `DECOMPILATION=SKIPPED`, no Ghidra database writes or hardware actions, `STATUS=COMPLETE`. Completion pertains ONLY to these four instruction windows; the preceding `+0x170` sweep remained `STATUS=PARTIAL` due to its 80-record cap and 246 transfer-filtered candidates.
+
+## Four observed candidate paths; negative conclusions are bounded
+
+1. `FUN_140532110`, `0x140532154`: `R8=[RAX+0xE8]`, `RDX=[R8+0x2710]`, `TEST RDX,RDX`; zero path logs an error and returns `EAX=0x56`. Nonzero path `RAX=[RDX+0x170]`, `R8=R9`, `JMP` to CFG guard at `0x140E02AA8`. This is a **guarded tail-dispatch** with a forwarded third argument; `RAX` origin before the `+0xE8` read is not recovered. The resolved `+0x2710` owner field does **not** by itself match the independently grounded Falcon nested dispatch pointer at **outer+0x108 = embedded owner+0x18**. The shared numeric `0x56` error return with other driver paths is not proof of the same dispatch target.
+2. `FUN_140588AD0`, at `0x140588DD2` and `0x1405890AC`: each reads `RAX=[RDX+0x170]`, moves `RCX=RDI`, invokes CFG guard, and zero-extends `AL` into `EAX`. Nearby alternative branches read callbacks at `[RDX+0x180]` and transform the returned integer, while other branches call `FUN_1401425E0`. These look like neighboring interface operations returning byte-sized results; **that is suggestive, not a proved unrelated callback type**, and `RDX` provenance is not in the bounded windows. They are two sites within one function, not two independent discovered subsystems.
+3. `FUN_14059B580`, at `0x14059B970`: prior call to `FUN_14059C510` takes `RCX=R13`, `RDX=R12`; then `RAX=[R13+0x170]`, `RCX=R13`, `RDX=R12`, CFG call. Surrounding writes to `[R13+0x370]`-related storage indicate an object with at least that field; this alone neither proves nor rejects the 0x9B0 Falcon dispatch identity. No origin of `R13` or callee descriptor field observed.
+
+**Cross-stream classification:** all four windows show credible guarded pointer consumption **only**. No object-base proof connects any `RDX`/`R13` receiver to the particular 0x9B0-byte dispatch instance that `FUN_14056C510` constructs and stores at outer+0x108 (embedded owner+0x18). In particular, no callback was shown to equal registered Falcon HS function `FUN_140BF3880`, no HS third-argument signed binary descriptor producer was found, and no Windows production signed Booter byte source, signature acceptance, physical GA102/AD102 selector value, or GPU unlock was verified. Do not report these as negative whole-driver absence findings.
+
+## Next narrow read-only proof gate
+
+Rather than increasing the generic scan cap or sampling arbitrary candidates, request the **full short decompilation** of `FUN_140532110` to recover its input object's origin, the `+0xE8 -> +0x2710 -> +0x170` chain and actual forwarded argument contract. If this object is not demonstrably linked to the published outer+0x108 Falcon dispatch instance, classify it as unproven/unrelated and return to the P0 Windows signed Booter source/actual HS invocation proof. If the caller references reveal a concrete publication edge, follow that exact edge rather than a new full-driver scan.
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140532110"], "__name__": "__main__"})
+```
+
+`CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. The immutable recovery/process audit is unchanged. No driver, firmware, EFI, registry, ROM, Ghidra database, or GPU mutation.
+
+---
+
 # 2026-11-05 16:30 PST — 246 slot-0x170 guard-transfer candidates, 80 captured (PARTIAL)
 
 **Primary evidence:** read-only user report `nvlddmkm-61742-booter-discovery-20261105-163029-235692.txt` (17,752 bytes, SHA-256 `15817a80243963559ea50002e06f34eb153f94f845a3057ec6b97e8c7e5f3772`), expected `nvlddmkm.sys` Windows 617.42 MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. `SCAN_STRINGS=False`; executable-only `SCAN_SLOT_DISPLACEMENT=0x170`, `SLOT_SCAN_FOCUS=transfer`. All **12** executable blocks were visited; **19,689,472 bytes scanned**, **2,445** raw disp32 hits, **1,901** distinct instruction candidates, **246** transfer-filtered candidates. **Only first 80 candidates printed (67 functions)**, so `capped=True scan_complete=False`, `STATUS=PARTIAL`. This is a candidate **reporting cap**, not an interrupted scan, Ghidra timeout, or firmware failure. No decompilation, database mutations or hardware action.
