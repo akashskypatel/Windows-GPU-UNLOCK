@@ -1,3 +1,36 @@
+# 2026-11-06 09:35 PST — GA102 Falcon reset/wait callback slot +0x130 registered in Windows 617.42 dispatch initializer
+
+## New machine-level result from exact user-run report
+
+Read-only PyGhidra report `nvlddmkm-61742-booter-discovery-20261106-093536-300196.txt`, SHA-256 `0ae8f74d9a4bc08442418f42d65e65a56679ffe0434e5bba3e1e2e046d5aea5d`. Loaded original NVIDIA 617.42 `nvlddmkm.sys`, MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra image base `0x140000000`. Caller provided `TRACE_INSTRUCTION_SITES=["0x1417e8c6c","0x1417e8c73"]` and disabled string scanning. Both target instructions were resolved within the existing `FUN_1417E8550`, final `STATUS=COMPLETE`, elapsed `0.045s`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. The report explicitly says `DECOMPILATION=SKIPPED`: the complete status certifies **only the two bounded machine-instruction windows** and must not be mistaken for complete function/control-flow review.
+
+### Concrete registration with exact branch and slot
+
+At `0x1417E8C43..0x1417E8C5A`, the routine checks `(R8D & 0xFFFFFFE0)==0x20`, then tests that the five low selector bits are in the inclusive range `5..10` (subtract 5 and unsigned compare against 5). When **both** conditions hold:
+- `0x1417E8C5C LEA RAX,[0x1406B8BA0]`;
+- `0x1417E8C63 MOV qword ptr [R9+0x130],RAX`;
+- `0x1417E8C6A JMP 0x1417E8C85`.
+
+When the first condition fails, or the low-five-bit range condition fails:
+- `0x1417E8C6C LEA RAX,[0x140BF4F00]`;
+- `0x1417E8C73 MOV qword ptr [R9+0x130],RAX`.
+
+This **closes the precise registered field: `R9+0x130`**, which was open in the previous report. The target `FUN_140BF4F00` is already classified by its full unclipped decompilation as a `flcnWaitForResetToFinish_GA102` Falcon reset/wait implementation reading `param_2+0x4B0`; `FUN_1406B8BA0` is an **alternate callback target with body not classified here**. Calling the former "GA102" relies on its diagnostic name and code behavior and does not mean this report identifies which path the host's physical GA102 or AD102 takes. The exact runtime selector (`R8D`) and its specific GPUs remain UNKNOWN. This instruction-only report establishes `R9` as the destination register; the earlier independently proven `FUN_1417E8550` constructor path establishes a shared dispatch initializer, but this tiny window alone does not trace the origin of `R9` to the published nested 0x9B0 instance. Do not silently convert DATA reference or assignment into an executable callback invocation.
+
+### Relation to the independent HS binary loader slot
+
+Separate previous static evidence in `FUN_1417E8550` shows `FUN_140BF3880` or the not-supported `FUN_140092D80` registered at nested Falcon dispatch **`+0x170`** on class-conditioned branches. The new `+0x130` assignment establishes a **different Falcon operation slot**, explaining the observed back-pointer read in `FUN_140BF4F00`, but provides neither a signed Booter image producer nor an indirect invoker of `+0x170`. These slots and callback meanings must remain separate.
+
+**Next bounded read-only discriminator:** inspect machine instructions at the already known `+0x170` loader registration sites `0x1417E8E3E` and `0x1417E8E45`, optionally the preceding conditional jump `0x1417E8EDA`, to establish the corresponding receiver-register and branch predicates in the same initializer and look for a defensible relation to `R9`. Do not repeat generic `+0x170` scans or claim actual HS invocation from any registration.
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x1417e8e3e", "0x1417e8e45", "0x1417e8eda"], "__name__": "__main__"})
+```
+
+The critical current open work remains **source-to-argument provenance** of Windows 617.42 production signed Booter image/header/signature/patch inputs to `FUN_140BF3880`, and an **actual indirect call on the specific nested 0x9B0 instance**, then physical GA102/AD102 selector and crypto acceptance. Nothing in this report supplies those facts. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. No driver patch, firmware execution, Ghidra database edit, or GPU operation was performed. Update stable investigation and status-plan files in place; do not create new numbered investigation/plan files. Immutable recovery audit untouched.
+
+---
+
 # 2026-11-06 09:27 PST — Windows FWSEC initialization and GA102 Falcon reset/wait callbacks classified; signed Booter producer remains open
 
 ## User-run static Ghidra report and exact completion scope

@@ -1,3 +1,13 @@
+# 2026-11-06 09:35 PST — Exact Falcon reset/wait registration slot established at +0x130
+
+New user-run read-only instruction report: `nvlddmkm-61742-booter-discovery-20261106-093536-300196.txt`, SHA-256 `0ae8f74d9a4bc08442418f42d65e65a56679ffe0434e5bba3e1e2e046d5aea5d`; driver MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; final `STATUS=COMPLETE`, `DECOMPILATION=SKIPPED`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`, elapsed `0.045` sec. The prior callout "exact registered slot must be checked" is **CLOSED (STATIC)** for this callback only.
+
+Within `FUN_1417E8550`, if `(R8D & 0xFFFFFFE0)==0x20` and `5 <= (R8D & 0x1F) <= 10`: `0x1417E8C5C LEA RAX,[0x1406B8BA0]` then `0x1417E8C63 MOV [R9+0x130],RAX`. Otherwise: `0x1417E8C6C LEA RAX,[0x140BF4F00]` then `0x1417E8C73 MOV [R9+0x130],RAX`. This is **registration**, not invocation; `R9` is the instruction-level destination. `FUN_140BF4F00` is the previously decompiled `flcnWaitForResetToFinish_GA102` reset/wait routine with `param_2+0x4B0` parent read. Physical GPU/runtime `R8D` selection, alternate callback `FUN_1406B8BA0` implementation, exact receiver alias and execution remain unproved.
+
+The **distinct** HS loader callback `FUN_140BF3880` is registered separately at `+0x170` in the same initializer by prior static evidence; do not conflate `+0x130` with `+0x170`. Next smallest review: bounded `TRACE_INSTRUCTION_SITES=["0x1417e8e3e","0x1417e8e45","0x1417e8eda"]` to check exact HS loader slot predicates and receiver in the same function. Production Windows signed Booter descriptor bytes, actual nested-object invoker, two physical GPU class selection and signature acceptance remain OPEN. All hardware modification gates false; immutable audit unchanged. Preserve stable in-place investigation and execution map paths.
+
+---
+
 # 2026-11-06 09:27 PST — SEC2/FWSEC init versus GA102 Falcon reset/wait: bounded original driver evidence
 
 User-run report `nvlddmkm-61742-booter-discovery-20261106-092744-805630.txt`, SHA-256 `6f0594b57ec295a73dc6c4814b9643aa768763ab8047b4ccb2d38c2463df28dd`. Expected Windows 617.42 driver MD5 `3fb9afac9d0e394723e830aa14e60512`, VA base `0x140000000`; two complete unclipped Ghidra decompilations, final `STATUS=COMPLETE` with report path, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`.
