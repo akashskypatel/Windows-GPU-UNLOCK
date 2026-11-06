@@ -202,6 +202,16 @@ class DecompilationCoverageTests(unittest.TestCase):
         self.assertIn('DECOMPILER_BEGIN entry=1401b0e00 clipped=False', lines)
         self.assertFalse(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in item for item in lines))
 
+    def test_17087_character_decompilation_is_preserved_without_focus_filter(self):
+        # Exact body-size regression: the Ghidra report previously suppressed this
+        # complete function when focus terms were missing from emitted C.
+        source = 'BEGIN_FUNCTION\n' + ('x' * 17050) + '\nEND_FUNCTION'
+        completed, lines = self._analyze(source)
+        self.assertTrue(completed)
+        self.assertIn(source, lines)
+        self.assertIn('DECOMPILER_BEGIN entry=1401b0e00 clipped=False', lines)
+        self.assertFalse(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in item for item in lines))
+
 
 class NestedReceiverCandidateTests(unittest.TestCase):
     """Host-only regression tests for candidate matching, not live Ghidra proof."""

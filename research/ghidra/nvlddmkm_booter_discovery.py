@@ -31,7 +31,7 @@ MAX_DATA_SITES = 8
 MAX_INSTRUCTION_SITES = 4
 MAX_SLOT_CANDIDATES = 80
 DECOMP_TIMEOUT_SECONDS = 12
-MAX_DECOMP_CHARS = 14000
+MAX_DECOMP_CHARS = 20000
 
 # Exact ASCII string virtual addresses from the user's Ghidra 617.42 CSV.
 # These are data anchors, not established function addresses or runtime selectors.
