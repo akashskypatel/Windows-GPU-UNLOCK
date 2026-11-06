@@ -1,3 +1,31 @@
+# 2026-11-05 16:53 PST — Callback receiver owner unresolved after static reference and entry-register inspection
+
+## Source and bounded result
+
+User-run passive PyGhidra report `nvlddmkm-61742-booter-discovery-20261105-165318-052877.txt` (2,280 bytes, SHA-256 `8872ce0b9560bad36bda4bf4e7e5f14f11ef9adb98f1e0c236f92ea8adf51989`), loaded NVIDIA Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra base `0x140000000`. Requested one instruction site and three DATA sites; `STATUS=COMPLETE` for those bounded queries. No full string scan or decompilation, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. Virtual addresses belong to loaded Ghidra image, not raw PE offsets. No kernel, EFI or GPU operation was performed.
+
+## Exact evidence
+
+- `FUN_140532110` starts `0x140532110 SUB RSP,0x28`, `0x140532114 MOV RAX,[RCX+0x160]`, `0x14053211B MOV R9,RDX`, `0x14053211E MOV R8,[RAX+0xE8]`, `0x140532125 MOV RDX,[R8+0x2710]`, `0x14053212C TEST RDX,RDX`, with null branch returning numeric error `0x56`. This confirms the source-register chain under the ordinary Windows x64 ABI. The earlier complete body independently showed the guarded tail transfer through `[RDX+0x170]` on the nonnull path; the real callback target and Ghidra-inferred call signature remain unverified.
+- `DATA_SITE 0x140E0A8E0` is in `.rdata`, `defined=True`, but the *containing defined region* starts at `0x140E02C20`. It contains an outbound DATA reference to `FUN_140532110`. There are zero incoming references reported at exact `0x140E0A8E0`; a single DATA reference from `0x141002A80` targets the defined region's root at `0x140E02C20`. These are **not** a caller of `FUN_140532110` or proof that an executable consumer selects this table entry.
+- `DATA_SITE 0x140E6AF10` is another `.rdata` DATA pointer to `FUN_140532110`, `defined=True`, and has zero existing incoming refs at its exact address. `DATA_SITE 0x14140AA78` is a `.pdata` DATA pointer to the function and is consistent with normal PE exception/unwind metadata, not a virtual-method invocation. Inbound lists were not capped. No actual receiver constructor, relevant writer or runtime caller was identified.
+
+## Relevance and proof gates
+
+The candidate's receiver remains `RDX = *(*(*(param_1+0x160)+0xE8)+0x2710)` and its callback slot `[RDX+0x170]`. This is **not** known to be the independent Falcon HS 0x9B0-byte dispatch object installed at `outer+0x108` (embedded context `+0x18`) and configured with `FUN_140BF3880`/fallback at its own `+0x170`. The identical callback offset is insufficient; data-region XREFs are also insufficient. Absence of a direct static XREF does not disprove indirect runtime calls. The previously established 246 transfer-filtered candidates and 80-record cap (`STATUS=PARTIAL`) are unchanged; this narrow report's `STATUS=COMPLETE` does not supersede that cap.
+
+**One final rooted passive discriminator (optional):** the existing already-verified scanner can search code writes to **exactly** `[base+0x2710]` rather than generic `+0x170` transfers. Correlate any writer's receiver base with the `param_1+0x160 -> +0xE8` chain and the already-proven Falcon owner; a numeric displacement match alone is not an alias. Stop this branch without expanding generic caps if no direct pointer-production bridge appears. The production Windows signed Booter image/header/signatures, `FUN_140BF3880`'s **actual third-argument descriptor producer**, and concrete nested dispatch invocation remain the priority P0 proof gates.
+
+Existing read-only Ghidra Python 3 console command:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "SCAN_SLOT_DISPLACEMENT": "0x2710", "SLOT_SCAN_FOCUS": "write", "__name__": "__main__"})
+```
+
+`CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. The separately immutable process/recovery audit remains unchanged. No physical runtime/microcode/crypto-acceptance results.
+
+---
+
 # 2026-11-05 16:45 PST — `FUN_140532110` is an indirect +0x170 dispatcher through a distinct unaliased object chain
 
 ## Primary report and verification scope
