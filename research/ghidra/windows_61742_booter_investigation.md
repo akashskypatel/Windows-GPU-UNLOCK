@@ -1,3 +1,17 @@
+# 2026-11-06 13:26 PST — PAGEdBIN callback direct-leads closed, PAGErGEN nested index; construction helper overlap found
+
+User report `nvlddmkm-61742-booter-discovery-20261106-132623-568677.txt` SHA-256 `b0b4ad25cad51ec9633ee8604381f683aa48742c6f8b20753ad558f7ec18cdb8`; expanded PE header `Pasted text(2).txt` SHA-256 `388d641ece8594b0cee9db4dcad087a5456524d7cd1be8bf094587d8c6817576`. Windows 617.42 driver MD5 `3fb9afac9d0e394723e830aa14e60512`. Complete `clipped=False` static bodies `FUN_140A75B10`, `FUN_140A74A20`, `FUN_140A74A50`; bounded two 64-byte PAGErGEN samples; `STATUS=COMPLETE`, no Ghidra/GPU/firmware writes.
+
+`FUN_140A75B10` writes `param_3+0x10=0xC` and PAGEdBIN addresses at `+0,+8,+0x18,+0x20,+0x28`; its caller `FUN_140A74FA0` overrides `+0x20/+0x28` after the helper returns. `FUN_140A74A20` and `FUN_140A74A50` select one section-data pointer based on `param_2+0x2DE` and return zero. None directly constructs or invokes production HS Booter load; direct candidate hypothesis CLOSED (STATIC), source/consumer elsewhere not excluded.
+
+`PAGErGEN` `0x141D8C040` continues qword triples (`1,0x27,pointer` / `1,0x14,pointer`). At pointer `0x141D93388`, packed two-dword pairs and in-range pointers `0x144925640`, `0x1448BC8B0`, `0x144894268`, with `9` in neighboring qword fields, suggest two-level structured index. Not confirmed archive/firmware. Expanded PE header x64 PE32+ with 32 sections, COFF symbol pointer/count zero, debug/load-config directories present but not private symbols; `PAGEbMSR` uninitialized raw zero; `INIT` discardable code. No Booter linkage.
+
+**Important shared initializer lead:** `FUN_14179E530` calls `FUN_141752B20` at `0x14179E7E6`, registers `FUN_14179DE70` at `0x14179E820`, then calls `FUN_14173CE00` at `0x14179E828`. Independently established outer 0x3550 object constructor `FUN_14017AF30` calls **both** `FUN_141752B20` and `FUN_14173CE00` alongside HS nested dispatch builder `FUN_141752AA0`. This is a constructor-family/static helper overlap, NOT proof of same allocation/object alias or HS callback invocation. Correct earlier categorical “distinct unaliased table” phrasing; object identity OPEN.
+
+Next bounded `TARGET_FUNCTIONS=["0x14179e530"]`, `TRACE_INSTRUCTION_SITES=["0x14179e7e6","0x14179e820","0x14179e828"]`, `SCAN_STRINGS=False`. Require exact receiver/allocated-object pointer chain. No section-wide scan; all active gates false, immutable recovery audit untouched.
+
+---
+
 # 2026-11-06 13:19 PST — PAGEdBIN callback family and PAGErGEN pointer records classified
 
 User-run report `nvlddmkm-61742-booter-discovery-20261106-131915-948969.txt`, uploaded SHA-256 `6b1eedafbb36f07f80ca7c7c887428692c511e269f30aac1f1ae42761e68b1e1`, original 617.42 driver MD5 `3fb9afac9d0e394723e830aa14e60512`. Exact `TARGET_FUNCTIONS=["0x14179de70","0x140a74ca0","0x140a74fa0"]`, all unclipped `clipped=False`, bounded `TRACE_STATIC_BYTES=0x141D8C000` 64 bytes, final `STATUS=COMPLETE`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`.
