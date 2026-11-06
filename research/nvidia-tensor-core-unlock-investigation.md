@@ -1,3 +1,47 @@
+# 2026-11-06 — Cross-correlated seven full Ghidra scalar exports; distinguish callback-table writes from descriptor data
+
+## Input integrity and parsing
+
+Seven user CSV exports (`0x108`, `0x308`, `0x310`, `0x318`, `0x320`, `0x328`, `0x338`) parsed locally as CSV using backslash escape (`\,` inside Preview), five columns `Location, Preview, Hex (Unsigned), Decimal (Signed), Function Name`. Every file read from the actual mounted upload. SHA-256:
+
+- `0x108`: `f0af89f09dd778aa37b5259892a45bcbe6baefdbe1e34ed8a5d3d3469463f825`
+- `0x308`: `a006bdea25e71fc09395c71403a463257b72beb67ae7e428ca92e2c7d0c7f05c`
+- `0x310`: `6a45269e0a65017dc3747076386cffccc2039dfdd4d005dcf5a08f54d352cf7a`
+- `0x318`: `6317f95a6cab71b8a0f0870e211eafa01fe988a0ec255062434f08d64885cd17`
+- `0x320`: `26a7783eb524228bb29446ddb137180db8cd13e32c20263725ee3e8b9d14a88c`
+- `0x328`: `9f645fe5e81372c9e37eaecbbd9143e513dd98b284ef9982ae71bfd5dcf98d65`
+- `0x338`: `8119b5523f03544f7d95ab5b790c2cff899ffe1848577fe86febfa903336d7ee`
+
+Exact parsed record counts (excluding header): `0x108=1571`, `0x308=487`, `0x310=509`, `0x318=1026`, `0x320=416`, `0x328=664`, `0x338=479`. Total **5,152** scalar-reference rows across **2,523 distinct named functions**. Every file has fewer than the user's 5,000-result search allowance. **48 function names** contain all six candidate descriptor offsets; **21** contain all seven offsets. These counts reflect syntactic scalar references and **do not** prove shared base pointer, type, or control-flow relation. `0x318` additionally includes some ordinary immediates like `ADD RDX,0x318`, not structure-field accesses.
+
+## Exact known consumer field accesses from uploaded CSVs
+
+`FUN_140BF2740` consumes packed/overlapping locations: `0x140BF2766 MOVUPS XMM2,xmmword ptr [RDX+0x328]`, `0x140BF276D MOV R13,qword ptr [RDX+0x320]`, `0x140BF2777 MOVUPS XMM0,xmmword ptr [RDX+0x308]`, `0x140BF2790 MOVUPS XMM1,xmmword ptr [RDX+0x318]`, `0x140BF27B8 MOVSD XMM0,qword ptr [RDX+0x338]`. A 16-byte read from `+0x308` accesses the bytes including `+0x310` without encoding scalar `0x310`, so its absence as a separate CSV row in that function is **not** proof it does not access the second pointer. This is the real source-layout fingerprint; compare candidate writers by access width and actual object provenance.
+
+## High-count false-positive class: callback-table initialization
+
+`FUN_14179B2F0` stores `FUN_140571320` at `[R9+0x308]` repeatedly (e.g. `0x14179C19E`), `FUN_140571000` at `[R9+0x310]` (`0x14179CDF9`), `FUN_140570960` at `[R9+0x318]` (`0x14179CE69`), multiple fallback function addresses at `+0x320`, `FUN_140570BC0` at `+0x328` (`0x14179CF51`), and `FUN_140570910` at `+0x338` (`0x14179D048`). These rows are *function pointer values* according to Ghidra Preview `=>FUN_...`, not data-descriptor source pointers. Similar dense clusters appear in `FUN_1416F9A60`, `FUN_1417B48D0`, `FUN_1417C6B20`, `FUN_14177F520`, etc. Never infer a signed-image producer merely from co-occurrence of all six offsets.
+
+**Crucial +0x108 alias collision:** user `0x108` CSV records `0x1417E8B32 MOV qword ptr [R9+0x108],RAX=>FUN_140BF54E0` in `FUN_1417E8550`, clearly a **nested dispatcher callback table entry**, whereas the independently proven constructor publishes the **nested dispatch pointer at an outer object's `+0x108`**. Those are different objects with identical displacement. The earlier broad `+0x108` heuristic therefore cannot type objects by offset alone.
+
+## Ranked non-function-pointer write candidates (still not proven Falcon objects)
+
+A bounded host-side grouping heuristic distinguished ordinary first-operand `MOV`/SIMD writes without `=>FUN_` targets and grouped them by (function name, base register, offset). Nine function/base pairs have such writes at **all six** offsets; many look like bulk clear/initialization, not necessarily signed descriptor production. Do not equate base-register equality within one function with cross-block SSA identity.
+
+| Target | Exact scalar export evidence | Interpretation limit |
+|---|---|---|
+| `FUN_14188A3F0` | `[RSI+0x328]` 16-byte store `0x14188A4F7`, `[RSI+0x338]` 16-byte store `0x14188A507`, `[RSI+0x308]` qword `0x14188A539`, `[RSI+0x310]` qword `0x14188A540`, `[RSI+0x320]` dword `0x14188A547`; `0x14188A68A LEA RCX,[RSI+0x318]` | Best shape match to reader's pointer/metadata/16-byte fields, but values, clearing purpose, owner type and actual invocation unproved |
+| `FUN_1408CE000` | `0x1408CE31F` `[RSI+0x308]` MOVUPS; `0x1408CE32D` `[RSI+0x318]` MOVUPS; `0x1408CE33B` `[RSI+0x328]` MOVUPS; `0x1408CE349` `[RSI+0x338]` MOVUPS | Four contiguous 16-byte stores; could be generic zero/fill/copy, no verified source or Falcon receiver |
+| `FUN_140028730` | `0x140028A6B/72/79` qword writes to `[RBX+0x308/+0x310/+0x318]`, `0x140028A80/96` dword writes `+0x320/+0x328`, but `0x140028ACE` writes `RCX=>DAT_140E22AD0` to `+0x338` | Mixed object/table type; lower priority and a useful counterexample, not proven descriptor |
+
+Other untyped all-six writers include `FUN_1400A1380` (single-byte stores at each field), `FUN_14017E8F0` (qword writes with same `RDX`), `FUN_1402BF540` (uniform qword writes with `RAX`), `FUN_1402EB5F0`, `FUN_14037A8B0`, `FUN_140615960`, `FUN_140B0AD80` and `FUN_14188B2F0`; neither a same-register write nor SIMD data move identifies a signature buffer without a concrete pointer origin and call edge.
+
+## Next bounded read-only Ghidra investigation / stop rule
+
+Run existing `nvlddmkm_booter_discovery.py` with `SCAN_STRINGS=False`, `TARGET_FUNCTIONS=[0x14188A3F0,0x1408CE000,0x140028730]`, `DECOMP_FOCUS_TERMS=[0x308,0x310,0x318,0x320,0x328,0x338]`, `TRACE_INSTRUCTION_SITES=[0x14188A4F7,0x14188A539,0x1408CE31F,0x140028ACE]`. Do not re-run prior broad `+0x108/+0x250` searches. If C excerpts are truncated/empty, retain `STATUS=PARTIAL` and request focused function/prototype evidence, not invented semantic conclusions. Verify source values and receiver type, especially whether the function is initializing the same `param_2` object consumed by `FUN_140BF2740` and is connected to the separately constructed 0x9B0 Falcon dispatcher; otherwise classify as unrelated initializer. Production signed Windows Booter image/header/signature/patch byte origin, `FUN_140BF3880` third-argument producer, runtime signed acceptance, AD102/GA102 device selector and recovery remain unproven. All active gates remain `false`.
+
+---
+
 # 2026-11-06 15:13 PST — Timed-out receiver scan and GUI scalar-search pivot
 
 ## Raw report, bounded outcome and verification
