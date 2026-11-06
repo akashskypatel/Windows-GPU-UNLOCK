@@ -1,3 +1,23 @@
+# 2026-11-06 14:47 PST — Low-level Falcon diagnostic wrapper return ABI conclusively resolved
+
+## Report identity and exact scope
+
+User-uploaded Ghidra instruction-window report `nvlddmkm-61742-booter-discovery-20261106-144750-888583.txt`, **1,770 bytes**, SHA-256 `e7efbc1660c7aa164a136b8a3ecd3f8e4dbd08dfafa284a3ed9f5439fc6686ce`, 30 physical lines, checked against its mounted original. Imported Windows NVIDIA 617.42 `nvlddmkm.sys` identity MD5 `3fb9afac9d0e394723e830aa14e60512`, base VA `0x140000000`. `TRACE_INSTRUCTION_SITES` selected the final instruction `0x1406B6465` in `FUN_1406B63F0`; `SCAN_STRINGS=SKIPPED_BY_CALLER`, `DECOMPILATION=SKIPPED` (already completed previously), `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.009`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. This output proves an existing static instruction path; it does not report live device reads.
+
+## Exact wrapper ABI proof from x64 instructions
+
+At `0x1406B6437`, `MOV R9D,[RBX+0x420]`; at `0x1406B6440`, `ADD R9D,EDI` (base register offset plus requested relative offset). At `0x1406B6448..0x1406B644B`, `CMP EDX,0xD` then `CMOVGE EDX,EAX` after `XOR EAX,EAX` changes the selected index to zero when it is signed-greater/equal to 13. Following `XOR R8D,R8D`, `0x1406B6451 CALL 0x140126650`; `0x1406B6456 MOV RBX,[RSP+0x40]`; `0x1406B645B MOV RSI,[RSP+0x48]`; `0x1406B6460 ADD RSP,0x30`; `0x1406B6464 POP RDI`; `0x1406B6465 RET`. **No instruction after the call writes or aliases `RAX/EAX`**, so this return path propagates `FUN_140126650`'s returned value. Previous complete `FUN_140126650` decompilation explicitly returns `ulonglong`, and its callers `FUN_140BF2B30` capture `EAX` after calling the wrapper at `0x140BF2D29` (numeric offset `0x240`) and `0x140BF2D3D` (offset `0x250`). This confirms the wrapper's Ghidra `void` prototype was incorrectly inferred for the observed path; caller uses its low 32 bits. No mutation/retyping of the program was performed.
+
+## P0 implication and closure
+
+**Closed**: `FUN_140BF2B30 -> FUN_1406B63F0 -> FUN_140126650` read-result ABI along the shown wrapper path; separate Ghidra scalar `0x250` occurrence means a register/state offset argument to the wrapper, not the `FUN_1417E8550` nested Falcon signature callback field `[R9+0x250]`. This does not prove a Windows production signed Booter byte source, an invocation of `FUN_140BF2740` or `FUN_140BF3880` through the specific 0x9B0 dispatcher, any signed descriptor producer, dynamic GA102/AD102 selection, or physical signature acceptance.
+
+**Next static P0**: Follow the separately built nested Falcon dispatch object from the established `FUN_14179E530 -> FUN_141752AA0 -> (outer+0x108)` chain to an exact consumer/indirect transfer, or identify field writers for the `FUN_140BF2740` source descriptor (`param_2+0x308/+0x310/+0x318/+0x320/+0x328..+0x338`) and `FUN_140BF3880`'s third argument. Avoid broad scalar/offset searches and repeated completed decompilations. Do not infer same type from same numeric offset or cryptographic acceptance from a callback table.
+
+**Gates unchanged:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Previous chronological notes retained unchanged below.
+
+---
+
 # 2026-11-06 14:42 PST — Low-level Falcon read accessor return established; wrapper ABI still to verify
 
 ## Report identity and evidence boundary
