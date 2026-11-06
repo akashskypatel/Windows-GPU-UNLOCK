@@ -1,3 +1,32 @@
+# 2026-11-05 17:14 PST — `+0x2710` literal writer is a zero-initialized numeric buffer, not the Falcon dispatch producer
+
+## User-run evidence and completion boundary
+
+Read-only user report `nvlddmkm-61742-booter-discovery-20261105-171448-540235.txt` (11,285 bytes, SHA-256 `cbe8299908fabaa100758e0bfd08dda716d0d1b8dfa705210691d8b25fb6dffb`) from pinned Windows NVIDIA 617.42 `nvlddmkm.sys` (MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra base `0x140000000`). `FUN_1400AF170` was fully decompiled: `clipped=False`, roughly 9,511 C characters, `STATUS=COMPLETE`; no strings scan, no Ghidra writes and no hardware actions. The nine incoming references include DATA and direct call refs; none was followed in this report. `STATUS=COMPLETE` applies to the requested bounded decompilation, **not** production Booter provenance or runtime GPU execution.
+
+## Concrete correction: the only recognized direct `+0x2710` writer writes zero
+
+The prior bounded literal-write scan showed one recognized executable store, `0x1400AF749 MOV qword ptr [RDI+0x2710],R8` in `FUN_1400AF170`. Earlier spatial instruction context also showed writes to adjacent `RDI` fields at `+0x26F8`, `+0x2700`, `+0x2708`, `+0x2718` and so on, but a nearby unconditional jump prohibited inferring the writer's source solely from preceding listing lines.
+
+The new **complete C** exposes a different, well-supported classification:
+
+- After a lookup/record-count check, the function calls `FUN_140DD1860(0x200,0x2750,0x764C764E)`, checks for null, zeroes `0x274C` bytes beginning at `puVar3+1`, and fills a `0x25`-element table using `FUN_1400B34A0` plus normalization and a series of numeric constants. The allocation has size **`0x2750`**. This is a numeric/record initialization path; its higher-level application meaning has not been proven.
+- Ghidra types `puVar3` as `undefined4 *` (four-byte units). In a later initialization branch it displays `*(undefined8 *)(puVar3+0x9C2)=0`, **`*(undefined8 *)(puVar3+0x9C4)=0`**, and `*(undefined8 *)(puVar3+0x9C6)=0x3FF66F694467381D`, with similar IEEE-754-shaped constants nearby.
+- **Exact index conversion:** `0x9C4 * sizeof(undefined4) = 0x9C4 * 4 = 0x2710` bytes. Thus the shown field at base+`0x2710` is **assigned zero in the decompiled writer path**, and is within the `0x2750`-byte allocation (only `0x40` bytes before its end). The previous machine-level store's source register `R8` represents that zero on the decompiled path; this resolves the earlier speculative “R8 may hold the Falcon dispatch pointer” interpretation in the negative. A direct live register trace was not collected; this conclusion is the matching instruction-plus-complete-decompilation static evidence.
+- The function also contains guarded indirect calls, but the decompiled names `PTR__guard_dispatch_icall_140E02AA8` alone do not identify their targets. No source-level reference to the nested `0x9B0`-byte Falcon HS dispatch object, signed production Booter bytes, loader descriptor or physical GPU branch is shown.
+
+**Disposition:** reject `FUN_1400AF170:0x1400AF749` as the producer of a non-null callback receiver for `FUN_140532110` and as a bridge to known `FUN_140BF3880` registration. This **closes the specific literal-writer hypothesis**. It is **not** proof that all possible writers are absent: computed-offset stores, aliases and bulk copies are outside the prior literal-write filter. No additional general `+0x170` or `+0x2710` scans are justified merely to find another numerical coincidence. Previous broader transfer scan remains `STATUS=PARTIAL` (246 filtered candidates, first 80 captured), unaffected by this complete targeted report.
+
+## Remaining actual proof sequence and next task
+
+The independent nested Falcon HS instance is constructed via `FUN_1417E99B0` and `FUN_14056C510`, published at outer+`0x108` (embedded owner+`0x18`), and conditionally receives `FUN_140BF3880` or fallback at **its own** `+0x170` slot. Neither actual indirect invocation of that same instance nor the origin of `FUN_140BF3880`'s real third-argument production signed Booter descriptor is established. The installed Windows 617.42 Booter image/header/signature byte source, AD102/GA102 runtime selector and cryptographic acceptance are also open. Distinguish already-observed host-side UCODES archive staging into GSP arguments from locating a validated production Booter record: **those are not equivalent**.
+
+**Next priority:** end this unrelated numeric-table branch and return to read-only production Windows Booter asset/descriptor provenance, using previously pinned GSP/UCODES staging evidence and actual archive/descriptor consumers rather than repeating speculative callback-offset searches. For any candidate, require exact driver/resource bytes, archive record identity, length/hash, signed descriptor origin, then a verified instance-specific invocation path. Do not assert production firmware provenance based solely on Linux 615.78.08 reference source or 610.43.03 assets. No new exploratory Ghidra command is justified **by this negative writer result alone**.
+
+No device, driver, EFI, registry, Ghidra database or firmware modifications. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`; immutable process/recovery audit untouched. Update the authoritative execution plan *in place* as a current-state snapshot, not as chronological notes.
+
+---
+
 # 2026-11-05 17:06 PST — Writer field cluster confirmed; focused decompilation did NOT resolve R8/RDI provenance
 
 ## Primary source, identity, and exact completion boundary
