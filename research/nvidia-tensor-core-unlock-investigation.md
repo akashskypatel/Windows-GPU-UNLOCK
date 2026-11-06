@@ -1,3 +1,51 @@
+# 2026-11-06 09:42 PST — Falcon HS loader selector fallback and Symbols.csv triage
+
+## Inputs, completeness, and provenance
+
+Read-only user-run Ghidra report `nvlddmkm-61742-booter-discovery-20261106-094251-216458.txt`, SHA-256 `51e1db4c88aa8a48e297ff0e869e8740457b2c753801cb1d1fa1aa72dfd8d09f`, targeted `0x1417E8E9C`, `0x1417E8EE9`, `0x1417E8EEC`, `0x1417E8F05` in `FUN_1417E8550` on original Windows NVIDIA 617.42 `nvlddmkm.sys` (MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`). Final `STATUS=COMPLETE`, `DECOMPILATION=SKIPPED`, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`, `ELAPSED_SECONDS=0.020`. The status covers four local instruction windows, NOT the complete initializer CFG or runtime execution.
+
+Separately uploaded `Symbols.csv`, SHA-256 `6bdf1cac942f344f665d4b8569141f3b8521c913445387096122adb9f5fc3c46`, is a 117,302-row Ghidra *symbol table*, with columns `Name, Location, Type, Namespace, Source, Ref Count, Offcut Ref Count`. Types: 64,058 Instruction Label, 49,895 Function, 2,402 Data Label, 528 Thunk Function, 324 External Function, 83 Label, 12 External Data. Sources: Analysis 66,515; Default 50,368; Imported 348; User Defined 71. The CSV has no machine instructions, callsite edges, byte-buffer origins, on-host runtime class values or firmware signatures.
+
+## Windows +0x170 real loader versus fallback
+
+The previous exact machine instructions `0x1417E8E3E LEA RAX,[0x140BF3880]` / `0x1417E8E45 MOV [R9+0x170],RAX` prove the real Falcon HS binary loader registration. This report **also establishes a local selector-dependent not-supported fallback**:
+
+- At `0x1417E8E9C` the high selector `(R8D & 0xFFFFFFE0)` is compared with `0x20`. If it is `0x20`, `R10D << CL` and bit test against `0x03F8FFE0` determine whether `FUN_140BF7E10` or `FUN_140BF5ED0` is stored at **`[R9+0x168]`**. If the upper group is not `0x20`, `0x1417E8EA2` branches to a default `FUN_140BF5ED0` assignment at that same field. The meaning of `R10D`/`CL` is NOT established.
+- After the default `+0x168` assignment, `0x1417E8EDA JNZ 0x1417E8E3E` joins the **real** `FUN_140BF3880` loader assignment if the tested upper group differs from `0x20` *and execution reaches that block*.
+- If upper group is `0x20`, `0x1417E8EE0..0x1417E8EEC` checks `(R8D & 0x1F)-5 > 5` (unsigned). For low bits outside **5..10**, `JA 0x1417E8E3E` joins real-loader registration. For low bits **5..10**, the visible fallthrough instead writes `FUN_140092D80` to **`[R9+0x170]`** at `0x1417E8EF2`/`0x1417E8EF9`. Prior analysis separately identifies `FUN_140092D80` as the not-supported fallback. This is **a conditional registration**, not actual invocation, and complete entry-path reachability is not established by the windows.
+- Another site `0x1417E8F05 LEA RAX,[0x140BF4D10]` / `0x1417E8F0C MOV [R9+0x178],RAX` establishes an adjacent, distinct callback operation. The earlier `0x1417E8E67 JA 0x1417E8F05` is one predecessor; classification of `FUN_140BF4D10` and full branch coverage remain open.
+- These are the SAME `R9`-relative callback slots within `FUN_1417E8550` as prior `[R9+0x130]` reset/wait registration. They establish table-field relationships but NOT a live invoker, exact receiver alias at every runtime call, actual physical AD102/GA102 branch, or signed Booter descriptor.
+
+## What the entire symbols export genuinely adds
+
+A case-insensitive search of **Name** found zero names containing `boot`, `Booter`, `acr`, `falcon`, `flcn`, `sec2`, `fwsec`, `gsp`, `bindata`, `ucode`, `nvucodes`, `signature`, `plm`, `ga102`, or `ad102`. This **does not prove their implementations are absent**: internal symbol names overwhelmingly default to `FUN_<hex>`. The 71 User Defined symbols are `prt_<addr>_<suffix>` instruction labels in `::override` namespaces, NOT meaningful proprietary function names or newly recovered debug symbols. Even an imported `ZwCreateFile` (ref count 4), `ZwReadFile` (2), `ZwQueryInformationFile` (4) does not identify production Booter byte provenance without callsite and buffer tracing.
+
+| Symbol and VA | Ghidra Ref Count | Investigation significance / limit |
+|---|---:|---|
+| `FUN_140BF3880` 0x140BF3880 | 4 | Real HS loader, proven `+0x170` assignment; counts references of any kind, not executions |
+| `FUN_140BF5ED0` 0x140BF5ED0 | 6 | Grounded adjacent `+0x168` callback on default and direct class branches; unknown behavior |
+| `FUN_140BF7E10` 0x140BF7E10 | 4 | Alternate adjacent `+0x168` callback on R10D/CL mask branch; unknown behavior |
+| `FUN_140BF4D10` 0x140BF4D10 | 4 | Additional `+0x178` callback branch; lower-priority body review |
+| `FUN_140BF4F00` 0x140BF4F00 | 6 | Previously decompiled GA102 Falcon reset/wait, `+0x130` |
+| `FUN_1406B8BA0` 0x1406B8BA0 | 10 | Previously observed alternate `+0x130` callback |
+| `thunk_FUN_1417e99b0` 0x1417E83D0 | 2 | Another symbolic entry to known constructor, NOT the missing callback consumer |
+| `FUN_140092D80` 0x140092D80 | 5670 | Very high general static reference count, consistent with generic fallback; not Booter-specific or actual execution |
+| `FUN_1417E8550` 0x1417E8550 | 1 | Constructor-linked callback initializer; count cannot enumerate indirect invokers |
+
+There are 74 default-named Function entries from VA 0x140BF3000..0x140BF8500 and eight Function/Thunk Function entries from 0x1417E8300..0x1417EA100. VA proximity and counts do NOT establish Booter membership, call edges, or firmware byte origins. **No semantic Booter producer name or image/header/signature label was discovered.**
+
+## Next smallest supported read-only Ghidra action
+
+Use the existing bounded script to inspect the **two justified +0x168 callback bodies only**, because their registration is a concrete execution-interface link to the HS-loader slot. If they are register/reset helpers without descriptor or invoker edges, close these leads and refocus on **the actual indirect call using the specific published nested 0x9B0 object and its `FUN_140BF3880` third-argument signed descriptor producer**. No broad ref-count scans, numeric-offset matching or speculative firmware writes.
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140bf5ed0", "0x140bf7e10"], "__name__": "__main__"})
+```
+
+Windows production signed Booter image/header/signature/patch bytes, actual nested-object invocation, physical AD102/GA102 selector and security acceptance are still OPEN. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. No hardware/Ghidra mutation. Stable investigation and execution-map filenames must be updated in place; immutable recovery audit untouched.
+
+---
+
 # 2026-11-06 09:39 PST — Windows 617.42 Falcon HS loader +0x170 assignment: same R9 destination as +0x130 reset callback
 
 ## Primary evidence: bounded machine instruction windows
