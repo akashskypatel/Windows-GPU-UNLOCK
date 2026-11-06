@@ -1,3 +1,13 @@
+# 2026-11-05 18:06 PST — FUN_140AF28A0 is SEC2/ACR option-to-config initializer (not Booter producer)
+
+User-run report `nvlddmkm-61742-booter-discovery-20261105-180605-612650.txt` on original Windows NVIDIA 617.42 `nvlddmkm.sys`, MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra VA `0x140AF28A0`: unclipped full decompilation, `STATUS=COMPLETE`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. Incoming references: direct CALL `0x140AF24D9`; DATA `0x14145A068` (not invocation proof).
+
+`FUN_14016AAD0` reads named RM options and the target routine sets configuration bytes: `RmAcrSigningAlgo` +0x289; `RmUseAutoAcr` +0x28A; `RMDisableAcr` +0x28B (and conditionally clears +0x2A0); derived +0x28C; `RMAcrExecuteOnSec2` +0x28F; `RmEnableRiscvLs` +0x291; `RMAcrUseCeForShadowCopy` +0x295; `RmAllowPrivSecDisabled` +0x29C; three 2-bit `RmBootFromHs` settings at +0x29D..+0x29F (01 writes one, 11 writes zero, 00/10 preserve existing bytes); `RmPmuBootstrapMode` and later `RMEnableAcrRiscv` affect +0x2A0; `RmSwapAcrRegions` +0x439. `RmDisableGsp` query return is not visibly used. All claims are static; actual registry values, GPU class mapping and runtime flags are unobserved.
+
+**Disposition:** previous unreviewed XREF owner now **CLOSED (STATIC) as configuration only**. No production signed Booter `IMAGE_PROD`/header/signature bytes, descriptor producer or specific 0x9B0 Falcon dispatch invoker in this function. Do not rerun its decompilation or infer that option flags disable hardware security. Continue read-only stock Windows firmware-byte provenance and confirmed `FUN_140BF3880` third-argument/invoker tracing. Physical/crypto acceptance, AD102+GA102 behavior, detach/unlock/recovery remain OPEN; all active gates false. New cumulative note in `research/nvidia-tensor-core-unlock-investigation-v123.md`; active execution map updated as a snapshot. Immutable audit untouched.
+
+---
+
 # 2026-11-05 17:56 PST — Windows GA10x/TU10x UCODES v1 header inventory complete, Booter source unresolved
 
 **Primary evidence:** user-pasted complete JSON from read-only `python .\research\windows_firmware_provenance.py --root "$env:SystemRoot\System32\DriverStore\FileRepository" --output .\windows-61742-firmware-inventory-v2.json` on Windows, `schema_version=1`, `STATUS=COMPLETE`, no warnings, `files_truncated=false`, `facts.hardware_modified=false`. No new Ghidra run or installed-file access in this assistant environment. The earlier default two-root `STATUS=PARTIAL` was accurate due to absent standalone `System32\drivers\nvlddmkm.sys`; the explicit DriverStore-only scope is complete and must not retroactively rewrite that older report.
