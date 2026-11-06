@@ -1,3 +1,29 @@
+# 2026-11-06 14:16 PST — Falcon companion callback and capped +0x250 transfer scan
+
+## User-run report and exact verification boundary
+
+Report: `nvlddmkm-61742-booter-discovery-20261106-141633-101372.txt`, locally SHA-256 `ed737a70ad058d34eeaf24c8b0ec176e45dbe4b747e9bd1fedffe8064961c27f`, 22,738 bytes and 307 logical lines. Original Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base VA `0x140000000`. Inputs: `SCAN_STRINGS=False`, `SCAN_SLOT_DISPLACEMENT=0x250`, `SLOT_SCAN_FOCUS=transfer`, `TRACE_INSTRUCTION_SITES=[0x1417E980B,0x1417E9853,0x1417E98A4]`, `TARGET_FUNCTIONS=[0x1406B4360]`. `ELAPSED_SECONDS=1.475`; `HARDWARE_ACTION=NONE`; `GHIDRA_MUTATION=NONE`. **Overall `STATUS=PARTIAL`** from the 80-result scan cap, despite complete three instruction windows and complete unclipped (`clipped=False`) target decompilation. This is read-only static analysis, not observed hardware behavior.
+
+## Complete adjacent +0x258 callback — no direct signed Booter descriptor
+
+`FUN_1406B4360(param_1,param_2)` reads `param_2+0x293`, `+0x980`, `+0x459`, `+0x430` (bounded to maximum `0xC`) and `+0x420`. Its two `FUN_140126F40` calls pass first argument `param_1+0x4410`, a selected index, and calculated offsets `(param_2+0x420)+0x40` and `+0x44`. When flag `+0x293` is zero or pointer `+0x980` is null, both data values are zero. Otherwise first data value is `*(+0x980 pointer+8)`; second combines bits from `param_2+0x4C4`, the pointed object's `+0xC` and `+0x10` fields: `((param_2+0x4C4)&7)<<26 | (*(ptr+0xC)&0x03FFFFFF) | (*(ptr+0x10)&0xE0000000)`. This is **static register-field/helper-call evidence**, not confirmation of hardware MMIO or register addresses; no signed Booter image/signature is created in the complete function and it does not directly call `FUN_140BF3880`. Close only its candidacy as a *direct* image/descriptor producer. Its actual runtime callback invocation and helper effects remain open.
+
+## Branch evidence and correction of earlier broad inference
+
+`FUN_1417E8550` at `0x1417E97E4..0x1417E980B` tests `(R8D & 0xFFFFFFE0)==0x20` and the unsigned low selector range `11..15`, then installs `FUN_140BF3E60` at `[R9+0x248]` and jumps to `0x1417E9826`. The alternate visible path installs `0x140006190` at `[R9+0x248]`, then checks group `0x20` before the same `+0x250` bitmask test. Therefore the prior phrase implying an **unguarded** group-0x20 bypass was too strong: this shown jump is preceded by an earlier guard. The full function's other possible ingress routes and live GPU selector remain unproven. The `+0x250` real transform is registered when the shown `TEST ((R10D << (R8D & 0x1F)) & 0x01F0F800)` passes; failed path at `0x1417E9853` writes fallback `0x140006190` at `[R9+0x250]`. `FUN_1406B4360` is installed at `[R9+0x258]` on successful branch, also in another shown branch at `0x1417E987B/882`; failed path at `0x1417E988B/892` installs fallback `0x1400061B0`. Joined processing at `0x1417E98A4` tests mask `0x03F8FFE0` for further as-yet unresolved slots. `R10D` meaning, live R9 object, actual callback execution and exact GA102/AD102 mapping remain open.
+
+## Slot-scan result: full memory traversal but incomplete evidence capture
+
+The scan visited all **12 executable blocks**, **19,689,472 bytes**; **1,475** raw displacement hits, **1,220** distinct matching instruction candidates, **403** transfer-filtered matches (`GUARD_TRANSFER_NEARBY`) and **80** recorded (script cap). Output: `capped=True`, `scan_complete=False`, `SLOT_SCAN_COMPLETE=FALSE`, overall `STATUS=PARTIAL`. This reflects output truncation, not failure to visit all blocks or an elapsed-time timeout. Many matches load an arbitrary object field `[register+0x250]` and invoke CFG guard dispatch pointer `0x140E02AA8`. They are plausible indirect-call patterns but cannot be attributed to the **specific** separately allocated 0x9B0 Falcon dispatch object's signature transformer from the displacement alone. Do not promote 403 candidates to real Falcon invocations, nor increase the result cap without type/object provenance filtering.
+
+## Next bounded proof task
+
+Instead of another generic offset search, first inspect `FUN_140BF3E60`, the newly exposed `+0x248` companion callback, plus `FUN_1401BC180` (obtains the overlay output buffer in the complete `FUN_140BF2740` body) and `FUN_1401BD630` (its finalization helper). Request exact machine windows at `0x1417E97FD`, `0x1417E985A`, `0x1417E988B`, `0x1417E98B3`. From complete output, seek an exact producer/consumer chain into `FUN_140BF3880`'s signed-descriptor third argument; if absent, keep the source and actual `+0x250/+0x170` invocations OPEN. Retain `STATUS=PARTIAL` if any requested decompilation clips/times out.
+
+**Hardware gates:** `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. Stock Windows signed Booter bytes, runtime signed acceptance, per-GPU execution, and recovery have not been demonstrated. Older cumulative findings follow unchanged.
+
+---
+
 # 2026-11-06 14:09 PST — HS overlay signature callback registered at nested Falcon initializer +0x250
 
 ## User-supplied report and verification boundary
