@@ -1,3 +1,23 @@
+# 2026-11-06 15:13 PST — Timed-out receiver scan and GUI scalar-search pivot
+
+## Raw report, bounded outcome and verification
+
+User-supplied `nvlddmkm-61742-booter-discovery-20261106-151326-858537.txt`, mounted 1,535 bytes, 19 logical lines, SHA-256 `9b7d7c7e39cbbcc086758e4aba8fea665838ca2881b2e658bfe55258843e1949`. Original Windows 617.42 `nvlddmkm.sys`, MD5 `3fb9afac9d0e394723e830aa14e60512`, loaded base `0x140000000`; script `SCAN_STRINGS=False`, `TRACE_NESTED_RECEIVER_CANDIDATES=True`. `SCAN_NESTED_RECEIVER_END examined_instructions=2139136 seeds=408 matched_fields=0 recorded=0 capped=False timed_out=True scan_complete=False`; `ELAPSED_SECONDS=40.019`; final `STATUS=PARTIAL`, `DECOMPILATION=SKIPPED`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. This confirms the new scanner executed against Ghidra under its intended time budget; it did **not** complete a whole-program candidate scan and did not yield a receiver-specific Falcon call.
+
+## Interpretation limits and disposition
+
+408 seeds are syntactic loads from `+0x108` of possibly unrelated structures, not 408 proven outer Falcon objects. Zero matches denotes only no observed *simple linear same-function* alias from those seeds to `+0x170/+0x250` within 36 subsequent instructions in the visited interval. Failure from deadline is **not** evidence that any invocation is absent. Even an uncapped `COMPLETE` zero result would omit different access paths, e.g. `outer+0xF0` owner then `owner+0x18` nested pointer, stack-local forwarding, other function boundaries and complex aliasing. Do not repeat this exact global scan, raise the time budget or misstate this as a negative full-driver result.
+
+## Next targeted Ghidra GUI evidence
+
+User has unrestricted GUI scalar searches up to 5,000 hits. Prioritize **Search → For Scalars… → Specific Scalar**, with separate queries `0x308`, `0x310`, `0x318`, `0x320`, `0x328`, `0x338`; keep Location, Preview and Function Name in each CSV export. Ghidra Scalar Table distinguishes actual instruction/scalar locations; unlike Search Memory hex-byte `08 03` etc., results are not arbitrary internal byte offsets. Analyze write instructions (`MOV [register+0xNNN],...`), address-taking `LEA`, or setup calls for **multiple descriptor fields in the same function**, and compare their base-object identities to `FUN_140BF2740`'s consumed `param_2`. These six offsets are supported by earlier completed transform decompilation as input fields, but not yet proven to belong to the same pointer that is published at outer+0x108. Use separate `0x108` search for possible consumers and `0x170/0x250` only within plausible owning functions; scalar equality alone is insufficient. GUI Decompiler Find and dual Decompiler/Listing cross-highlighting can inspect function bodies without Ghidra database edits.
+
+## Next proof boundary
+
+No changes to the bounded scanner are required in response to a normal enforced deadline. The authoritative P0 remains actual signature-transform source descriptor producer, signed Windows Booter image/header/signature/patch byte source, loader `FUN_140BF3880` third argument, real nested instance invocation and hardware architecture-specific acceptance. No live GPU operation, driver detach, firmware change or Ghidra database mutation. `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. All previous dated notes remain unchanged below.
+
+---
+
 # 2026-11-06 14:59 PST — Implemented read-only nested Falcon receiver-candidate heuristic (live Ghidra not yet run)
 
 ## Concrete code change and source correction
