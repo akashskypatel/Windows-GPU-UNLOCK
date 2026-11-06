@@ -1,3 +1,43 @@
+# 2026-11-06 14:01 PST — Complete overlay-signature transformation and direct carveout-lead closure
+
+## Identity and execution scope
+
+User-supplied Ghidra report: nvlddmkm-61742-booter-discovery-20261106-140131-545800.txt. Verified local SHA-256: 7507d13f2fa2547ac1797cae1d7e744834d6d28584cc0bfdf96cfece115330dc; 18,192 bytes, 905 raw text lines. Imported original Windows NVIDIA 617.42 nvlddmkm.sys, MD5 3fb9afac9d0e394723e830aa14e60512, Ghidra image base 0x140000000. Caller requested TARGET_FUNCTIONS 0x140BF2740/0x1402B2980 and TRACE_INSTRUCTION_SITES 0x140BF2887/0x140BF2968/0x140BF2AAF/0x1402B2DAE, SCAN_STRINGS=False. Both DECOMPILER_BEGIN entries report clipped=False; four instruction windows inspected; elapsed 0.341 seconds, STATUS=COMPLETE, HARDWARE_ACTION=NONE, GHIDRA_MUTATION=NONE. This is static-only evidence, not a runtime firmware/GPU test.
+
+## HS overlay-signature routine: actual 32-bit data-layout construction observed
+
+Complete decompilation of FUN_140BF2740(param_1,param_2,param_3,param_4) examines descriptor-related fields in param_2: source pointer +0x308, second pointer +0x310, 64-bit list/index pointer +0x318, packed quantity/stride fields +0x320, 16 bytes of descriptors at +0x328, +0x338 and a required +0x4B0 back-pointer. Some required nonzero pointers trigger error/assert helpers if missing. The same +0x4B0 displacement appeared in prior FUN_140BF4F00 Falcon reset/wait callback; this supports a possible common layout, NOT proven shared instance or call chain.
+
+When gating conditions permit, FUN_1401BC180(param_1,param_3,0) provides the destination; a null destination returns 0x1A. FUN_1400DF9F0(destination,0,param_4) zeroes it. A guarded indirect call receives param_1, the +0x4B0 context and a descriptor dword; its actual dynamic target is not established. When a descriptor count is nonzero, nested loops index 4-byte words from the source and write them to the destination in a rearranged order, using offsets, counts and index fields from the source descriptor. The function invokes FUN_1401BD630(param_1,param_3) after processing and can return zero. The label flcnCreateHsOvlSigBlob_GA10X now aligns with real data transformation, not only a diagnostic message. Nonetheless no key operation, cryptographic signature generation/verification, byte-format proof, bound safety at runtime, signature acceptance or specific signed Booter provenance was established. The complete body has no direct call to FUN_140BF3880 and does not prove that its output becomes the HS DMA-loader signed-image descriptor.
+
+Ghidra records four incoming references to FUN_140BF2740, all DATA: 0x1414692CC, 0x140E199F0, 0x1417E9835 and 0x1417E983C. The last two near-adjacent instruction addresses are high-yield candidates for callback-pointer publication. This report does not include machine-instruction context at those two references, so no callback offset, receiver or actual invocation can yet be claimed. The first two are static data-reference candidates, NOT calls.
+
+## Carveout configuration: direct producer hypothesis closed
+
+Complete FUN_1402B2980 decompilation reads the RM option RmAllocIsoSysMemFromCarveout using FUN_14016AAD0(param_1,option,&local_24) and on success assigns *(bool *)(param_1+0xA10)=(local_24!=0). It does not itself allocate a carveout or produce signed HS data. Only the claim that THIS FUNCTION directly produces the loader descriptor is rejected; downstream uses of the flag remain unknown. The same option initializer processes RmActivateHulk, RMHulkCertSize and RMHulkCert, including host allocation for a certificate option. That distinct certificate configuration is not demonstrated to supply the Falcon SEC2 Booter image/signatures and must not be conflated with the HS overlay source.
+
+## Additional user-supplied flcn/falcon strings (name-only triage)
+
+| Supplied anchor(s) | Bounded interpretation / priority |
+|---|---|
+| flcnCreateHsOvlSigBlob_GA10X 0x140D2EB10 | HIGH: complete transformation function FUN_140BF2740 now known; trace function-pointer registration, source and sink, not string again |
+| flcnLoadAndExecuteHsBinaryViaDma_GA10X 0x140D2EAE0; flcnWaitForResetToFinish_GA102 0x140D2EAC0 | Already decompiled as FUN_140BF3880 and FUN_140BF4F00; distinct loader +0x170 and reset +0x130 callback registration known, but runtime invocation unresolved |
+| lsfmFalconReset_IMPL 0x140D2C460; flcnWaitForResetToFinish_v04_00 0x140D17080 | SECONDARY: targeted string DATA references may locate alternative Falcon reset owners, but string names do not prove an HS Booter link or support for this exact hardware |
+| flcnLoadUcode_GM107 0x140D17030; flcnBootstrapOS_GM107 0x140D17010; flcnBootstrapWithNoLoader_GM107 0x140D16FF0; flcnEnable_GM107 0x140D16C70; flcnHaltEngine_GM107 0x140D16C50 | GM107/legacy-named Falcon API family; no confirmed GA102/AD102 runtime route from these strings |
+| FBFLCN, HUBCLIENT_FBFLCN, HUBCLIENT_FBFALCON, HUBCLIENT_AFALCON, HUBCLIENT_DFALCON, FB Falcon, RmEnableFbflcn, RmDisableFbflcnDevinitBoot, RmMClkSwitchOnFbflcn | FB Falcon / framebuffer hub and configuration names, not evidence of the secure SEC2 Booter data source |
+| CTRL_FLCN_GET_CTX_BUFFER_INFO/SIZE, Falcon ucode, Falcon Inst, falcon instance | Generic control, context, ucode and diagnostics; no exact HS descriptor provenance identified |
+| Generic falcon assert or halt [NV_ERR_FLCN_ERROR], MINION NVLink fatal interrupt notices, PMU Falcon ECC error | Error/status evidence only; duplicate generic error row is one string occurrence, not independent proof |
+
+All newly supplied string addresses are indices reported by the user, not verified executable call sites or a complete cross-reference mapping in this run. No blanket assertion of irrelevance is made; priority is evidence-based and limited.
+
+## Next proof target and remaining gates
+
+Inspect read-only machine instruction windows at 0x1417E9835 and 0x1417E983C and DATA references at 0x1414692CC and 0x140E199F0, with secondary DATA anchors 0x140D2C460 (lsfm reset) and 0x140D17080 (versioned reset/wait). Resolve an actual callback registration and exact receiver; only then connect the signature-transform output to the separately allocated nested 0x9B0 Falcon HS dispatcher and FUN_140BF3880 third argument, if evidence supports it. No decompilation re-run of these completed targets needed.
+
+Still OPEN: stock Windows production Booter source bytes/header/patch/signatures and hashes; actual loader descriptor producer; call/receiver chain to nested +0x170 invocation; per-architecture selection; signature acceptance; device and recovery tests. CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false, RECOVERY_VERIFIED=false. Previous cumulative entries follow unchanged.
+
+---
+
 # 2026-11-06 — Passive Ghidra XREF ownership for HS overlay signature and carveout leads
 
 ## Input, identity and tool boundary
