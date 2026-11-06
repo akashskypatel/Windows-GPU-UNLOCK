@@ -1,3 +1,13 @@
+# 2026-11-06 13:00 PST — PAGEdBIN fixed/conditional section pointers exposed by FUN_140A74E50
+
+User-run `nvlddmkm-61742-booter-discovery-20261106-130011-003670.txt`, SHA-256 `bf8481618b29cc16182e818a12624e0a980331cb0eb25ac8ac5c29163808699c`, original 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`. Full `FUN_140A74E50` decompilation `clipped=False` plus exact `0x140A74EBB` and `0x140A74ECD` machine windows, final `STATUS=COMPLETE`, no driver/DB/GPU writes.
+
+**Proven (static):** output `param_3` gets constant pointers into initialized non-executable mapped `PAGEdBIN`: `+0x20=0x146D01DE0`, `+0x28=0x146D01B30`; guarded-return-dependent pointers `+0x30=0x146D01330/0x146D01430`, `+0x38=0x146D01004/0x146D0100C`, `+0x48=0x146D01000/0x146D01008`, `+0x58=0x146D046A0/0x146D05AA0`, `+0x60=0x146D010E0/0x146D01140`, `+0x70=0x146D010B0/0x146D01110`; `+0x40=4` (dword), `+0x68=0x30` (dword). Machine `0x140A74EC6 MOV [RBX+0x40],4` and `0x140A74ECD MOV [RBX+0x48],RAX`. This is a conditional **table-of-pointers initializer**, **not** demonstrated signed Booter image-header-signature provenance, descriptor to `FUN_140BF3880` or actual execution. Do not conflate its `param_3` struct with loader `param_3` since the `+0x40` field is a scalar here.
+
+**Next grounded source/consumer lead:** reference manager lists DATA references at `0x14179DF28`, `0x14179DF2F`, `0x14179DFAE`, `0x14179DFB5` to function entry, potentially function-pointer installs; not CALLs. Passive exact `TRACE_INSTRUCTION_SITES` on four sites and `TRACE_STATIC_BYTES` on four 64-byte non-executable anchors `0x146D01000`, `0x146D01DE0`, `0x146D046A0`, `0x146D05AA0`. Full driver scan unnecessary. Main HS invoker/production signed descriptor remains OPEN. Immutable audit untouched; four active gates false.
+
+---
+
 # 2026-11-06 12:43 PST — PAGEdBIN mapped data section verified, exact XREF owner identified
 
 User Ghidra PE listing and uploaded `pagedbin-block-metadata.txt`, SHA-256 `7081cd72e8a168a4cc0027adf4cb76fc12a1f69efb52c8cb2e6b2f5e156c43af`. Section header `0x140000670`, name `PAGEdBIN`, PE `VirtualSize=0xFD40`, `SizeOfRawData=0xFE00`, `PointerToRawData=0x06C6A400`, `VirtualAddress=0x06D01000`, `Characteristics=0xC0000040`. Actual mapped Ghidra block `0x146D01000..0x146D10FFF`, size 65536, initialized, readable/writable, **not executable**. PE raw/virtual sizes are distinct from mapped block length; Ghidra instruction text beginning `OR AL,0x0` at section start is not runtime code evidence. This closes mapped-block existence/attributes, not image identity.

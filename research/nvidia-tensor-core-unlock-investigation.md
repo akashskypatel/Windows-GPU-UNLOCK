@@ -1,3 +1,46 @@
+# 2026-11-06 13:00 PST — PAGEdBIN multi-pointer table initialized by FUN_140A74E50; Booter ownership still unproven
+
+## Primary original-driver static evidence
+
+User-run read-only PyGhidra report `nvlddmkm-61742-booter-discovery-20261106-130011-003670.txt`, SHA-256 `bf8481618b29cc16182e818a12624e0a980331cb0eb25ac8ac5c29163808699c` (directly hashed from the uploaded file); original Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, loaded VA base `0x140000000`. Explicit `TRACE_INSTRUCTION_SITES=["0x140a74ebb","0x140a74ecd"]`, `TARGET_FUNCTIONS=["0x140a74e50"]`, `SCAN_STRINGS=False`. Both instruction sites resolved in the existing function. Its whole decompilation is `clipped=False` and final `STATUS=COMPLETE`, elapsed `0.270` seconds, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. Complete status applies only to the specified function and instruction windows, not the provenance of its data or execution.
+
+## Function's precise observed contract
+
+`FUN_140A74E50(param_1,param_2,param_3)` makes one opaque CFG-guarded indirect call and selects one of two sets of section-pointer constants based on whether the returned byte equals zero (`bVar5` in Ghidra). It **writes an output structure at `param_3`**, not the `PAGEdBIN` section itself. The exact direct field assignments, all section VAs within the independently verified mapped `PAGEdBIN` `0x146D01000..0x146D10FFF`:
+
+| `param_3` field | Observed value | Selection |
+|---|---|---|
+| `+0x20` | `0x146D01DE0` | Fixed |
+| `+0x28` | `0x146D01B30` | Fixed |
+| `+0x30` | `0x146D01330` / `0x146D01430` | Zero / nonzero return |
+| `+0x38` | `0x146D01004` / `0x146D0100C` | Zero / nonzero |
+| `+0x40` | `4` as a 32-bit integer | Fixed |
+| `+0x48` | `0x146D01000` / `0x146D01008` | Zero / nonzero |
+| `+0x58` | `0x146D046A0` / `0x146D05AA0` | Zero / nonzero |
+| `+0x60` | `0x146D010E0` / `0x146D01140` | Zero / nonzero |
+| `+0x68` | `0x30` as a 32-bit integer | Fixed |
+| `+0x70` | `0x146D010B0` / `0x146D01110` | Zero / nonzero |
+
+Instruction-level confirmation at `0x140A74EBB`: `LEA RCX,[0x146D01000]`, after which `0x140A74EC2 CMOVZ RAX,RCX`; `0x140A74EC6 MOV dword ptr [RBX+0x40],4`; at `0x140A74ECD`: `MOV qword ptr [RBX+0x48],RAX`. The decompiler names `LAB_146D01000` etc. for these **non-executable data** locations; these names and any Ghidra disassembly at the section start do not make them executable code.
+
+This substantially advances the former `PAGEdBIN` section-name hypothesis: **the NVIDIA driver has code that chooses and publishes pointers to several distinct offsets inside the non-executable section**. It does **not** establish the format/content of those offsets, who calls the initializer, who consumes `param_3`, what opaque callback selects, whether the bytes have signatures, or whether any of these addresses reach `FUN_140BF3880`. The field `param_3+0x40` is a 32-bit literal `4` here, whereas the previously inferred *HS loader's own third-argument descriptor* may use `+0x40` for an optional memory-descriptor pointer; **do not alias the two distinct third-argument parameter structures on their offset coincidence**. Neither the constant `4` nor `0x30` is proven to be a firmware length/ABI version.
+
+The report lists six *incoming DATA references* to `FUN_140A74E50`: `0x1414532E8` (.pdata-like metadata not yet confirmed in this report), `0x140E160A8` (.rdata-like reference not yet confirmed), and **four code-region sites** `0x14179DF28`, `0x14179DF2F`, `0x14179DFAE`, `0x14179DFB5`. The four sites are grounded candidates to establish **registration of the initializer function pointer or source of its third-argument consumer**, but their recorded reference *kind is DATA, not CALL*. Do not claim execution without tracing an actual indirect invoker.
+
+## Narrow next probe and stop conditions
+
+Use the unchanged passive `nvlddmkm_booter_discovery.py` to inspect only **the four exact registration-reference instructions** and sample just 64 bytes from four concrete section anchors, if present as initialized non-executable Ghidra memory. This is no database mutation, GPU action, whole-driver scan, dump of firmware image, or signature test:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x14179df28", "0x14179df2f", "0x14179dfae", "0x14179dfb5"], "TRACE_STATIC_BYTES": ["0x146d01000", "0x146d01de0", "0x146d046a0", "0x146d05aa0"], "__name__": "__main__"})
+```
+
+Require instruction-level owner, stores and source receiver; classify initial sampled bytes as **uninterpreted** until an independently grounded parser identifies a format and dataflow. If pointers are merely a fixed diagnostic/configuration table, close this candidate as a signed Booter source, while preserving the directly observed section-pointer registration. If there is a real path to firmware descriptor construction, trace it with exact source size, consumer and conditional arch selection.
+
+Separate unresolved highest-priority requirement remains an **actual indirect invocation through the published nested 0x9B0 Falcon object**, a real `FUN_140BF3880` signed-image argument-3 producer and Windows 617.42 production `IMAGE`/`HEADER`/`SIGNATURE`/patch bytes. Physical AD102/GA102 class selection, signature acceptance, active unlock and recovery are untested. `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. Update stable investigation + plan in place only, immutable recovery audit untouched.
+
+---
+
 # 2026-11-06 12:43 PST — PAGEdBIN PE section confirmed with two exact source-code references; payload identity open
 
 ## Source and byte-level / mapped-memory evidence
