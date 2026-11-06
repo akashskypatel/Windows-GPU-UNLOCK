@@ -1,3 +1,33 @@
+# 2026-11-05 17:00 PST — One recognized literal +0x2710 writer in Windows 617.42; producer/consumer object alias still open
+
+## Source, identity and scan completeness
+
+User-run passive, read-only Ghidra report `nvlddmkm-61742-booter-discovery-20261105-170034-045170.txt` (2,328 bytes, SHA-256 `c1c99fb70e7d8420230fb4b6bb1b5dde47282d58609e22309e2a9766ef89622c`) on Windows NVIDIA `nvlddmkm.sys` 617.42, MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra image base `0x140000000`. `SCAN_STRINGS=SKIPPED_BY_CALLER`, `SCAN_SLOT_DISPLACEMENT=0x2710`, `SLOT_SCAN_FOCUS=write`. It visited all 12 initialized executable blocks, 19,689,472 bytes; 376 raw displacement hits; 32 matching pre-existing instructions; one accepted literal write site, `recorded=1 capped=False scan_complete=True`, and `STATUS=COMPLETE`. `DECOMPILATION=SKIPPED`; no Ghidra database or hardware mutations (`HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`). This completes the **bounded scanner's criteria**, not an exhaustive enumeration of every possible pointer update: computed addresses, bulk copies, unrecognized operand forms and runtime conditions lie outside its guarantee.
+
+## Exact observed writer and potential producer–consumer bridge
+
+The *single recognized direct write* is at VA `0x1400AF749` in `FUN_1400AF170`:
+
+```asm
+MOV qword ptr [RDI + 0x2710], R8
+```
+
+Prior independent reports establish that `FUN_140532110` obtains `owner = *( *(param_1+0x160) + 0xE8 )`, then `receiver = *(owner+0x2710)` and on its nonnull branch loads `target = *(receiver+0x170)` and uses the CFG-guarded indirect tail transfer. The matching **literal displacement and store width** make the new writer a **specific plausible producer** for that receiver field. The report does **not** establish that writer `RDI` equals the consumer's `owner`, whether writer `R8` is a dispatch object, whether the store is on the relevant runtime path, or whether its value equals the separately proven `0x9B0` Falcon HS instance published at `outer+0x108` (`embedded+0x18`). Nor does the store establish callback invocation, `FUN_140BF3880` as a target, or signed Windows Booter byte or signature provenance. `STATUS=COMPLETE` for scanner scope must not be interpreted as hardware unlock readiness.
+
+## Next bounded read-only discriminator and stop condition
+
+Inspect the exact writer's input registers and focused containing-function decompilation, then **stop this branch** unless a concrete `RDI` owner and `R8` value/dataflow alias connects to the published nested Falcon HS instance. Do not increase general scan caps or repeat unrelated `+0x170` candidate sampling. The current primary P0 blocker remains production Windows 617.42 signed Booter image/header/signature source, actual third-argument descriptor producer into `FUN_140BF3880`, verified instance-specific invocation and GA102/AD102 selector/crypto acceptance.
+
+Ghidra Python 3 console command (single pasteable line; existing no-database-write script):
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x1400af749"], "TARGET_FUNCTIONS": ["0x1400af170"], "DECOMP_FOCUS_TERMS": ["10000", "0x2710"], "__name__": "__main__"})
+```
+
+Exact-card ROM provenance, passive pre-Stop baseline and fault/recovery design remain independently open. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`; no active UEFI/driver/GPU/firmware changes and immutable process/recovery audit untouched.
+
+---
+
 # 2026-11-05 16:53 PST — Callback receiver owner unresolved after static reference and entry-register inspection
 
 ## Source and bounded result
