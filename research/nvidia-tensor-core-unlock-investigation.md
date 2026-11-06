@@ -1,3 +1,23 @@
+# 2026-11-06 14:59 PST — Implemented read-only nested Falcon receiver-candidate heuristic (live Ghidra not yet run)
+
+## Concrete code change and source correction
+
+Added opt-in `TRACE_NESTED_RECEIVER_CANDIDATES=True` to the existing `research/ghidra/nvlddmkm_booter_discovery.py`. It traverses **Ghidra-recognized instructions** under a 40-second time limit, identifies `MOV Rxx,qword ptr [Ryy+0x108]`, tracks simple same-function register copies (dropping volatile aliases after `CALL`), and logs a nearby access through `[alias+0x170]` or `[alias+0x250]`, the instruction addresses, owner function, slot, distance and proximity of a CALL/JMP. It records at most 48 candidates and reports `STATUS=PARTIAL` on candidate/output cap or deadline; otherwise retains the script's normal explicit final `STATUS=<...> REPORT=<...>` line. No Ghidra writes, analysis, memory modification, GPU execution, driver detachment or firmware flashing.
+
+The first direct-to-main implementation commit `15707a0c610965f23878025cf17622a21f05efce` introduced a **source-generation bug**: a JavaScript string-replacement expression interpreted the Python regex `$'` sequence as an insertion of remaining existing file contents. It added 457 unintended lines and made the source invalid. The mistake was immediately recognized, disclosed and corrected in a separate direct-to-main commit `954caabef8cd3a31b3bad6bc3f50d39c778b6427`: the corrected script was rebuilt from the known-good pre-change blob, then the intended function and hook were inserted without replacement-string interpolation. Verified current script length 40,751 characters, Git blob `3715c8dbe9d0b084f77517c74643165bc5465027`, containing one `scan_nested_receiver_candidates` function and intact regex definitions; **do not run/checkout the initial broken commit**.
+
+## Verification status and limitations
+
+Four local **isolated host-only checks** of the same scanner/alias logic passed: positive pointer-load/copy and nearby guarded transfer; a CALL invalidating volatile aliases; a register overwrite invalidating an alias; and marking a truncated output cap partial. The tests were added to the repository's existing host-only `research/ghidra/test_nvlddmkm_booter_discovery.py` (Git blob `be3b78e5c81021cd874f6e251baad33999b77206`). Full repository test-suite execution has **not** been performed or claimed, and the new code has **not yet run in the real Ghidra/PyGhidra Java environment**. Static code/blob inspection is not a substitute for live Ghidra API verification.
+
+**Interpretation limit:** even a reported matching pointer at `+0x108` is not typed as the specific separately allocated Falcon 0x9B0 nested dispatcher. Linear lookahead does not prove control-flow reachability. This detector will miss many indirect aliases, alternate compiler layouts, Ghidra undefined instructions and code that follows the equivalent `outer+0xF0 -> +0x18` pointer route. The `nearby_transfer` marker signals only transfer *proximity*, not that the transfer invokes `FUN_140BF2740` or `FUN_140BF3880`. A scan with zero candidates does NOT close the invocation gap. Avoid promotion of offset-only evidence to production signed Booter identity.
+
+## Required next Ghidra evidence
+
+Invoke the updated committed script once in the original 617.42 `nvlddmkm.sys` import using `SCAN_STRINGS=False` and `TRACE_NESTED_RECEIVER_CANDIDATES=True`. Prioritize any `RECEIVER_CANDIDATE` by object/receiver provenance: does it dereference the *same* nested pointer published via `FUN_14179E530 -> FUN_141752AA0 -> outer+0x108`, and perform a verified invocation at nested `+0x250` signature transform or nested `+0x170` HS DMA loader? If none, pivot to the producer of descriptor fields `param_2+0x308..+0x338` consumed by `FUN_140BF2740` and third argument of `FUN_140BF3880`. Stock Windows signed Booter bytes/header/signature/patch, dynamic GA102/AD102 selection, authentication acceptance and physical recovery remain open. `CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false; RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-06 14:47 PST — Low-level Falcon diagnostic wrapper return ABI conclusively resolved
 
 ## Report identity and exact scope
