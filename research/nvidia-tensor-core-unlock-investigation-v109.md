@@ -11,11 +11,19 @@ User-run passive PyGhidra report `nvlddmkm-61742-booter-discovery-20261105-15533
 - Consequently `FUN_1417960A0` uses the two helpers to obtain required object/interface pointers `lVar5` via descriptor `0x140EA93F8` and fallback key `0x74BC71`, and `lVar7` via descriptor `0x140EA93D0` and fallback key `0x34A6D6`. The constants behave as **24-bit metadata/type identifiers**; do not label them firmware IDs, GPU family codes, or signed image offsets. Exact semantic class identities and linkage to GPU-specific callback selector 5..9 are still unknown.
 - Both descriptor addresses are in initialized `.rdata` but Ghidra marks them as not defined data. Each had at least ten incoming DATA references; several **shared caller functions** appear (including `FUN_14177C8C0`, `FUN_14174BC40`, `FUN_14174FC10`, `FUN_14174FF10`, `FUN_1417435C0`). The list is **not exhaustive**; do not claim full use mapping from capped output.
 
-## Disposition and critical path
+## Disposition, cross-constructor link, and critical path
 
-**Disposition:** the generic registration/type-interface branch is useful context for `FUN_1417930C0` registering `FUN_140A47B50` at `+0x150` for selector 5..9, but it still has **no demonstrated causal link to the nested Falcon HS callback, `FUN_140BF3880` third-argument firmware descriptor, production Windows signed Booter bytes/header/signatures, runtime per-device selector, or secure acceptance**. Deprioritize further broad/capped cross-reference enumeration until a concrete link emerges. Return to the existing primary P0 static Booter image/descriptor provenance gate. The previously established alternative `FUN_140092D80` returns not-supported; neither this result nor registered callbacks prove actual execution.
+**Important cross-check against earlier investigation evidence:** the previously documented `FUN_1417E99B0` constructor of the **0x9B0-byte nested Falcon HS dispatch object** also calls `FUN_14010DC60(param_2,&DAT_140EA93F8)`, using **the exact same metadata descriptor** as the `lVar5` lookup in `FUN_1417960A0`. This is a **concrete shared interface/type dependency** between the two construction paths. It is not proof that the objects or returned pointers alias, nor that the registered `+0x150` callback invokes nested `+0x170` or `FUN_140BF3880`. The report's capped references do not invalidate this earlier, independently documented static cross-link. It corrects an overly broad dismissal of this branch based only on the generic helper bodies.
 
-**Optional smallest read-only descriptor discriminator** (only if class identity becomes necessary): use existing `TRACE_STATIC_BYTES` for `0x140EA93F8` and `0x140EA93D0` to recover 24-bit metadata IDs without a whole-driver scan. It would not by itself prove physical GA102/AD102 selection. Main investigation should instead trace the actual indirect invocation and caller-supplied `param_3` at `FUN_140BF3880`.
+**Disposition:** avoid further broad/capped cross-reference enumeration; instead perform one **bounded side-by-side comparison** of both constructor lookups and their returned-pointer consumers. If no actual object or firmware path connects them, stop this branch and return to the main P0 signed Windows Booter image/header/signature provenance and real `FUN_140BF3880` third-argument descriptor/invocation gates. The independently established alternative `FUN_140092D80` returns not-supported; neither callback registration nor shared interface metadata proves actual execution.
+
+**Next read-only console command** uses the existing script (two function excerpts and two static metadata windows; no whole-driver scan or writes):
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1417e99b0", "0x1417960a0"], "DECOMP_FOCUS_TERMS": ["DAT_140ea93f8", "FUN_14010e030"], "TRACE_STATIC_BYTES": ["0x140ea93f8", "0x140ea93d0"], "__name__": "__main__"})
+```
+
+The metadata windows may yield additional raw identifiers, but **cannot alone prove** physical GA102/AD102 selection or signed firmware acceptance. The full constructor excerpts are focused; omitted regions do not establish absence.
 
 No driver/EFI/ROM/registry/firmware/GPU modifications. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Immutable process-and-recovery audit unchanged.
 
