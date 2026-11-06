@@ -1,3 +1,31 @@
+# 2026-11-06 — Passive Ghidra XREF ownership for HS overlay signature and carveout leads
+
+## Input, identity and tool boundary
+
+User-supplied **read-only** Ghidra report `nvlddmkm-61742-booter-discovery-20261106-135257-286388.txt`, SHA-256 `dfefbbe62f3886c587b791ab540a25470c1ea000f95ee2fb480359dda432a3db` (2,510 bytes), produced from the original Windows 617.42 `nvlddmkm.sys` imported at `0x140000000`; MD5 `3fb9afac9d0e394723e830aa14e60512`. Configuration: `SCAN_STRINGS=False`, `TRACE_DATA_SITES=["0x140d2eb10","0x140d2eae0","0x140d0ad10"]`; **no** `TARGET_FUNCTIONS`. Report recorded `STATUS=COMPLETE`, `DECOMPILATION=SKIPPED`, `ELAPSED_SECONDS=0.009`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. `STATUS=COMPLETE` covers the bounded static XREF inspection only.
+
+## Verified function ownership — not evidence of executable call edges
+
+| Grounded Ghidra string anchor | Existing Ghidra memory metadata | All inbound DATA sites, grouped by owning function | Scope |
+|---|---|---|---|
+| `flcnCreateHsOvlSigBlob_GA10X` at `0x140D2EB10` | initialized `.text`, defined data, root `0x140D2EB10` | 8/8: `FUN_140BF2740` at `0x140BF2887`, `0x140BF2894`, `0x140BF2968`, `0x140BF297C`, `0x140BF2AAF`, `0x140BF2AB9`, `0x140BF2ADD`, `0x140BF2AE7` | New exact owner; function-body semantics, inputs, outputs and callers UNREVIEWED |
+| `flcnLoadAndExecuteHsBinaryViaDma_GA10X` at `0x140D2EAE0` | initialized `.text`, defined data, root `0x140D2EAE0` | 6/6: `FUN_140BF3880` at `0x140BF396F`, `0x140BF397C`, `0x140BF3A44`, `0x140BF3A4F`, `0x140BF3A99`, `0x140BF3AA6` | Confirms prior loader's string-reference ownership; prior decompilation still does not identify signed-descriptor producer or runtime invocation |
+| `RmAllocIsoSysMemFromCarveout` at `0x140D0AD10` | initialized `.text`, defined data, root `0x140D0AD10` | 1/1: `FUN_1402B2980` at `0x1402B2DAE` | Secondary allocation lead; no proved relationship to Falcon HS descriptors |
+
+`INBOUND_ROOT` for each anchor was **not capped**; the report contains 8 + 6 + 1 inbound references. All reference kinds are `DATA`; they are neither direct call edges nor evidence that the same live object or runtime path reaches these functions. The report does not include decompiled bodies or instruction operands. The apparent relationship between an overlay signature blob and an HS binary loader is a **hypothesis**, not a verified call, data producer, accepted signature or Windows Booter source.
+
+## Outcome, unresolved proof and next bounded action
+
+**Advanced (STATIC):** narrowed previously unowned `flcnCreateHsOvlSigBlob_GA10X` to the exact reference-containing function `FUN_140BF2740`. The parallel XREFs independently confirm the earlier `FUN_140BF3880` HS-DMA-loader and identify `FUN_1402B2980` for the carveout string. Neither XREF adjacency nor a name with `SigBlob` proves actual cryptographic signing or image acceptance.
+
+**Still OPEN:** call sites into `FUN_140BF2740`; data/length/format and destination of any returned or written signature structure; signed Booter image/header/signature/patch byte producer on stock Windows 617.42; verified connection from this function to the `FUN_140BF3880` third argument; production signature verification/acceptance; AD102/GA102 runtime selection; actual invocation on the separately allocated nested Falcon dispatch object's `+0x170` callback; hardware behavior and recovery.
+
+**Next read-only Ghidra execution:** target `FUN_140BF2740` and `FUN_1402B2980` with exact bounded `TRACE_INSTRUCTION_SITES` `0x140BF2887`, `0x140BF2968`, `0x140BF2AAF`, `0x1402B2DAE`. Analyze direct incoming `CALL` references and output/provenance in decompilation, and only then compare an established data dependency with previously decompiled `FUN_140BF3880`. Any clipped decompilation must remain `PARTIAL`. No Ghidra mutation or target device operation authorized.
+
+**Gate status:** `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. The prior dated investigation notes follow unchanged.
+
+---
+
 # 2026-11-06 13:44 PST — Triage of two user-supplied Ghidra string batches and passive vtable-head report
 
 ## New user inputs and verification boundary
