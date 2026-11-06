@@ -1,6 +1,6 @@
 # 2026-11-05 16:20 PST — Static Falcon interface table XREFs closed, no executable invoker
 
-**User-run source:** `nvlddmkm-61742-booter-discovery-20261105-162054-788737.txt`, 2,212 bytes, SHA-256 `bb22716045a90d4af84db35e092e669171b6cbcbd9c8d5467d58878c9fc68536`. Read-only Ghidra of `nvlddmkm.sys` Windows 617.42, MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. Three `TRACE_DATA_SITES` inspections completed, no caps or decompilation (`STATUS=COMPLETE`; `DECOMPILATION=SKIPPED`; `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`).
+**User-run source:** `nvlddmkm-61742-booter-discovery-20261105-162054-788737.txt`, 2,252 bytes, SHA-256 `bb22716045a90d4af84db35e092e669171b6cbcbd9c8d5467d58878c9fc68536`. Read-only Ghidra of `nvlddmkm.sys` Windows 617.42, MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. Three `TRACE_DATA_SITES` inspections completed, no caps or decompilation (`STATUS=COMPLETE`; `DECOMPILATION=SKIPPED`; `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`).
 
 | Exact defined .rdata source | Outbound DATA target | Inbound existing Ghidra DATA refs |
 |---|---|---|
