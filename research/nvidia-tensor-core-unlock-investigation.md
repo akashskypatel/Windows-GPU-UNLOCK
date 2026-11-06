@@ -1,3 +1,25 @@
+# 2026-11-06 14:33 PST — Scalar-immediate +0x250 lead resolved as a diagnostic read
+
+## Input and evidence classification
+
+User-provided Ghidra report `nvlddmkm-61742-booter-discovery-20261106-143351-673596.txt`, SHA-256 `0dd81f8f76f1ae470a9204b98a2832d09ab175544134efa42c65245e0167e751` (12,549 bytes, 300 physical text lines). Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. Read-only `TARGET_FUNCTIONS=[0x140BF2B30]`, `TRACE_INSTRUCTION_SITES=[0x140BF2D2E]`, `SCAN_STRINGS=False`; `DECOMPILER_BEGIN ... clipped=False`, `ELAPSED_SECONDS=0.314`, `STATUS=COMPLETE`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. Only the requested function and instruction vicinity are characterized, not dynamic hardware behavior.
+
+## Concrete result: immediate offset passed to register/state read helper
+
+At `0x140BF2D1D`, `MOV R8D,0x240`, then `RDX=RBX`, `RCX=RDI`, `CALL 0x1406B63F0`. At `0x140BF2D2E`, `MOV R8D,0x250` followed by the same receiver-argument setup and another `CALL 0x1406B63F0`. The complete decompilation confirms both are inside `if (*(char *)(param_2+0x4AD) != 0)` and capture `uVar5=FUN_1406B63F0(param_1,param_2,0x240)` and `uVar6=FUN_1406B63F0(param_1,param_2,0x250)`. When `*(char *)(param_3+5)!=0`, those values and dozens of other sampled values are passed to repetitive `FUN_1400E0C90` diagnostic/logging calls. Other sampled numeric offsets include `0x80`, `0x3EC`, `0x388`, `0x4C`, `0x40`, `0x44`, `0x8`, `0xC`, `0x528`, `0x52C`, `0x534`, `0x10C`, `0x118`, `0x110`, `0x114`, `0x11C`; additional guarded indirect queries have unresolved identities. The helper `FUN_1406B63F0` has **not** been decompiled in this report, so its exact hardware/read mapping should not be asserted from the call signatures alone.
+
+**Resolution:** this particular `0x250` is a third-argument **numeric immediate to a register/state read helper**, not `MOV [R9+0x250],RAX` and not a Falcon nested signature-callback invocation, signature size or cryptographic data producer. The apparent neighborhood relationship to `FUN_140BF2740` and `FUN_140BF3880` was not supported by the complete function body. Classification: diagnostic/state dump, no direct signed-Booter producer or loader dataflow shown.
+
+## Incoming pointer metadata and next task
+
+Ghidra lists four refs to `FUN_140BF2B30`, all `DATA`: `0x1414692D8` (`.pdata`), `0x140E199F4` (`.rdata`), `0x1417E9665` and `0x1417E966C` inside `FUN_1417E8550`. These two initializer sites can identify its separate diagnostic callback slot if exact instructions are inspected, but even a proven callback registration would not establish runtime invocation or production Booter byte source. Do not divert P0 into generic `0x250` numeric offsets again.
+
+**Priority:** resume proof of an actual nested 0x9B0 Falcon receiver consumer from the existing `FUN_14179E530 -> FUN_141752AA0 -> outer+0x108` published pointer path, or trace producer fields for `FUN_140BF2740` signature-transform inputs (`param_2+0x308/+0x310/+0x318/+0x320/+0x328..+0x338`) and an exact data dependency to `FUN_140BF3880` third argument. Only if needed, run a bounded `TRACE_INSTRUCTION_SITES` at `0x1417E9665/6C` and optionally decompile `FUN_1406B63F0` to verify the read helper. No driver, GSP, FLR, UEFI or GPU actions.
+
+**Gates:** `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. Existing investigation notes retained unchanged below.
+
+---
+
 # 2026-11-06 14:22 PST — Complete Falcon helper decompilations and Ghidra 0x250 raw/scalar export triage
 
 ## Additional single-function lead from scalar export (not yet decompiled)
