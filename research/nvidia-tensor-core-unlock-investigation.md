@@ -1,3 +1,31 @@
+# 2026-11-06 14:22 PST — Complete Falcon helper decompilations and Ghidra 0x250 raw/scalar export triage
+
+## Evidence identity and completion boundary
+
+User-uploaded files verified locally: `nvlddmkm-61742-booter-discovery-20261106-142253-997463.txt` (16,724 bytes, SHA-256 `08d5d18d7a4ee5242a5ecfc555f5ea35f1a087528a4ad02d81fdb532a33890a3`); raw Ghidra memory-byte search `0x250` (272,384 bytes, SHA-256 `2929e0b81ce7dd146e565680299ebbbac58f538658314ad79e9616cbf7d74c07`); Ghidra scalar search `0x250-scalar` (96,900 bytes, SHA-256 `8de92134a1cfed954e6e2f838c4d7454648dae6adc583904c82dbf08ef56e071`). All export parsing was local/offline and read-only. Script report for original NVIDIA 617.42 nvlddmkm.sys MD5 `3fb9afac9d0e394723e830aa14e60512` at Ghidra base `0x140000000`: `SCAN_STRINGS=False`, four `TRACE_INSTRUCTION_SITES` at `0x1417E97FD/0x1417E985A/0x1417E988B/0x1417E98B3`, targets `FUN_140BF3E60`, `FUN_1401BC180`, `FUN_1401BD630`. `STATUS=COMPLETE`, elapsed 0.330 seconds; all three `DECOMPILER_BEGIN` entries `clipped=False`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. This does not revise the separate earlier 14:16 `STATUS=PARTIAL` from a saturated transfer scan.
+
+## Specific new function classifications (all static, not runtime proof)
+
+- `FUN_140BF3E60` (registered at Falcon `+0x248` on a class-gated branch): flags at `param_1+0x996/+0x5346` gate an early return or call to `FUN_1406B63F0(param_1,param_2,0xF4)` and a conditional wait/poll loop using `FUN_140114E70` and `FUN_140114740(param_1+0x20A0,local_38,0x4DF)` until a status/result condition. No direct blob creation, cryptographic signing, image bytes, or call to `FUN_140BF3880`. Exact hardware status meanings, timeouts and live termination unresolved.
+- `FUN_1401BC180` (used by `FUN_140BF2740` as `FUN_1401BC180(param_1,param_3,0)`): a general resource/buffer acquisition or mapping helper. Inspects descriptor at `param_2`, including `+0x68`, `+0x8C`, backing pointer `+0x128`, and reference count `+0x138`. Branches over `FUN_1401BAEF0` modes and allocation/indirect transfer paths; no evidence the backing memory is a Windows production Booter signed descriptor. Its Ghidra entry incoming-reference printout is capped by MAX_INCOMING_REFS=24; **this does not clip the function body**.
+- `FUN_1401BD630` (called after the 32-bit transformation by `FUN_140BF2740`): a general resource reference-release helper. Decrements descriptor `+0x138`, conditionally frees/releases backing resources and clears `+0x128/+0x130/+0x138` on final release. **Correct earlier characterization:** this is NOT proven signature cryptographic finalization; the prior phrase 'finalizes signature' was too strong. Its incoming-reference listing also caps at 24, but its decompilation is complete.
+
+## Two exported 0x250 searches: counts and exact-vs-byte addressing
+
+| Source | Parsed records | Evidence interpretation |
+|---|---:|---|
+| `0x250` raw bytes `50 02` | 4,227 | Byte occurrences across code/data/metadata, including `??` unknown bytes and unwind metadata, not 4,227 defined semantic offsets or invocation sites |
+| `0x250-scalar` (literal scalar hexadecimal 0x250 / signed decimal 592) | 1,247 | Ghidra-recognized scalar operands; many are ordinary immediates, stack offsets/adjustments, and unrelated object fields. 1,051 records matched the local parser's generic `[base+0x250]` category, which is *not* a verified callback receiver type |
+| Prior bounded programmatic `+0x250` transfer scan | 403 selected, only first 80 recorded | Heuristic CFG-guard-nearby patterns; `STATUS=PARTIAL`/cap reached, no receiver alias proven |
+
+Both actual callback-write instructions are present in scalar export: `0x1417E983C MOV [R9+0x250],RAX=>FUN_140BF2740`, and `0x1417E985A MOV [R9+0x250],RAX=>FUN_140006190` (fallback). Their matching raw byte locations are `0x1417E983F` and `0x1417E985D`, because byte search points *inside* a machine instruction, not at its start. In `0x141700000..0x1417FFFFF`, the scalar data contain **118** qword stores to `[R8/R9/R10+0x250]` across **44** function owners. Nearby initializer `FUN_1417EA590` stores a different function (`FUN_140C0A4D0`) at `+0x250` on various branches. Hence same-offset matches, even near other constructor code, are **insufficient** to claim the Falcon `0x9B0` nested receiver. Exact counts are from the user-uploaded CSVs, not the Ghidra programmatic report. The earlier 403-candidate scan must not be silently reclassified as complete.
+
+## Updated proof boundary / next static task
+
+The existing `FUN_141752AA0` constructor path previously proved nested dispatch publication at `outer+0x108` with nested `+0x4B0` back-pointer; `FUN_1417E8550` registers conditional nested `+0x170` HS loader and `+0x250` overlay transformer. The new helpers explain resource lifetime, **not a producer/consumer connection** from the transform's output to the loader's third argument. Next read-only investigation should follow exact object/receiver provenance from this constructor and seek initialized source descriptor fields consumed by `FUN_140BF2740` (`param_2+0x308/+0x310/+0x318/+0x320/+0x328..+0x338`), or a receiver-provenanced indirect invocation, rather than continue broad numerical displacement searches. No on-host source change or GPU action performed. `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. Older notes retained unchanged.
+
+---
+
 # 2026-11-06 14:16 PST — Falcon companion callback and capped +0x250 transfer scan
 
 ## User-run report and exact verification boundary
