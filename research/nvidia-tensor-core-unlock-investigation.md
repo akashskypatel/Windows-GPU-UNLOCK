@@ -1,3 +1,37 @@
+# 2026-11-06 09:27 PST — Windows FWSEC initialization and GA102 Falcon reset/wait callbacks classified; signed Booter producer remains open
+
+## User-run static Ghidra report and exact completion scope
+
+Source: `nvlddmkm-61742-booter-discovery-20261106-092744-805630.txt` (SHA-256 `6f0594b57ec295a73dc6c4814b9643aa768763ab8047b4ccb2d38c2463df28dd`), original Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512` at image VA base `0x140000000`. Existing passive `nvlddmkm_booter_discovery.py`, `SCAN_STRINGS=False`, explicit `TARGET_FUNCTIONS=["0x1401858e0","0x140bf4f00"]`. Both complete decompilations are reported `clipped=False`; final `STATUS=COMPLETE`, `ELAPSED_SECONDS=1.288`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`, with a console `REPORT=...` path. This completes two bounded static decompilations only, not firmware execution, GPU selection or runtime invocations.
+
+## `FUN_1401858E0`: FWSEC/DEVINIT orchestration with opaque indirect calls, not direct production Booter bytes
+
+- The function reads a context pointer at `param_1+0x2698`; on entry it returns immediately if a byte at `param_2+0x298` is already set. Otherwise it marks `+0x298`, clears `+0x4EC` and conditionally enters initialization under **a qword read** `*(longlong *)(param_2+0x2A0)!=0`. Do not conflate this qword read with the byte write at `+0x2A0` previously observed in `FUN_140AF28A0` without proving a shared object/type and layout.
+- On that path it zeroes a 0x30-byte block at `param_2+0x634`, writes fixed descriptor-like words `2,1,0x38,8`, invokes `FUN_140180B50` when `+0x2B0==0`, or invokes `FUN_1405EB540(param_1,param_2)` when `+0x2B0!=0`. It also checks `FUN_1401812C0` with a loop bounded by two attempts. These callees' bodies and firmware-data effects were **not** recovered in this report.
+- Following additional guarded indirect calls, it reads RM keys `RMExecuteDevinitOnPmu`, `RmDevinitDmaUseSPA`, `RmDisableFwseclic`, `RMSbProgressProfiling`, `RMExecuteFwsecOnSec2`, `RMDevinitBySecureBoot`, `RmHulkDisableFeatures`, `RmIgnoreHulkErrors`, and `RmDisablePreosapps`. It conditionally changes control/configuration fields `+0x27F`, `+0x28C..+0x28F`, `+0x1678`, `+0x16E8`, etc. The decompiler also includes `FUN_1405E0900`, `FUN_1405B7B60`, `FUN_1405FFC30` and CFG guard placeholders. None is identified as production Booter data supplier by the shown body.
+- A successful `RMExecuteFwsecOnSec2=1` lookup or an alternate opaque callback condition writes a *16-bit* value 1 at `param_2+0x28C`; another `RMDevinitBySecureBoot` branch can subsequently change `+0x28C..+0x28E`. Thus its final flag state cannot be inferred from a single RM key. No physical runtime value, architecture selection, signed-image bytes, header/signature parser, or descriptor passed to `FUN_140BF3880` was observed. Do not interpret user-visible option names as safe settings to change.
+
+## `FUN_140BF4F00`: GA102 Falcon reset/wait operation; new *bounded object-family lead*
+
+- The routine reads `local_58=*(longlong *)(param_2+0x4B0)`, validates `param_1`-context status bytes (`+0x9A0`, `+0x9A1`, `+0x9A2`, `+0x9B2`), handles a reset-status mask derived from `param_1+0xD44`, and uses the string `flcnWaitForResetToFinish_GA102` in its control/logging context.
+- Its loop condition checks reset/availability via `FUN_14011DAD0`; on selected paths it invokes an opaque CFG-guarded callback with `(lVar6,local_58)`, accesses Falcon register offset `0x40` through `FUN_1406B63F0`/`FUN_1406B6470`, and calls `FUN_1401148A0(lVar6+0x20A0,0,FUN_140BF5170,uVar5)`. This looks like a GA102 Falcon reset/wait or completion callback path. It does not directly construct the signed image, parse signatures, populate the HS binary descriptor or call `FUN_140BF3880` in the complete decompiled body.
+- **Meaningful new lead, not established alias:** prior independent code showed `FUN_1402E7E60` initializing a nested 0x9B0-byte Falcon dispatch object with `dispatch+0x4B0 = embedded_parent` before publication at outer `+0x108`. This routine's read of `param_2+0x4B0` is structurally consistent with a callback on that object **if** its `param_2` actually aliases the constructed dispatch instance. The report also lists two incoming DATA references from `0x1417E8C6C` and `0x1417E8C73`, both in the previously established `FUN_1417E8550` dispatch-table initializer, plus unrelated DATA refs. These are candidate **registration** sites, not runtime CALL sites, and the precise assigned slot must be verified from their instructions. This is more discriminating than a generic `+0x170` scan.
+- `FUN_1401858E0` has one direct call reference at `0x1400F2402` and three DATA references; `FUN_140BF4F00` has only reported DATA references. Neither result establishes the physical device or live invocation. `FUN_140BF5170` is merely a referenced callback in this bounded decompilation, not proven to be the secure Booter descriptor creator.
+
+## Disposition, immediate passive acquisition and unchanged gates
+
+**CLOSED FOR REQUESTED STATIC CLASSIFICATION:** `FUN_1401858E0` is a SEC2/FWSEC/DEVINIT initialization *orchestrator* with several **unreviewed callees**, not a directly exposed production signed Booter byte provider. `FUN_140BF4F00` is a GA102 Falcon reset/wait operation with a **concrete nested-dispatch family candidate**; do **not** dismiss its registration references as unrelated. **OPEN:** runtime instantiation, exact `FUN_1417E8550` slot at the two references, actual invoker of the particular 0x9B0 instance, real third argument to `FUN_140BF3880`, production signed Booter image/header/signature and patch bytes, physical GA102/AD102 mapping, cryptographic acceptance and hardware results.
+
+**Next smallest static discriminator:** use the existing, unchanged passive script to inspect only `TRACE_INSTRUCTION_SITES=["0x1417e8c6c","0x1417e8c73"]` to identify exactly where `FUN_140BF4F00` is registered within the same dispatch initializer that conditionally registers the separate `FUN_140BF3880` at `+0x170`. If those sites prove a slot assignment on the nested object, follow a grounded consumer of that slot only; do not count registration alone as invocation. If those windows do not resolve the assignment, report the gap. Independently, `FUN_1405EB540` is a specifically called next producer candidate within the conditional initialization flow; do not decompile it merely to infer that an image must exist.
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x1417e8c6c", "0x1417e8c73"], "__name__": "__main__"})
+```
+
+**Repository policy now enforced:** update `research/nvidia-tensor-core-unlock-investigation.md` and `research/nvidia_unlock_evidence_to_execution_map.md` in place; do not create incremental `-vNNN` copies. Prepend detailed facts here; maintain only current-state status/tasks in the execution map. Immutable `windows_gpu_unlock_process_and_recovery_audit_2026-11-04.md` untouched. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. No Ghidra/driver/UEFI/GPU mutation.
+
+---
+
 # 2026-11-05 18:06 PST — Windows ACR/security option initializer classified; no signed Booter byte producer
 
 ## Primary source and bounded outcome
