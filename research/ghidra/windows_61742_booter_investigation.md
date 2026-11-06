@@ -1,3 +1,21 @@
+# 2026-11-05 16:02 PST — Two constructors share exact 0x74BC71 metadata; no runtime pointer alias
+
+**Primary user report:** `nvlddmkm-61742-booter-discovery-20261105-160258-725939.txt`, 4,617 bytes, SHA-256 `45e1d244bc58c3f8ed1ee16f95d89099249f521b9173b327f8077a4bed2f8dcd`. Original Windows NVIDIA `nvlddmkm.sys` 617.42 MD5 `3fb9afac9d0e394723e830aa14e60512`; Ghidra image base `0x140000000`. `STATUS=COMPLETE` for two static regions and two *focused excerpts*; `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. Full function bodies were not emitted.
+
+**Static type metadata:** `0x140EA93F8` begins dwords `0x18`, `0x74BC71`; `0x140EA93D0` begins dwords `0x18`, `0x34A6D6`. Both have the qword `0x140E51850` at offset +8. `STATIC_QWORD0_LE=0x0074BC7100000018` is **two adjacent dwords**, not an executable pointer. `0x140EA93D0 + 0x28 = 0x140EA93F8`, so the 64-byte window at the first descriptor overlaps the next descriptor; never infer one 64-byte contiguous metadata record from this inspection.
+
+**Verified matching constructor lookup:** `FUN_1417E99B0` (previously established 0x9B0-byte Falcon dispatch constructor) and independent `FUN_1417960A0` (0x1BB8-byte class-registration constructor) both call `FUN_14010DC60(param_2,&DAT_140EA93F8)`, with fallback `FUN_14010E030(param_2,0x74BC71)` and retry. `FUN_1417960A0` independently obtains the `0x34A6D6` interface using `DAT_140EA93D0`. The two constructors' *input objects*, returned interface pointers, consumer-side assignments and actual runtime paths have **not been shown equal**. This shared dependency is not a Booter loader or an AD102/GA102 selector.
+
+**Disposition:** metadata layout and shared type dependency **PASS (STATIC)**. Actual Falcon HS invocation, Windows production signed Booter/header/signature bytes and the third-argument producer of `FUN_140BF3880` remain **OPEN**. No changes to `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, or `RECOVERY_VERIFIED=false`. Next bounded inspection: get complete (unfocused) short decompilation of `FUN_1417E99B0`, particularly consumption of resolved `lVar6`, then move back to direct Booter provenance unless a concrete object-level bridge appears:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1417e99b0"], "__name__": "__main__"})
+```
+
+**Documentation discipline:** cumulative research findings prepended to `research/nvidia-tensor-core-unlock-investigation-v110.md`; stable `research/nvidia_unlock_evidence_to_execution_map.md` snapshot updated **in place** with the resolved metadata proof and next blocker, not a new dated section. Process/recovery audit untouched.
+
+---
+
 # 2026-11-05 15:53 PST — Generic type/interface lookup established; exact metadata descriptor shared with Falcon HS constructor
 
 **Input:** read-only user-run `nvlddmkm-61742-booter-discovery-20261105-155334-373621.txt` (9,207 bytes; SHA256 `5a137e26ac2290895b1611199cbec7fca21b1a72a523a3c488278b518640322d`), correct Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra base `0x140000000`. `STATUS=PARTIAL` means both DATA_SITE inbound reference lists reached the existing ten-reference cap, not that either of the two full helper decompilations was clipped. Ghidra reports `DATA_SITES_COMPLETE=FALSE`, `TARGET_INCOMING_REFS_TRUNCATED=true` for each helper, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`.
