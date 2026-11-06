@@ -1,3 +1,23 @@
+# 2026-11-05 — Refocus signed Windows Booter provenance: pinned Linux source contract and passive source-file inventory
+
+**Current Windows Ghidra baseline unchanged:** exact `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`, existing 617.42 static analysis. The nested `0x9B0` dispatch object is created by `FUN_1417E99B0` through `FUN_14056C510`, published at outer `+0x108` (embedded owner `+0x18`), and its `+0x170` callback can be set by `FUN_1417E8550` to `FUN_140BF3880` or a non-supported fallback. **The specific runtime invoker, real `FUN_140BF3880` third-argument signed descriptor producer, and Windows source bytes are OPEN.** The v119 `FUN_1400AF170` `+0x2710` writer is **rejected** as an alias because it zeroes a numeric-record field; stop arbitrary `+0x170`/`+0x2710` scans.
+
+**Pinned external Linux 615.78.08 contract, not Windows proof:** `src/nvidia/src/kernel/gpu/gsp/kernel_gsp_booter.c` at https://github.com/NVIDIA/open-gpu-kernel-modules/blob/615.78.08/src/nvidia/src/kernel/gpu/gsp/kernel_gsp_booter.c confirms `kgspAllocateBooterLoadUcodeImage_IMPL -> kgspGetBinArchiveBooterLoadUcode_HAL -> s_allocateUcodeFromBinArchive`, whose non-debug branch selects separate `BINDATA_LABEL_IMAGE_PROD`, `BINDATA_LABEL_HEADER_PROD`, `BINDATA_LABEL_SIG_PROD` plus patch/number records. `nouveau/extract-firmware-nouveau.py` at https://github.com/NVIDIA/open-gpu-kernel-modules/blob/main/nouveau/extract-firmware-nouveau.py treats `ucodes_ga10x.bin` as a separate paired GSP input in r610+, and constructs reference Booter images from generated `g_bindata_kgspGetBinArchiveBooter{Load,Unload}Ucode_*.c`. **No direct equality** between those Linux generated assets and Windows 617.42 UCODES or the loader argument is established.
+
+**Existing Windows source/staging call chain (previously verified, not rerun):** `FUN_1400F35F0` selects the external UCODES path; `FUN_1400F3350` reads the file; `FUN_1401AB740` stages UCODES/GSP; `FUN_1401B2C10` assigns cached UCODES to `GSP_ARGUMENTS_CACHED.bindataArgs`. This supports read-only **source-file provenance capture**, but does not tell us whether the GSP or kernel consumes a particular Booter record or whether `FUN_140BF3880` is invoked through the nested instance.
+
+**New concrete host acquisition tool on `main`:** `research/windows_firmware_provenance.py`, commit `d8259c0bbdcad146097d3796082d26f581bb5fa3`, SHA of Git blob `44e68d6f2c45a25b47128199f918f86f5c2eaf93`. Read-only Windows DriverStore/system-driver inventory, hashes/MD5 pin, supported plain GSP ELF signature-section metadata. Python syntax validation and isolated synthetic ELF/missing-root checks passed **locally only**. It does **not** parse opaque UCODES, authenticate any firmware, or run on the physical Windows host in this turn. A `.fwsignature_ad10x` section is **GSP ELF metadata**, not proven Booter signature. A report `STATUS=COMPLETE` only describes file inventory completion.
+
+**Next one-line Windows host command:**
+
+```powershell
+python .\research\windows_firmware_provenance.py --output .\windows-61742-firmware-inventory.json
+```
+
+Require actual pinned `nvlddmkm.sys` MD5 match plus paths/hashes of corresponding files before a follow-up Ghidra source-to-descriptor run. If the files are missing, record the absence of **this inventory's evidence**, not an exhaustive absence in the driver. No new Ghidra script/DB mutations, hardware modifications, secure-loader execution or crypto verification performed. `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. Cumulative investigation v120 prepended; stable execution map updated in place; immutable recovery audit untouched.
+
+---
+
 # 2026-11-05 17:14 PST — `+0x2710` literal writer is a zero-initialized numeric buffer, not the Falcon dispatch producer
 
 ## User-run evidence and completion boundary
