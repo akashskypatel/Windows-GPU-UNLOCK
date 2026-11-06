@@ -1,3 +1,42 @@
+# 2026-11-06 12:43 PST — +0x168 Falcon callbacks classified; Ghidra Comments.csv supplies PE-section lead only
+
+## Primary uploads and scope
+
+**Ghidra report:** `nvlddmkm-61742-booter-discovery-20261106-124302-396219.txt` SHA-256 `6093ba7017d0f4da50786569287101091705d264e8fed7d4e34fb572fca9ca44`, from original Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, imported Ghidra base `0x140000000`. Explicit `TARGET_FUNCTIONS=["0x140bf5ed0","0x140bf7e10"]` and `SCAN_STRINGS=False`; both complete decompiled bodies `clipped=False`; `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.264`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. This is **two bounded static decompilations**, not a runtime Falcon operation.
+
+**Ghidra comments export:** `Comments.csv` SHA-256 `708baea6b89f3223a9ae2b8797a39f5ba9b329623812d82b8339114bbe2a4731`, parsed in full locally with standard Python CSV parser: exactly **1,109 rows** and fields `Location, Type, Comment`. Type counts: `Plate Comment=403`, `EOL Comment=368`, `Pre Comment=338`; 430 distinct comment strings. Most information is Ghidra-generated import/PE/CRT metadata, not recovered NVIDIA proprietary source names. This analysis reads the uploaded CSV only; no Ghidra workspace comments were changed.
+
+## Exact +0x168 callback classification (closes this direct lead)
+
+`FUN_140BF5ED0(param_1,param_2,param_3)`, full body:
+- `FUN_1406B6470(param_1,param_2,0x110,(param_3 >> 8) & 0xFFFFFFFF)`;
+- `bVar1=FUN_1402E8360(param_1,param_2)`;
+- only if `bVar1>0x5F`: `FUN_1406B6470(param_1,param_2,0x128,(uint)(param_3 >> 0x28) & 0x1FFFF)`.
+
+`FUN_140BF7E10(param_1,param_2,param_3)`, full body:
+- exact same offset-`0x110` write and condition;
+- when `bVar1>0x5F`: `FUN_1406B6470(param_1,param_2,0x128,(uint)(param_3 >> 0x28) & 0x1FF)`.
+
+Both are Falcon-register/configuration writer wrappers for **different upper-field widths** (17 versus 9 bits). The existing `FUN_1406B6470` backend was separately investigated earlier. In these specific complete bodies, `param_3` is used as a **packed integer source**, not as a pointer to an image/header/signature descriptor. There is no byte-copy/source-file lookup, descriptor allocation, ELF/UCODES archive parser, nested-instance callback invoker or call to `FUN_140BF3880` in either function. Earlier `FUN_1417E8550` register assignments are consistent with both being alternate `[R9+0x168]` callbacks. **Close** the hypothesis that either function directly supplies the HS loader's signed-image descriptor or invokes its `+0x170` slot. The eventual firmware-controller meaning of registers `0x110`/`0x128` and physical GPU-specific branch remains an untested runtime question; do not turn their use into an unlock claim.
+
+Their input symbol references in this report were all DATA. For `FUN_140BF5ED0`, references include `0x141469554`, `0x140E19AA0`, `0x1417E8E30/37`, `0x1417E8EC3/CA`; for `FUN_140BF7E10`, `0x141469704`, `0x140E19B08`, `0x1417E8EB3/BA`. These are not reported CALL sites.
+
+## What Comments.csv actually contains
+
+- **336 EOL `IMAGE_THUNK_DATA64`**, **336 Plate `IMAGE_IMPORT_BY_NAME`**, **336 Pre `<<not bound>>`** import annotations, plus CRT/Visual Studio single-match library comments and PE resource/export metadata. Do not treat the `<<not bound>>` strings as proof that the driver cannot call these imported routines or that Windows could not resolve them. They describe the Ghidra symbol/import representation.
+- The PE-section-header EOL annotation at Ghidra VA **`0x140000670` is `PAGEdBIN`**. This is a concrete **section-name lead** relevant to the embedded-binary hypothesis, but no memory block size, protection, raw bytes, Booter-record identifier or producer XREF was inspected from this CSV. An uppercase/lowercase section name or `BIN` substring must **not** be interpreted as a bindata archive or verified signed Booter. Before scanning, first confirm whether Ghidra's memory map contains a matching mapped section/block, with exact start/end and R/W/X/initialized flags.
+- Two other rare named Pre comments are **`0x1410F634C: 'wPreRelocCRCCopy'`** and **`0x1411A5570: 'nvDumpConfig'`**. These are reported labels, not direct Booter producer signatures or code-call references. They are low-priority unless a real dataflow joins the HS loader.
+- `0x141002C38` has a Ghidra `.NET PDB Info` plate label. This is metadata terminology and **does not establish successful loading of NVIDIA private debug symbols**. Visual Studio library-match comments likewise do not represent proprietary NVIDIA function names.
+- There are **zero exported comments within the exact examined VA windows** `0x140BF3000..0x140BF8500` (Falcon callback family), `0x1417E8000..0x1417EA000` (nested dispatch construction/initializer), and `0x140180000..0x140190000` (SEC2/FWSEC initialization). Absence of comments is absence of annotations, not absence of implementation.
+
+## Next bounded, nonmutating check
+
+Verify **only** the actual mapped-block metadata for `PAGEdBIN` in the pinned Ghidra image and distinguish it from the PE header name. Record whether a block exists, its start/end, total size, initialized/R/W/X flags. No full driver rescan, image execution, signature extraction, hardware access, or Ghidra changes are justified by a section-header comment alone. If there is no matching initialized block, close this particular comment-derived candidate. If one is present, pursue only grounded source/provenance references; do not assume its content is the production Booter. The highest-priority continuing unresolved work is locating **an actual invocation of the specific published 0x9B0 Falcon dispatch instance** and tracing the **real third-argument signed binary descriptor into `FUN_140BF3880`**. Do not reopen these two +0x168 callbacks or repeat generic `+0x170`/`+0x2710` scans.
+
+All status gates unchanged: `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`; physical GA102/AD102 selector, signed Windows production Booter image/header/signature/patch provenance, security acceptance, actual unlock and recovery remain OPEN. Update the two authoritative documents **in place** and prepend cumulative evidence; no versioned copies. Immutable process/recovery audit untouched.
+
+---
+
 # 2026-11-06 09:42 PST — Falcon HS loader selector fallback and Symbols.csv triage
 
 ## Inputs, completeness, and provenance
