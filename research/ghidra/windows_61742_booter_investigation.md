@@ -1,3 +1,14 @@
+# 2026-11-06 13:44 PST — HS overlay signature blob string untraced; vtable-head DATA refs and constructor call checked
+
+User-supplied Ghidra strings (two batches) compared against existing investigation and Ghidra ledger, not simply string names. Critical **new UNTRACED string** `flcnCreateHsOvlSigBlob_GA10X` at VA `0x140D2EB10` (no retained exact previous analysis). Secondary untraced `RmAllocIsoSysMemFromCarveout` at `0x140D0AD10`. Other new `HOST9`, `_ORI_ORI compile type=2`, `VESA DMT` and two NOT_DEFINED six-byte candidates have no established Falcon/Booter dataflow. Previously investigated: display GA102/AD102 diagnostic strings through partially clipped `FUN_1415A8FB0`; `flcnLoadAndExecuteHsBinaryViaDma_GA10X` fully decompiled in `FUN_140BF3880`; `flcnWaitForResetToFinish_GA102` fully decompiled `FUN_140BF4F00`; ga100/ga10x/ad10x suffix selection in `FUN_1401AA0E0`; GSP/UCODES/GSP log filenames in `FUN_1400F35F0` selector and `FUN_1400F3350` reader, plus GSP staging; `fwlogging_kernel_*` resource family in complete `FUN_1401AA580` logging initializer. Being investigated != runtime authenticated/used.
+
+New original user Ghidra report `nvlddmkm-61742-booter-discovery-20261106-134412-095150.txt` SHA-256 `5758270902695f785a915d27185c055fe2bd25f0a472cf45ec81b6254aec636f`. Pinned 617.42 nvlddmkm.sys MD5 `3fb9afac9d0e394723e830aa14e60512`; STATUS=COMPLETE, DECOMPILATION=SKIPPED, no Ghidra/driver/GPU mutation. At `0x14179E83A`, `LEA RCX,[RDI+0xF0]`, then `0x14179E841 CALL FUN_141752AA0`, EAX status checked. This is a direct builder call on the embedded context, NOT nested+0x170 HS callback invocation.
+
+Four `.rdata` vtable-like head DATA references: `0x140EDE0D0 -> 0x140EDE068`, `0x140EDE0E8 -> 0x140E9CD80`, `0x140EDE100 -> 0x140E8EC18`, `0x140EDE188 -> 0x140EBF210`. Each root has 3 inbound DATA refs, two from `FUN_14179E530`; no actual indirect invoker established by these heads alone.
+
+Next single bounded passive `TRACE_DATA_SITES=["0x140d2eb10","0x140d2eae0","0x140d0ad10"]` to identify owners of new signature-blob string and memory carveout string against fully classified HS loader string. Only follow real instruction XREF. HS production signed-image descriptor and live nested invoker remain OPEN. Active gates all false; stable notes/plan in place, immutable audit unchanged.
+
+---
 # 2026-11-06 13:34 PST — PAGEdBIN and nested HS dispatch co-constructed under the same 0x588 outer
 
 Report nvlddmkm-61742-booter-discovery-20261106-133402-701773.txt, SHA-256 09f119d59eaf7678eeca9574f4a789001b6d0b9f32b661a9a06fbccdd8c9bf05; source 617.42 nvlddmkm.sys MD5 3fb9afac9d0e394723e830aa14e60512, complete unclipped FUN_14179E530, three instruction windows, STATUS=COMPLETE, no database or GPU changes. Expanded headers Pasted text(3).txt SHA-256 806afe7cf2675794575178ea532a6dee00fbcdc5bb9ee2342f0959ba60b6bfcc.

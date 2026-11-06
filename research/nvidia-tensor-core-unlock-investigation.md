@@ -1,3 +1,53 @@
+# 2026-11-06 13:44 PST — Triage of two user-supplied Ghidra string batches and passive vtable-head report
+
+## New user inputs and verification boundary
+
+New user-supplied *string index*, with exact Ghidra VAs, includes previously investigated GA102/AD102 diagnostic names, Falcon HS loader/reset messages, GA10x GSP/UCODES filenames and suffixes; and **new, previously untraced literal** `flcnCreateHsOvlSigBlob_GA10X` at `0x140D2EB10`. Additional untraced literal `RmAllocIsoSysMemFromCarveout` at `0x140D0AD10` is a secondary memory-resource lead. The user also supplied `HOST9` at `0x140D1AD10`, `_ORI_ORI compile type=2` at `0x141B58AD1`, `VESA DMT` at `0x1419AD1BC/0x1419AD144`, and two NOT_DEFINED six-byte string candidates at `0x144FE6AD1/0x144DAD1C0`; their relevance to HS Booter is NOT demonstrated by mere string content.
+
+User-run Ghidra report `nvlddmkm-61742-booter-discovery-20261106-134412-095150.txt`, SHA-256 `5758270902695f785a915d27185c055fe2bd25f0a472cf45ec81b6254aec636f`, original Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. Bounded `TRACE_DATA_SITES` for four `.rdata` interface heads `0x140EDE0D0/0x140EDE0E8/0x140EDE100/0x140EDE188` and exact `TRACE_INSTRUCTION_SITES` at `0x14179E837/0x14179E84A`. Complete at `STATUS=COMPLETE`, elapsed 0.045s, `DECOMPILATION=SKIPPED`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. This status certifies **only these read-only sites**, not a runtime vtable invocation.
+
+## Which strings were investigated before this turn
+
+| Supplied string(s) | Prior code evidence | Current conclusion |
+|---|---|---|
+| `CNvDisplay_Ampere_GA102`, `m_pDispDbg->pDispGA102`, `CNvDisplay_Ada_AD102`, `m_pDispDbg->pDispAD102` | `FUN_1415A8FB0` was traced as display-manager diagnostic serialization, but decompilation clipped | Display-diagnostic paths; no production HS Booter link established, not exhaustive exclusion |
+| `flcnLoadAndExecuteHsBinaryViaDma_GA10X` at `0x140D2EAE0` | Six string XREFs; complete `FUN_140BF3880` decompilation, registered nested `+0x170` by `FUN_1417E8550` | SEC2/Falcon generic HS binary DMA loader established; actual invocation and descriptor byte producer OPEN |
+| `flcnWaitForResetToFinish_GA102` at `0x140D2EAC0` | Complete `FUN_140BF4F00` decompilation; registered at nested `+0x130` for selector-dependent branch | Reset/wait implementation; no HS descriptor byte source |
+| `ga100`, `ga10x`, `ad10x` | Complete `FUN_1401AA0E0` resolves family/revision-dependent ELF signature/filename suffix, including group 0x170 and 0x190 | Architecture suffix routing, not physical-card runtime selector evidence |
+| `gsp_ga10x.bin`, `gsp_log_ga10x.bin`, `ucodes_ga10x.bin` | `FUN_1400F35F0` selects filenames, `FUN_1400F3350` reads files; `FUN_1401AB740` stages GSP/UCODES and `FUN_1401B2C10` stores cached UCODES args | Windows external firmware file/staging path established; source-to-HS descriptor and Booter record content UNKNOWN |
+| `.fwlogging_kernel_ga10x` | `FUN_1401AA580` completely classified as GSP logging-buffer/LOGKRNL descriptor initializer with architecture-specific fwlogging data | Related family examined; literal-specific refs not independently mapped, no Booter link |
+| `flcnCreateHsOvlSigBlob_GA10X` at `0x140D2EB10` | **No exact string or OvlSigBlob lead appears in existing cumulative notes or Ghidra ledger** | **New high-priority UNTRACED HS overlay-signature-blob lead; no owner/caller/signature format proven** |
+| `RmAllocIsoSysMemFromCarveout` at `0x140D0AD10` | No exact function owner/caller analysis in retained records | New SECONDARY carveout-allocation string, not demonstrated signed-image staging |
+| `HOST9`, `_ORI_ORI compile type=2`, `VESA DMT`, two NOT_DEFINED short strings | No exact owner/call trace in retained notes | LOW PRIORITY or ambiguous; do not reinterpret as signed firmware or GPU-specific security operations without a grounded XREF |
+
+## New vtable-data and constructor status from 13:44 report
+
+At `0x14179E837`, machine code sets `RDX=RBP`; `0x14179E83A LEA RCX,[RDI+0xF0]`; `0x14179E841 CALL FUN_141752AA0`; `0x14179E848 TEST EAX,EAX`; and `0x14179E84A JZ 0x14179E859`. This reinforces the **direct nested-construction call and status gate** of the separately complete `FUN_14179E530` body. It does NOT call the HS dispatcher through nested+0x170.
+
+Four initialized `.rdata` interface/vtable-like heads and their **single immediate outbound DATA pointer** from the bounded trace:
+
+| Head | Outbound `DATA` pointer | Inbound status |
+|---|---|---|
+| `0x140EDE0D0` | `0x140EDE068` | 3 DATA refs incl. two from `FUN_14179E530` |
+| `0x140EDE0E8` | `0x140E9CD80` | 3 DATA refs incl. two from `FUN_14179E530` |
+| `0x140EDE100` | `0x140E8EC18` | 3 DATA refs incl. two from `FUN_14179E530` |
+| `0x140EDE188` | `0x140EBF210` | 3 DATA refs incl. two from `FUN_14179E530` |
+
+These immediate outbound DATA references can be table/type metadata. The user-run script does NOT resolve a real method consumer of outer+0x108 and nested+0x170; finding the constructor call is not finding the indirect invoker. Current validated relationship: PAGEdBIN outer callbacks and separately allocated nested Falcon dispatch share one successful outer `0x588` construction branch, with **distinct outer+0x170 and nested+0x170 addresses**.
+
+## Recommended next bounded discriminator (read-only only)
+
+The best untraced lead from the strings is the HS overlay signature blob name, potentially relevant to the *signature side* of the as-yet-unproven signed HS descriptor. First retrieve **existing Ghidra XREF owners only**, rather than decompiling an arbitrary neighboring address or assuming the name identifies a specific signed production Booter. Compare to known DMA-loader string and secondary carveout-allocation string:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_DATA_SITES": ["0x140d2eb10", "0x140d2eae0", "0x140d0ad10"], "__name__": "__main__"})
+```
+
+From the returned exact XREF sites, choose a single real function owner next. If `flcnCreateHsOvlSigBlob_GA10X` is only diagnostic logging, mark that lead closed rather than promoting a string to evidence of signature creation. Independently keep actual instance-specific nested Falcon +0x170 invocation and real `FUN_140BF3880` third-argument producer as P0. No active GPU state changes or firmware writes.
+
+CAN_DETACH=false; CAN_UNLOCK=false; CAN_FLASH=false; RECOVERY_VERIFIED=false. Immutable process/recovery audit unchanged. Existing stable research paths updated in place, no new numbered copies.
+
+---
 # 2026-11-06 13:34 PST — Same outer construction path proven for PAGEdBIN callbacks and nested Falcon HS dispatcher
 
 Primary Ghidra report: nvlddmkm-61742-booter-discovery-20261106-133402-701773.txt, uploaded SHA-256 09f119d59eaf7678eeca9574f4a789001b6d0b9f32b661a9a06fbccdd8c9bf05. Driver MD5 3fb9afac9d0e394723e830aa14e60512, VA base 0x140000000. One full unclipped FUN_14179E530 decompilation plus three resolved instruction sites, STATUS=COMPLETE, HARDWARE_ACTION=NONE, GHIDRA_MUTATION=NONE. Expanded header listing Pasted text(3).txt, uploaded SHA-256 806afe7cf2675794575178ea532a6dee00fbcdc5bb9ee2342f0959ba60b6bfcc.
