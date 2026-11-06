@@ -1,3 +1,45 @@
+# 2026-11-05 16:45 PST — `FUN_140532110` is an indirect +0x170 dispatcher through a distinct unaliased object chain
+
+## Primary report and verification scope
+
+Read-only user-run PyGhidra report `nvlddmkm-61742-booter-discovery-20261105-164522-801778.txt` (1,913 bytes; SHA-256 `194469dcde1c12c0c0d337bff2fec21db81d8c99040113cd4bd1047903d12436`). Target original NVIDIA Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, loaded Ghidra image base `0x140000000`. Single complete, unclipped decompilation of `FUN_140532110` and three DATA references; `STATUS=COMPLETE` for this bounded request, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. The report does not claim runtime dispatch execution, firmware provenance or actual hardware alteration.
+
+## Full function evidence
+
+Ghidra decompiles `FUN_140532110(longlong param_1, undefined8 param_2)` as reading an object pointer through `param_1 + 0x160`, then `+0xE8`, then **decimal 10000 = hex `0x2710`**:
+
+```c
+longlong receiver = *(longlong *)(*(longlong *)(*(longlong *)(param_1 + 0x160) + 0xe8) + 10000);
+if (receiver == 0) {
+    FUN_1400E0C90(0xE3467DC, 0x23C0000);
+    FUN_1401000C0(0x23C);
+    return 0x56;
+}
+return (**(code **)(receiver + 0x170))(param_1, receiver, param_2);
+```
+
+Previously verified instructions at `0x140532154..0x140532162` establish `MOV RAX,[RDX+0x170]`, `MOV R8,R9`, and `JMP qword ptr [0x140E02AA8]` after stack cleanup. This is a CFG-protected **tail transfer** to a function pointer on the derived receiver (not a normal subsequent `CALL` in this particular path). Ghidra printed warnings `Switch with 1 destination removed`, `Could not recover jumptable ...`, and `Treating indirect jump as call`; therefore, the decompiler's two-parameter inferred prototype and formal third callback argument `param_2` **are not definitive ABI proof**. The pre-tail `MOV R8,R9` is verified but its source value has not been backward sliced; the decompiler may have assigned a misleading parameter label. The return value from the transfer is not observed in a runtime test.
+
+Incoming references to `FUN_140532110`: `0x14140AA78`, `0x140E0A8E0`, `0x140E6AF10`; all reported as `DATA` rather than unconditional calls. Those reference sites have not yet been classified into concrete vtable/interface instances.
+
+## Critical identity boundary
+
+The known `0x9B0` Falcon HS dispatch is constructed via `FUN_1417E99B0` / `FUN_14056C510` and stored at `outer+0x108` (`embedded owner+0x18`). **No evidence shows that the receiver at `[[[param_1+0x160]+0xE8]+0x2710]` is the same instance.** An offset equality of `+0x170` across structs cannot close the alias, and this `0x56` null-object return must not be equated with the distinct not-supported fallback `FUN_140092D80` solely because it also returns `0x56`.
+
+`FUN_140BF3880` actual indirect invocation, the true third argument supplying its signed firmware image descriptor, production Windows signed Booter image/header/signatures, GA102/AD102 device-group selection, cryptographic acceptance and physical tensor issue-rate unlock remain **UNPROVEN**. This report neither demonstrates nor rules out the genuine Falcon invoker elsewhere in the binary.
+
+## Next bounded discriminating task
+
+Do **not** rerun the 2,445-hit `+0x170` scan or increase the 80-candidate cap. Inspect Ghidra's actual instructions immediately preceding `0x14053211E` (the `[RAX+0xE8]` object lookup), and the existing DATA references at `0x140E0A8E0`, `0x140E6AF10`, `0x14140AA78` for interface owner context. This is a hypothesis test for the receiver's type, not a runtime proof. If the object cannot be linked to the previously rooted Falcon instance, close/deprioritize this candidate and return to the Windows Booter signed-byte/descriptor-producer proof gate. Use the existing passive script, no new code/dependencies:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x14053211e"], "TRACE_DATA_SITES": ["0x140e0a8e0", "0x140e6af10", "0x14140aa78"], "__name__": "__main__"})
+```
+
+Existing separate recovery/process audit remains immutable. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. No GPU, UEFI, driver, ROM, firmware or Ghidra database mutation.
+
+---
+
 # 2026-11-05 16:37 PST — Four +0x170 guarded-transfer windows; direct Falcon dispatch object alias still not found
 
 ## Primary bounded evidence and result scope
