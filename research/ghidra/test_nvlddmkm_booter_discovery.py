@@ -202,5 +202,108 @@ class DecompilationCoverageTests(unittest.TestCase):
         self.assertIn('DECOMPILER_BEGIN entry=1401b0e00 clipped=False', lines)
         self.assertFalse(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in item for item in lines))
 
+
+class NestedReceiverCandidateTests(unittest.TestCase):
+    """Host-only regression tests for candidate matching, not live Ghidra proof."""
+
+    class _Insn:
+        def __init__(self, va, asm):
+            self.va, self.asm = va, asm
+
+        def getAddress(self):
+            return self.va
+
+        def getMnemonicString(self):
+            return self.asm.split()[0]
+
+        def __str__(self):
+            return self.asm
+
+    class _Fixture:
+        def __init__(self, asm):
+            self.instructions = [NestedReceiverCandidateTests._Insn(i + 1, x)
+                                 for i, x in enumerate(asm)]
+
+        def getListing(self):
+            return self
+
+        def getFunctionManager(self):
+            return self
+
+        def getMemory(self):
+            return self
+
+        def getInstructions(self, forward):
+            return iter(self.instructions)
+
+        def getInstructionAfter(self, address):
+            for index, instruction in enumerate(self.instructions):
+                if instruction.va == address:
+                    return self.instructions[index + 1] if index + 1 < len(self.instructions) else None
+            return None
+
+        def getFunctionContaining(self, address):
+            return self
+
+        def getBody(self):
+            return self
+
+        def contains(self, address):
+            return True
+
+        def getName(self):
+            return 'FUN_TEST_RECEIVER'
+
+        def getEntryPoint(self):
+            return 0x140000100
+
+        def getBlock(self, address):
+            return self
+
+        def isExecute(self):
+            return True
+
+    def _report(self, asm):
+        import time
+        lines = []
+        status = probe.scan_nested_receiver_candidates(
+            self._Fixture(asm), lines.append, time.monotonic() + 2)
+        return status, '\n'.join(lines)
+
+    def test_pointer_copy_then_nested_callback_field_is_candidate(self):
+        status, report = self._report([
+            'MOV RAX,qword ptr [RBX + 0x108]',
+            'MOV RDI,RAX',
+            'MOV RAX,qword ptr [RDI + 0x250]',
+            'CALL qword ptr [0x140e02aa8]'])
+        self.assertTrue(status)
+        self.assertIn('slot=0x250', report)
+        self.assertIn('nearby_transfer=True', report)
+        self.assertIn('potential_alias_only=True', report)
+
+    def test_call_clobber_prevents_false_alias(self):
+        _, report = self._report([
+            'MOV RAX,qword ptr [RBX + 0x108]',
+            'CALL qword ptr [0x140e02aa8]',
+            'MOV RAX,qword ptr [RAX + 0x170]'])
+        self.assertNotIn('RECEIVER_CANDIDATE', report)
+
+    def test_overwritten_register_prevents_false_alias(self):
+        _, report = self._report([
+            'MOV RAX,qword ptr [RBX + 0x108]',
+            'MOV RAX,RSI',
+            'MOV RCX,qword ptr [RAX + 0x170]'])
+        self.assertNotIn('RECEIVER_CANDIDATE', report)
+
+    def test_result_cap_is_partial(self):
+        with patch.object(probe, 'MAX_RECEIVER_RECORDED', 0):
+            status, report = self._report([
+                'MOV RAX,qword ptr [RBX + 0x108]',
+                'MOV RCX,qword ptr [RAX + 0x170]'])
+        self.assertFalse(status)
+        self.assertIn('capped=True', report)
+        self.assertIn('scan_complete=False', report)
+
+
 if __name__ == '__main__':
     unittest.main()

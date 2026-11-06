@@ -535,6 +535,557 @@ def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
     return complete
 
 
+
+# Pair existing nested-pointer load and callback-field instructions; only a heuristic.
+RECEIVER_LOAD_RE = re.compile(r'^MOV\s+(R[A-Z0-9]+),qword ptr \[(R[A-Z0-9]+)\s*\+\s*0x108\]
+    """Read at most four 64-byte initialized nonexecutable regions, without mutation."""
+    if (isinstance(sites, (str, bytes)) or not isinstance(sites, (list, tuple)) or
+            len(sites) > 4):
+        raise ValueError('TRACE_STATIC_BYTES requires at most four explicit addresses')
+    memory = program.getMemory()
+    complete = True
+    for raw in sites:
+        address = _address(program, int(str(raw), 0))
+        block = memory.getBlock(address)
+        if (block is None or not block.isInitialized() or block.isExecute() or
+                int(block.getEnd().getOffset()) - int(address.getOffset()) < 63):
+            log('STATIC_BYTES_UNAVAILABLE VA=%s reason=uninitialized_executable_or_short_block' % address)
+            complete = False
+            continue
+        try:
+            data = _memory_bytes(memory, address, 64)
+            if len(data) != 64:
+                raise ValueError('short static-byte read')
+        except Exception as exc:
+            log('STATIC_BYTES_UNAVAILABLE VA=%s error_type=%s' %
+                (address, type(exc).__name__))
+            complete = False
+            continue
+        log('STATIC_BYTES VA=%s length=64 interpretation=unknown' % address)
+        for offset in range(0, 64, 16):
+            chunk = data[offset:offset+16]
+            log('  STATIC_HEX offset=0x%02x data=%s' % (offset, chunk.hex()))
+        log('  STATIC_QWORD0_LE=0x%016x' % int.from_bytes(data[:8], 'little'))
+    return complete
+
+
+def decompilation_excerpt(code, terms, limit=MAX_DECOMP_CHARS):
+    """Extract bounded line-numbered evidence around requested C identifiers.
+
+    Returns (text, term_counts, truncated); no Ghidra DB interaction.
+    An excerpt is not complete control-flow or a complete decompilation.
+    """
+    if (isinstance(terms, str) or not isinstance(terms, (tuple, list)) or
+            not 0 < len(terms) <= 8 or
+            any(not isinstance(t, str) or not 3 <= len(t) <= 96 or
+                any(c in t for c in '\r\n') for t in terms)):
+        raise ValueError('DECOMP_FOCUS_TERMS requires 1..8 single-line strings of length 3..96')
+    if not 256 <= limit <= 65536:
+        raise ValueError('invalid excerpt size limit')
+    lines = code.splitlines()
+    indices = set()
+    counts = {}
+    capped_matches = False
+    for term in terms:
+        matches = [i for i, line in enumerate(lines) if term.casefold() in line.casefold()]
+        counts[term] = len(matches)
+        if len(matches) > 8:
+            capped_matches = True
+        for i in matches[:8]:
+            indices.update(range(max(0, i-5), min(len(lines), i+8)))
+    output = []
+    size = 0
+    prior = -2
+    clipped = capped_matches
+    for i in sorted(indices):
+        segment = ('... omitted lines ...\n' if i > prior + 1 else '') + ('L%d: %s\n' % (i+1, lines[i]))
+        if size + len(segment) > limit:
+            clipped = True
+            break
+        output.append(segment)
+        size += len(segment)
+        prior = i
+    return ''.join(output), counts, clipped
+
+
+def targeted_decompile(program, addresses, log):
+    if not addresses:
+        log('DECOMPILATION=SKIPPED no explicit TARGET_FUNCTIONS provided')
+        return True
+    if len(addresses) > MAX_TARGETS:
+        raise ValueError('too many explicit target addresses; limit=%d' % MAX_TARGETS)
+    from ghidra.app.decompiler import DecompInterface
+    from ghidra.util.task import TaskMonitor
+    decompiler = DecompInterface()
+    all_targets_completed = True
+    try:
+        if not decompiler.openProgram(program):
+            raise RuntimeError('decompiler failed to open program')
+        for value in addresses:
+            numeric = int(str(value), 0)
+            target = _address(program, numeric)
+            block = program.getMemory().getBlock(target)
+            if block is None or not block.isExecute():
+                raise ValueError('target address is not in an executable block: %s' % target)
+            fn = program.getFunctionManager().getFunctionContaining(target)
+            if fn is None:
+                log('TARGET_NOT_DEFINED VA=%s no Ghidra function; no creation attempted' % target)
+                all_targets_completed = False
+                continue
+            entry = fn.getEntryPoint()
+            log('TARGET_FUNCTION entry=%s name=%s supplied=%s' % (entry, fn.getName(), target))
+            n = 0
+            for ref in program.getReferenceManager().getReferencesTo(entry):
+                if n >= MAX_INCOMING_REFS:
+                    log('TARGET_INCOMING_REFS_TRUNCATED=true')
+                    break
+                log('  TARGET_CALLER from=%s kind=%s' % (ref.getFromAddress(), ref.getReferenceType()))
+                n += 1
+            result = decompiler.decompileFunction(fn, DECOMP_TIMEOUT_SECONDS, TaskMonitor.DUMMY)
+            if result is None or not result.decompileCompleted():
+                all_targets_completed = False
+                log('DECOMPILE_UNAVAILABLE entry=%s reason=%s' % (
+                    entry, result.getErrorMessage() if result is not None else 'null-result'))
+                continue
+            output = result.getDecompiledFunction()
+            code = str(output.getC()) if output is not None else ''
+            focus_terms = globals().get('DECOMP_FOCUS_TERMS', ())
+            if focus_terms:
+                excerpt, counts, truncated = decompilation_excerpt(code, focus_terms)
+                log('DECOMPILER_BEGIN entry=%s focus=True total_chars=%d excerpt_truncated=%s' % (
+                    entry, len(code), truncated))
+                for term, count in counts.items():
+                    log('FOCUS_TERM term=%r matches=%d' % (term, count))
+                log(excerpt)
+                if not any(counts.values()) or truncated:
+                    all_targets_completed = False
+                    log('FOCUS_INCOMPLETE=TRUE no selected evidence or some excerpts omitted')
+            else:
+                clipped = len(code) > MAX_DECOMP_CHARS
+                log('DECOMPILER_BEGIN entry=%s clipped=%s' % (entry, clipped))
+                log(code[:MAX_DECOMP_CHARS])
+                if clipped:
+                    all_targets_completed = False
+                    log('DECOMPILER_OUTPUT_INCOMPLETE=TRUE clipped C output; use DECOMP_FOCUS_TERMS')
+            log('DECOMPILER_END')
+    finally:
+        decompiler.dispose()
+    return all_targets_completed
+
+
+def main():
+    started = time.monotonic()
+    program = globals().get('currentProgram')
+    status = 'ERROR'
+    report_path = None
+    stream = None
+
+    def output(line=''):
+        line = str(line)
+        if stream is not None:
+            stream.write(line + '\n')
+        if line.startswith(('STATUS=', 'PROGRESS', 'SCAN_', 'CANDIDATE_FUNCTION_COUNT=', 'DECOMPILATION=', 'IDENTITY=')):
+            print(line)
+
+    try:
+        if program is None:
+            raise ValueError('currentProgram missing; pass state.getCurrentProgram() in exec namespace')
+        md5 = str(program.getExecutableMD5() or '').lower()
+        image_base = int(program.getImageBase().getOffset())
+        program_name = str(program.getName())
+        if md5 != EXPECTED_MD5 or image_base != EXPECTED_IMAGE_BASE or not program_name.lower().endswith('nvlddmkm.sys'):
+            raise ValueError('incorrect Ghidra program: name=%s MD5=%s base=0x%x' % (
+                program_name, md5, image_base))
+        report_dir = Path(globals().get('REPORT_DIR', DEFAULT_REPORT_DIR))
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / ('nvlddmkm-61742-booter-discovery-%s.txt' % datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
+        stream = report_path.open('x', encoding='utf-8', buffering=1)
+        output('STATUS=RUNNING')
+        output('IDENTITY=nvlddmkm.sys MD5=%s BASE=0x%x NAME=%s' % (md5, image_base, program_name))
+        output('MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES')
+        output('LIMIT=Loaded Ghidra address-space VAs, not raw PE file offsets')
+        output('LIMIT=Windows 617.42 architecture selection, source of firmware bytes, crypto acceptance and runtime use are NOT proven')
+        output('REFERENCE=Linux 615.78.08 kgspAllocateBooterLoadUcodeImage_IMPL -> kgspGetBinArchiveBooterLoadUcode_HAL -> bindataArchiveGetStorage; not assumed identical on Windows')
+        output('COMPARISON=610.43.03 versus 615.78.08 production Booter image+wrapper+signatures DIFFER; GSP boot image+descriptor identical')
+        scan = bool(globals().get('SCAN_STRINGS', True))
+        targets = globals().get('TARGET_FUNCTIONS', ())
+        if scan:
+            hits, counters, full = scan_memory(program, output, started + MAX_SCAN_SECONDS)
+            describe_references(program, hits, output)
+            status = 'COMPLETE' if full else 'PARTIAL'
+        else:
+            output('SCAN_STRINGS=SKIPPED_BY_CALLER')
+            status = 'COMPLETE'
+        if bool(globals().get('SCAN_CSV_LEADS', False)):
+            scan_known_string_references(program, output)
+        slot_displacement = globals().get('SCAN_SLOT_DISPLACEMENT', None)
+        if slot_displacement is not None and not scan_existing_slot_displacements(
+                program, slot_displacement, output, time.monotonic() + MAX_SCAN_SECONDS,
+                focus=globals().get('SLOT_SCAN_FOCUS', 'all')):
+            status = 'PARTIAL'
+            output('SLOT_SCAN_COMPLETE=FALSE; results incomplete or candidate cap reached')
+        if bool(globals().get('TRACE_NESTED_RECEIVER_CANDIDATES', False)):
+            if not scan_nested_receiver_candidates(program, output, time.monotonic() + MAX_RECEIVER_SECONDS):
+                status = 'PARTIAL'
+                output('SCAN_NESTED_RECEIVER_COMPLETE=FALSE; candidate cap or time budget reached')
+        static_sites = globals().get('TRACE_STATIC_BYTES', ())
+        if static_sites and not inspect_static_bytes(program, static_sites, output):
+            status = 'PARTIAL'
+            output('STATIC_BYTES_COMPLETE=FALSE; one or more regions unreadable')
+        instruction_sites = globals().get('TRACE_INSTRUCTION_SITES', ())
+        if instruction_sites and not inspect_instruction_sites(program, instruction_sites, output):
+            status = 'PARTIAL'
+            output('INSTRUCTION_SITES_COMPLETE=FALSE; one or more sites unavailable')
+        sites = globals().get('TRACE_DATA_SITES', ())
+        if sites and not inspect_data_reference_sites(program, sites, output):
+            status = 'PARTIAL'
+            output('DATA_SITES_COMPLETE=FALSE; unavailable or bounded references')
+        if not targeted_decompile(program, targets, output) and status == 'COMPLETE':
+            status = 'PARTIAL'
+            output('TARGETS_COMPLETE=FALSE; at least one requested function was undefined or could not be decompiled')
+        output('STOCK_WINDOWS_BOOTER_ORIGIN_PROVEN=FALSE')
+        output('AD102_GA102_RUNTIME_SELECTOR_PROVEN=FALSE')
+        output('FIRMWARE_SIGNATURE_AUTHENTICATED=FALSE')
+        output('HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE')
+    except KeyboardInterrupt:
+        status = 'PARTIAL'
+        output('INTERRUPTED=KeyboardInterrupt; report may be incomplete')
+    except Exception:
+        status = 'ERROR'
+        output('ERROR=' + traceback.format_exc())
+        print(traceback.format_exc())
+    finally:
+        output('ELAPSED_SECONDS=%.3f' % (time.monotonic() - started))
+        output('STATUS=%s REPORT=%s' % (status, report_path if report_path is not None else '<not-created>'))
+        if stream is not None:
+            stream.close()
+        print('STATUS=%s | REPORT=%s | ELAPSED=%.3fs' % (
+            status, report_path if report_path is not None else '<not-created>', time.monotonic() - started))
+    return status
+
+
+if __name__ == '__main__':
+    main()
+, re.I)
+RECEIVER_FIELD_RE = re.compile(r'\[\s*(R[A-Z0-9]+)\s*\+\s*0x(170|250)\]', re.I)
+RECEIVER_COPY_RE = re.compile(r'^MOV\s+(R[A-Z0-9]+),\s*(R[A-Z0-9]+)
+    """Read at most four 64-byte initialized nonexecutable regions, without mutation."""
+    if (isinstance(sites, (str, bytes)) or not isinstance(sites, (list, tuple)) or
+            len(sites) > 4):
+        raise ValueError('TRACE_STATIC_BYTES requires at most four explicit addresses')
+    memory = program.getMemory()
+    complete = True
+    for raw in sites:
+        address = _address(program, int(str(raw), 0))
+        block = memory.getBlock(address)
+        if (block is None or not block.isInitialized() or block.isExecute() or
+                int(block.getEnd().getOffset()) - int(address.getOffset()) < 63):
+            log('STATIC_BYTES_UNAVAILABLE VA=%s reason=uninitialized_executable_or_short_block' % address)
+            complete = False
+            continue
+        try:
+            data = _memory_bytes(memory, address, 64)
+            if len(data) != 64:
+                raise ValueError('short static-byte read')
+        except Exception as exc:
+            log('STATIC_BYTES_UNAVAILABLE VA=%s error_type=%s' %
+                (address, type(exc).__name__))
+            complete = False
+            continue
+        log('STATIC_BYTES VA=%s length=64 interpretation=unknown' % address)
+        for offset in range(0, 64, 16):
+            chunk = data[offset:offset+16]
+            log('  STATIC_HEX offset=0x%02x data=%s' % (offset, chunk.hex()))
+        log('  STATIC_QWORD0_LE=0x%016x' % int.from_bytes(data[:8], 'little'))
+    return complete
+
+
+def decompilation_excerpt(code, terms, limit=MAX_DECOMP_CHARS):
+    """Extract bounded line-numbered evidence around requested C identifiers.
+
+    Returns (text, term_counts, truncated); no Ghidra DB interaction.
+    An excerpt is not complete control-flow or a complete decompilation.
+    """
+    if (isinstance(terms, str) or not isinstance(terms, (tuple, list)) or
+            not 0 < len(terms) <= 8 or
+            any(not isinstance(t, str) or not 3 <= len(t) <= 96 or
+                any(c in t for c in '\r\n') for t in terms)):
+        raise ValueError('DECOMP_FOCUS_TERMS requires 1..8 single-line strings of length 3..96')
+    if not 256 <= limit <= 65536:
+        raise ValueError('invalid excerpt size limit')
+    lines = code.splitlines()
+    indices = set()
+    counts = {}
+    capped_matches = False
+    for term in terms:
+        matches = [i for i, line in enumerate(lines) if term.casefold() in line.casefold()]
+        counts[term] = len(matches)
+        if len(matches) > 8:
+            capped_matches = True
+        for i in matches[:8]:
+            indices.update(range(max(0, i-5), min(len(lines), i+8)))
+    output = []
+    size = 0
+    prior = -2
+    clipped = capped_matches
+    for i in sorted(indices):
+        segment = ('... omitted lines ...\n' if i > prior + 1 else '') + ('L%d: %s\n' % (i+1, lines[i]))
+        if size + len(segment) > limit:
+            clipped = True
+            break
+        output.append(segment)
+        size += len(segment)
+        prior = i
+    return ''.join(output), counts, clipped
+
+
+def targeted_decompile(program, addresses, log):
+    if not addresses:
+        log('DECOMPILATION=SKIPPED no explicit TARGET_FUNCTIONS provided')
+        return True
+    if len(addresses) > MAX_TARGETS:
+        raise ValueError('too many explicit target addresses; limit=%d' % MAX_TARGETS)
+    from ghidra.app.decompiler import DecompInterface
+    from ghidra.util.task import TaskMonitor
+    decompiler = DecompInterface()
+    all_targets_completed = True
+    try:
+        if not decompiler.openProgram(program):
+            raise RuntimeError('decompiler failed to open program')
+        for value in addresses:
+            numeric = int(str(value), 0)
+            target = _address(program, numeric)
+            block = program.getMemory().getBlock(target)
+            if block is None or not block.isExecute():
+                raise ValueError('target address is not in an executable block: %s' % target)
+            fn = program.getFunctionManager().getFunctionContaining(target)
+            if fn is None:
+                log('TARGET_NOT_DEFINED VA=%s no Ghidra function; no creation attempted' % target)
+                all_targets_completed = False
+                continue
+            entry = fn.getEntryPoint()
+            log('TARGET_FUNCTION entry=%s name=%s supplied=%s' % (entry, fn.getName(), target))
+            n = 0
+            for ref in program.getReferenceManager().getReferencesTo(entry):
+                if n >= MAX_INCOMING_REFS:
+                    log('TARGET_INCOMING_REFS_TRUNCATED=true')
+                    break
+                log('  TARGET_CALLER from=%s kind=%s' % (ref.getFromAddress(), ref.getReferenceType()))
+                n += 1
+            result = decompiler.decompileFunction(fn, DECOMP_TIMEOUT_SECONDS, TaskMonitor.DUMMY)
+            if result is None or not result.decompileCompleted():
+                all_targets_completed = False
+                log('DECOMPILE_UNAVAILABLE entry=%s reason=%s' % (
+                    entry, result.getErrorMessage() if result is not None else 'null-result'))
+                continue
+            output = result.getDecompiledFunction()
+            code = str(output.getC()) if output is not None else ''
+            focus_terms = globals().get('DECOMP_FOCUS_TERMS', ())
+            if focus_terms:
+                excerpt, counts, truncated = decompilation_excerpt(code, focus_terms)
+                log('DECOMPILER_BEGIN entry=%s focus=True total_chars=%d excerpt_truncated=%s' % (
+                    entry, len(code), truncated))
+                for term, count in counts.items():
+                    log('FOCUS_TERM term=%r matches=%d' % (term, count))
+                log(excerpt)
+                if not any(counts.values()) or truncated:
+                    all_targets_completed = False
+                    log('FOCUS_INCOMPLETE=TRUE no selected evidence or some excerpts omitted')
+            else:
+                clipped = len(code) > MAX_DECOMP_CHARS
+                log('DECOMPILER_BEGIN entry=%s clipped=%s' % (entry, clipped))
+                log(code[:MAX_DECOMP_CHARS])
+                if clipped:
+                    all_targets_completed = False
+                    log('DECOMPILER_OUTPUT_INCOMPLETE=TRUE clipped C output; use DECOMP_FOCUS_TERMS')
+            log('DECOMPILER_END')
+    finally:
+        decompiler.dispose()
+    return all_targets_completed
+
+
+def main():
+    started = time.monotonic()
+    program = globals().get('currentProgram')
+    status = 'ERROR'
+    report_path = None
+    stream = None
+
+    def output(line=''):
+        line = str(line)
+        if stream is not None:
+            stream.write(line + '\n')
+        if line.startswith(('STATUS=', 'PROGRESS', 'SCAN_', 'CANDIDATE_FUNCTION_COUNT=', 'DECOMPILATION=', 'IDENTITY=')):
+            print(line)
+
+    try:
+        if program is None:
+            raise ValueError('currentProgram missing; pass state.getCurrentProgram() in exec namespace')
+        md5 = str(program.getExecutableMD5() or '').lower()
+        image_base = int(program.getImageBase().getOffset())
+        program_name = str(program.getName())
+        if md5 != EXPECTED_MD5 or image_base != EXPECTED_IMAGE_BASE or not program_name.lower().endswith('nvlddmkm.sys'):
+            raise ValueError('incorrect Ghidra program: name=%s MD5=%s base=0x%x' % (
+                program_name, md5, image_base))
+        report_dir = Path(globals().get('REPORT_DIR', DEFAULT_REPORT_DIR))
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / ('nvlddmkm-61742-booter-discovery-%s.txt' % datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
+        stream = report_path.open('x', encoding='utf-8', buffering=1)
+        output('STATUS=RUNNING')
+        output('IDENTITY=nvlddmkm.sys MD5=%s BASE=0x%x NAME=%s' % (md5, image_base, program_name))
+        output('MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES')
+        output('LIMIT=Loaded Ghidra address-space VAs, not raw PE file offsets')
+        output('LIMIT=Windows 617.42 architecture selection, source of firmware bytes, crypto acceptance and runtime use are NOT proven')
+        output('REFERENCE=Linux 615.78.08 kgspAllocateBooterLoadUcodeImage_IMPL -> kgspGetBinArchiveBooterLoadUcode_HAL -> bindataArchiveGetStorage; not assumed identical on Windows')
+        output('COMPARISON=610.43.03 versus 615.78.08 production Booter image+wrapper+signatures DIFFER; GSP boot image+descriptor identical')
+        scan = bool(globals().get('SCAN_STRINGS', True))
+        targets = globals().get('TARGET_FUNCTIONS', ())
+        if scan:
+            hits, counters, full = scan_memory(program, output, started + MAX_SCAN_SECONDS)
+            describe_references(program, hits, output)
+            status = 'COMPLETE' if full else 'PARTIAL'
+        else:
+            output('SCAN_STRINGS=SKIPPED_BY_CALLER')
+            status = 'COMPLETE'
+        if bool(globals().get('SCAN_CSV_LEADS', False)):
+            scan_known_string_references(program, output)
+        slot_displacement = globals().get('SCAN_SLOT_DISPLACEMENT', None)
+        if slot_displacement is not None and not scan_existing_slot_displacements(
+                program, slot_displacement, output, time.monotonic() + MAX_SCAN_SECONDS,
+                focus=globals().get('SLOT_SCAN_FOCUS', 'all')):
+            status = 'PARTIAL'
+            output('SLOT_SCAN_COMPLETE=FALSE; results incomplete or candidate cap reached')
+        static_sites = globals().get('TRACE_STATIC_BYTES', ())
+        if static_sites and not inspect_static_bytes(program, static_sites, output):
+            status = 'PARTIAL'
+            output('STATIC_BYTES_COMPLETE=FALSE; one or more regions unreadable')
+        instruction_sites = globals().get('TRACE_INSTRUCTION_SITES', ())
+        if instruction_sites and not inspect_instruction_sites(program, instruction_sites, output):
+            status = 'PARTIAL'
+            output('INSTRUCTION_SITES_COMPLETE=FALSE; one or more sites unavailable')
+        sites = globals().get('TRACE_DATA_SITES', ())
+        if sites and not inspect_data_reference_sites(program, sites, output):
+            status = 'PARTIAL'
+            output('DATA_SITES_COMPLETE=FALSE; unavailable or bounded references')
+        if not targeted_decompile(program, targets, output) and status == 'COMPLETE':
+            status = 'PARTIAL'
+            output('TARGETS_COMPLETE=FALSE; at least one requested function was undefined or could not be decompiled')
+        output('STOCK_WINDOWS_BOOTER_ORIGIN_PROVEN=FALSE')
+        output('AD102_GA102_RUNTIME_SELECTOR_PROVEN=FALSE')
+        output('FIRMWARE_SIGNATURE_AUTHENTICATED=FALSE')
+        output('HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE')
+    except KeyboardInterrupt:
+        status = 'PARTIAL'
+        output('INTERRUPTED=KeyboardInterrupt; report may be incomplete')
+    except Exception:
+        status = 'ERROR'
+        output('ERROR=' + traceback.format_exc())
+        print(traceback.format_exc())
+    finally:
+        output('ELAPSED_SECONDS=%.3f' % (time.monotonic() - started))
+        output('STATUS=%s REPORT=%s' % (status, report_path if report_path is not None else '<not-created>'))
+        if stream is not None:
+            stream.close()
+        print('STATUS=%s | REPORT=%s | ELAPSED=%.3fs' % (
+            status, report_path if report_path is not None else '<not-created>', time.monotonic() - started))
+    return status
+
+
+if __name__ == '__main__':
+    main()
+, re.I)
+RECEIVER_REGISTER_DEST_RE = re.compile(r'^(?:MOV|LEA|XOR|ADD|SUB|AND|OR|SHL|SHR|SAR|IMUL|POP)\s+(R[A-Z0-9]+)\s*[, ]', re.I)
+MAX_RECEIVER_SECONDS = 40
+MAX_RECEIVER_LOOKAHEAD = 36
+MAX_RECEIVER_RECORDED = 48
+
+
+def _receiver_field_step(asm, aliases):
+    """Track simple MOV aliases; neither alias nor branch reachability is proven."""
+    if asm.upper().startswith('CALL '):
+        aliases.difference_update(('RAX', 'RCX', 'RDX', 'R8', 'R9', 'R10', 'R11'))
+        return None
+    matched = RECEIVER_FIELD_RE.search(asm)
+    field = int(matched.group(2), 16) if matched and matched.group(1).upper() in aliases else None
+    copy = RECEIVER_COPY_RE.match(asm)
+    if copy:
+        dst, src = copy.group(1).upper(), copy.group(2).upper()
+        if src in aliases:
+            aliases.add(dst)
+        else:
+            aliases.discard(dst)
+    else:
+        destination = RECEIVER_REGISTER_DEST_RE.match(asm)
+        if destination:
+            aliases.discard(destination.group(1).upper())
+    return field
+
+
+def scan_nested_receiver_candidates(program, log, deadline):
+    """Bounded forward pairs of [object+0x108] and [pointer+0x170/+0x250].
+
+    Candidate evidence only: no exact Falcon receiver, invocation or Booter proven.
+    """
+    listing = program.getListing()
+    functions = program.getFunctionManager()
+    memory = program.getMemory()
+    examined = 0
+    seeds = 0
+    matches = 0
+    recorded = 0
+    timed_out = False
+    log('SCAN_NESTED_RECEIVER_BEGIN seed=read_qword_at_0x108 slots=0x170,0x250 lookahead=%d budget_seconds=%d max_recorded=%d' % (
+        MAX_RECEIVER_LOOKAHEAD, MAX_RECEIVER_SECONDS, MAX_RECEIVER_RECORDED))
+    for instruction in listing.getInstructions(True):
+        examined += 1
+        if examined % 1024 == 0 and time.monotonic() > deadline:
+            timed_out = True
+            break
+        if str(instruction.getMnemonicString()).upper() != 'MOV':
+            continue
+        seed_asm = str(instruction)
+        start = RECEIVER_LOAD_RE.match(seed_asm)
+        if start is None:
+            continue
+        block = memory.getBlock(instruction.getAddress())
+        if block is None or not block.isExecute():
+            continue
+        fn = functions.getFunctionContaining(instruction.getAddress())
+        if fn is None:
+            continue
+        seeds += 1
+        aliases = {start.group(1).upper()}
+        cursor = instruction
+        for distance in range(1, MAX_RECEIVER_LOOKAHEAD + 1):
+            cursor = listing.getInstructionAfter(cursor.getAddress())
+            if cursor is None or not fn.getBody().contains(cursor.getAddress()):
+                break
+            field_asm = str(cursor)
+            slot = _receiver_field_step(field_asm, aliases)
+            if slot is None:
+                continue
+            matches += 1
+            nearby_transfer = False
+            follower = cursor
+            for _ in range(8):
+                follower = listing.getInstructionAfter(follower.getAddress())
+                if follower is None or not fn.getBody().contains(follower.getAddress()):
+                    break
+                if str(follower.getMnemonicString()).upper() in ('CALL', 'JMP'):
+                    nearby_transfer = True
+                    break
+            if recorded < MAX_RECEIVER_RECORDED:
+                recorded += 1
+                log('RECEIVER_CANDIDATE seed_va=%s seed_asm=%s field_va=%s field_asm=%s slot=0x%x distance=%d nearby_transfer=%s function=%s(%s) potential_alias_only=True' % (
+                    instruction.getAddress(), seed_asm, cursor.getAddress(), field_asm,
+                    slot, distance, nearby_transfer, fn.getName(), fn.getEntryPoint()))
+    capped = matches > recorded
+    log('SCAN_NESTED_RECEIVER_END examined_instructions=%d seeds=%d matched_fields=%d recorded=%d capped=%s timed_out=%s scan_complete=%s' % (
+        examined, seeds, matches, recorded, capped, timed_out, not (timed_out or capped)))
+    log('SCAN_NESTED_RECEIVER_LIMIT=Linear register-copy heuristic; no control-flow or same-receiver proof; may miss indirect aliases and outer+0xf0->+0x18')
+    return not (timed_out or capped)
+
+
 def inspect_static_bytes(program, sites, log):
     """Read at most four 64-byte initialized nonexecutable regions, without mutation."""
     if (isinstance(sites, (str, bytes)) or not isinstance(sites, (list, tuple)) or
