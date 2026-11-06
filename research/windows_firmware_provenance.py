@@ -53,6 +53,33 @@ def _hash_region(handle, start, length):
     return digest.hexdigest()
 
 
+
+def _ucodes_header(path, file_size):
+    """Read only the 24-byte NVUCODES container header, never its payload.
+
+    Layout is NVIDIA 615.78.08 bin_data_pvt.h BINDATA_UCODES_BIN_HEADER.
+    numEntries is a build-time capacity, NOT a verified number of records in
+    this particular Windows file, and fingerprint is NOT compared with GSP.
+    """
+    with path.open("rb") as handle:
+        header = handle.read(24)
+    if file_size < 24 or len(header) != 24:
+        return {"format": "too_short_for_nvucodes_header",
+                "note": "No assumption about archive contents"}
+    magic, version, entry_capacity, fingerprint = struct.unpack("<QIIQ", header)
+    if magic != 0x5345444F4355564E:  # b"NVUCODES" on disk
+        return {"format": "unrecognized_ucodes_header",
+                "first_8_bytes_hex": header[:8].hex(),
+                "note": "No unsupported format is parsed as NVUCODES"}
+    result = {"format": "nvucodes_v1" if version == 1 else "nvucodes_unsupported_version",
+              "magic": "NVUCODES", "version": version,
+              "declared_possible_entry_count": entry_capacity,
+              "fingerprint_hex": "0x%016x" % fingerprint,
+              "note": "Header only; possible-entry count is not a record listing; "
+                      "fingerprint pairing with GSP and signed Booter presence NOT proven"}
+    return result
+
+
 def _elf_sections(path, file_size):
     """Record only signature/fwimage *section metadata*, not image contents.
 
@@ -151,6 +178,10 @@ def inventory(roots, expected_md5, max_files):
                         item["gsp_elf_sections"] = _elf_sections(path, item["size"])
                         if path.stat().st_size != item["size"]:
                             raise ValueError("GSP file size changed while parsing ELF metadata")
+                    if path.name.casefold().startswith("ucodes_") and path.name.lower().endswith(".bin"):
+                        item["ucodes_header"] = _ucodes_header(path, item["size"])
+                        if path.stat().st_size != item["size"]:
+                            raise ValueError("UCODES file size changed while reading header")
                 except (OSError, ValueError, struct.error) as exc:
                     item["error"] = str(exc)
                     problems.append({"path": str(path), "error": str(exc)})
@@ -180,7 +211,7 @@ def inventory(roots, expected_md5, max_files):
                       "gpu_architecture_selection_proven": False,
                       "signature_cryptographically_verified": False,
                       "hardware_modified": False},
-            "scope": "Hashes and selected plain-ELF section metadata only; no archive parser or runtime trace"}
+            "scope": "Hashes, plain-ELF section metadata and 24-byte NVUCODES headers only; no archive record parser or runtime trace"}
 
 
 def main(argv=None):
