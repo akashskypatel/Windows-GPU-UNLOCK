@@ -1,3 +1,25 @@
+# 2026-11-06 14:42 PST — Low-level Falcon read accessor return established; wrapper ABI still to verify
+
+## Report identity and evidence boundary
+
+User-supplied read-only Ghidra output `nvlddmkm-61742-booter-discovery-20261106-144233-698600.txt`, 7,307 bytes, SHA-256 `cb2cdc089c4487f0a2b5528ab90da74cfb79f007fd25004f2db549e93802f1b6` (258 logical text lines), for Windows 617.42 original `nvlddmkm.sys`, MD5 `3fb9afac9d0e394723e830aa14e60512`, loaded image base `0x140000000`. Call: `SCAN_STRINGS=False`, `TARGET_FUNCTIONS=[0x140126650]`, `TRACE_INSTRUCTION_SITES=[0x1406b63f0,0x140bf2d29,0x140bf2d3d]`. `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.264`, single decompilation `clipped=False`, all three bounded instruction sites returned, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. `TARGET_INCOMING_REFS_TRUNCATED=true` limits only the listed incoming references, not the function-body decompilation. Evidence is static, with no claim of a live GPU register read.
+
+## Exact return-producing accessor body
+
+`FUN_140126650(longlong *param_1,undefined4 param_2,undefined4 param_3,undefined4 param_4,undefined8 param_5)` **does return** `ulonglong uVar4`. If `param_1` is null, `uVar4=0x3D`. On other paths it derives a context from `*param_1`, tests availability through fields `+0x9AB`, `+0x21F0` and a nested `+0x288`, and can obtain another object using `FUN_1403042C0`. It selects result-producing operations including `FUN_1401253F0`/`local_48`, conditional `FUN_140304880(...)`, `FUN_1400EB3D0(context, object, param_4)`, and an indirect CFG-guarded function pointer at `[lVar5+0x58]` invoked with `param_4`; there are error/fallback values such as `0xD0D0D0D0`. The function returns `uVar4` at the end; this demonstrates a general lower-level, value-returning access helper, not proven physical MMIO or a signed-blob operation. The numerous direct incoming caller references (list capped at 24) also do not make this a Booter-specific routine.
+
+## Wrapper return ABI: strong evidence, not complete epilogue proof
+
+Previous `FUN_1406B63F0` complete decompilation rendered a `void` function which ends with a call to `FUN_140126650(param_1+0x4410, index, 0, *(int*)(param_2+0x420)+offset, 0)`; today the callee is proven value-returning. The current machine sites show `0x140BF2D29 CALL 0x1406B63F0` followed at `0x140BF2D3A MOV R14D,EAX` (intervening register setup instructions do not write `EAX`), and `0x140BF2D3D CALL 0x1406B63F0` followed immediately at `0x140BF2D42 MOV R13D,EAX`. This independently supports that the diagnostic caller **expects** a numeric return from the wrapper. Whether the wrapper preserves `RAX/EAX` from the final callee through *all relevant epilogues* is NOT directly shown, because `TRACE_INSTRUCTION_SITES=0x1406B63F0` captures its entry prologue rather than its end. Do not silently override the Ghidra prototype or claim full ABI proof. An exact final-call/epilogue machine trace could close this minor discrepancy.
+
+## Significance for the 0x250 lead and main investigation
+
+The 14:33 decompilation proved the numeric `0x250` immediate in `FUN_140BF2B30` is a third argument to `FUN_1406B63F0`, which computes a low-level read offset and now has a definitively value-returning callee. This **does not** alias the separately registered nested Falcon callback slot `[R9+0x250]` holding `FUN_140BF2740` and supplies no signed Booter image/header/signature bytes, no actual overlay-to-loader descriptor flow, and no nested `+0x250` or `+0x170` invocation. The primary P0 remains receiver-specific tracing from constructor chain `FUN_14179E530 -> FUN_141752AA0` and published nested pointer at `outer+0x108`, plus writer provenance of signature transform inputs at `param_2+0x308..+0x338` and loader's signed third-argument descriptor. Linux 615.78.08 signed Booter archive is reference only, not a proven stock Windows source.
+
+**Gate status:** `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. No physical action and no Ghidra mutation; previous chronological notes remain unchanged below.
+
+---
+
 # 2026-11-06 14:37 PST — Diagnostic callback +0x218 proven; register-read wrapper narrowed
 
 ## Input identity and completion boundary
