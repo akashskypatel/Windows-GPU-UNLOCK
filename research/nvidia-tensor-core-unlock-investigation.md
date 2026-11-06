@@ -1,3 +1,47 @@
+# 2026-11-06 09:39 PST — Windows 617.42 Falcon HS loader +0x170 assignment: same R9 destination as +0x130 reset callback
+
+## Primary evidence: bounded machine instruction windows
+
+User-run `nvlddmkm-61742-booter-discovery-20261106-093943-217331.txt`, SHA-256 `e427cc0811e124ae56aae7e51d5b0118d52ca86a1fbcd39a0651d910535ed494`, original Windows NVIDIA 617.42 `nvlddmkm.sys` Ghidra MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. Requested instruction sites `0x1417E8E3E`, `0x1417E8E45`, `0x1417E8EDA`; all resolved within existing `FUN_1417E8550`. `SCAN_STRINGS=SKIPPED_BY_CALLER`; `DECOMPILATION=SKIPPED`; `ELAPSED_SECONDS=0.013`; final `STATUS=COMPLETE`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. This status applies to three local instruction windows, **not** a complete path-sensitive enumeration of `FUN_1417E8550`, a runtime invocation or firmware authentication.
+
+## Exact register-relative HS loader assignment and selectors
+
+```asm
+0x1417E8E0D  MOV qword ptr [R9 + 0x160],RAX
+0x1417E8E14  MOV EAX,R8D
+0x1417E8E17  AND EAX,0xFFFFFFE0
+0x1417E8E1A  CMP EAX,0x40
+0x1417E8E20  JNZ 0x1417E8E9C
+0x1417E8E22  AND EAX,0x1F
+0x1417E8E25  DEC EAX
+0x1417E8E27  CMP EAX,0x6
+0x1417E8E2A  JA 0x1417E8EC3
+0x1417E8E30  LEA RAX,[0x140BF5ED0]
+0x1417E8E37  MOV qword ptr [R9 + 0x168],RAX
+0x1417E8E3E  LEA RAX,[0x140BF3880]
+0x1417E8E45  MOV qword ptr [R9 + 0x170],RAX
+```
+
+The sequential `+0x168` then `+0x170` assignments are directly reachable on the branch with `(R8D & 0xFFFFFFE0)==0x40` and `1 <= (R8D & 0x1F) <= 7`; low-five-bit values outside this range jump to `0x1417E8EC3` rather than taking the shown first assignment path. Note `R8D` is an instruction-level selector; exact physical AD102/GA102 runtime mapping is not proven.
+
+A separately captured ingress at `0x1417E8EDA` first compares `(R8D & 0xFFFFFFE0)` to `0x20`, and `JNZ 0x1417E8E3E` routes to the **same HS loader assignment** from that location; the preceding branch may install one of `FUN_140BF7E10` or `FUN_140BF5ED0` at `[R9+0x168]`. The exact conditions for reaching this ingress, including all earlier return/jump targets and the downstream `0x20` subgroup behavior, are not established by these windows. Do not report the `+0x170` target as globally selected for all non-`0x20` groups.
+
+## Relationship to previous +0x130 result
+
+Prior independent report `nvlddmkm-61742-booter-discovery-20261106-093536-300196.txt` shows `FUN_1417E8550` assigns either `FUN_1406B8BA0` or `FUN_140BF4F00` at **`[R9+0x130]`** under a different selector. The current report proves that the **same function** uses `[R9+0x170]` for `FUN_140BF3880` and `[R9+0x168]` for an adjacent callback. This closes the register-relative *shared destination in the initializer*, a useful direct static link between callback registration operations. It does **not** by itself trace `R9` to the exact outer+0x108-published nested 0x9B0 object on every runtime path; the earlier constructor/initializer call chain supports the object family, not a live object instance or callback invocation.
+
+## Next narrow static review and remaining proof obligations
+
+Inspect only the still-unreviewed alternate branch windows in the same initializer at `0x1417E8E9C`, `0x1417E8EE9`, `0x1417E8EEC`, and `0x1417E8F05`, to distinguish fallback assignment, entry path and selector ranges. Run existing script read-only, no whole-image scan:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x1417e8e9c", "0x1417e8ee9", "0x1417e8eec", "0x1417e8f05"], "__name__": "__main__"})
+```
+
+Then stop collecting registration windows unless the branch ambiguity is relevant to proving an actual callsite. The principal OPEN path remains tracing an **indirect invoker of the actual nested Falcon dispatch instance**, its `FUN_140BF3880` third-argument production HS descriptor, and concrete Windows signed Booter IMAGE/header/signature/patch bytes. No actual device selector value, signature verification, per-GPU boot path, active unlock, or physical recovery has been demonstrated. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`; immutable recovery audit unchanged. The stable investigation and active execution-map filenames are updated **in place**; no numbered copies.
+
+---
+
 # 2026-11-06 09:35 PST — GA102 Falcon reset/wait callback slot +0x130 registered in Windows 617.42 dispatch initializer
 
 ## New machine-level result from exact user-run report

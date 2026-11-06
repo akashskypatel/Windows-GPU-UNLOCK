@@ -1,3 +1,13 @@
+# 2026-11-06 09:39 PST — Exact same R9 callback destination for HS loader +0x170
+
+User attachment `nvlddmkm-61742-booter-discovery-20261106-093943-217331.txt`, SHA-256 `e427cc0811e124ae56aae7e51d5b0118d52ca86a1fbcd39a0651d910535ed494`, correct 617.42 driver MD5 `3fb9afac9d0e394723e830aa14e60512`. Three local instruction sites resolved inside `FUN_1417E8550`, final `STATUS=COMPLETE`, `DECOMPILATION=SKIPPED`, elapsed 0.013 seconds, no Ghidra DB or hardware changes.
+
+**Proven:** `0x1417E8E3E LEA RAX,[0x140BF3880]`, `0x1417E8E45 MOV [R9+0x170],RAX`; same initializer previously directly wrote reset/wait callback `FUN_140BF4F00` or `FUN_1406B8BA0` to `[R9+0x130]`. In the captured direct group-`0x40` branch, low-five-bit selector 1..7 first writes `FUN_140BF5ED0` to `[R9+0x168]`, then `FUN_140BF3880` to `[R9+0x170]`. `0x1417E8EDA JNZ 0x1417E8E3E` also joins the loader registration when the visible predicate's upper group differs from `0x20` *and this specific ingress is reached*. Complete selector coverage and physical GPU mapping are NOT proven. This strengthens shared dispatch initializer register identity; no runtime invocation or source bytes.
+
+Next bounded `TRACE_INSTRUCTION_SITES=["0x1417e8e9c","0x1417e8ee9","0x1417e8eec","0x1417e8f05"]` only if closing selector/fallback conditions; afterward trace actual published nested object consumer and HS loader argument-3 producer. No new versioned docs, no mutation, all active gates false.
+
+---
+
 # 2026-11-06 09:35 PST — Exact Falcon reset/wait registration slot established at +0x130
 
 New user-run read-only instruction report: `nvlddmkm-61742-booter-discovery-20261106-093536-300196.txt`, SHA-256 `0ae8f74d9a4bc08442418f42d65e65a56679ffe0434e5bba3e1e2e046d5aea5d`; driver MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; final `STATUS=COMPLETE`, `DECOMPILATION=SKIPPED`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`, elapsed `0.045` sec. The prior callout "exact registered slot must be checked" is **CLOSED (STATIC)** for this callback only.
