@@ -1,3 +1,11 @@
+# 2026-11-06 12:43 PST — PAGEdBIN mapped data section verified, exact XREF owner identified
+
+User Ghidra PE listing and uploaded `pagedbin-block-metadata.txt`, SHA-256 `7081cd72e8a168a4cc0027adf4cb76fc12a1f69efb52c8cb2e6b2f5e156c43af`. Section header `0x140000670`, name `PAGEdBIN`, PE `VirtualSize=0xFD40`, `SizeOfRawData=0xFE00`, `PointerToRawData=0x06C6A400`, `VirtualAddress=0x06D01000`, `Characteristics=0xC0000040`. Actual mapped Ghidra block `0x146D01000..0x146D10FFF`, size 65536, initialized, readable/writable, **not executable**. PE raw/virtual sizes are distinct from mapped block length; Ghidra instruction text beginning `OR AL,0x0` at section start is not runtime code evidence. This closes mapped-block existence/attributes, not image identity.
+
+One header reference at `0x14000067C` and two same-function XREFs to start `0x146D01000`: `FUN_140A74E50:0x140A74EBB` and `FUN_140A74E50:0x140A74ECD`. **New narrowly grounded read-only lead:** decompile `FUN_140A74E50` and trace these two instructions; classify exact section consumer before further data scans. No proof of embedded signed Booter, descriptor source, actual Falcon callback invocation, physical GA102/AD102 selection or signature acceptance. All hardware gates false; stable docs updated in place; immutable audit untouched.
+
+---
+
 # 2026-11-06 12:43 PST — +0x168 callback pair fully decompiled; exported comments are mostly Ghidra-generated
 
 `nvlddmkm-61742-booter-discovery-20261106-124302-396219.txt`, SHA-256 `6093ba7017d0f4da50786569287101091705d264e8fed7d4e34fb572fca9ca44`, driver MD5 `3fb9afac9d0e394723e830aa14e60512`; both `FUN_140BF5ED0` and `FUN_140BF7E10` have `clipped=False` complete decompilation, `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.264`, no Ghidra/driver/GPU changes. Both call the same register-style backend `FUN_1406B6470(param_1,param_2,0x110,(param_3>>8)&0xFFFFFFFF)` and, when `FUN_1402E8360(param_1,param_2)>0x5F`, write `0x128` with `(param_3>>40)&0x1FFFF` versus `(param_3>>40)&0x1FF`. Direct HS descriptor/producer/callback-invoker lead **CLOSED (STATIC)**. `param_3` is used as a packed integer here, distinct from the *third-argument signed descriptor of `FUN_140BF3880`*. Existing inbound references are DATA, not CALL.

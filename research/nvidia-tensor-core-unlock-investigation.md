@@ -1,3 +1,34 @@
+# 2026-11-06 12:43 PST — PAGEdBIN PE section confirmed with two exact source-code references; payload identity open
+
+## Source and byte-level / mapped-memory evidence
+
+Primary user-supplied Ghidra disassembly/PE-section-header excerpt at VA `0x140000670` plus user-run uploaded `pagedbin-block-metadata.txt` (SHA-256 `7081cd72e8a168a4cc0027adf4cb76fc12a1f69efb52c8cb2e6b2f5e156c43af`), containing exactly `BLOCK_COUNT=1`, `BLOCK=PAGEdBIN START=146d01000 END=146d10fff SIZE=65536 INITIALIZED=True R=True W=True X=False`. Ghidra script output was supplied verbatim; the local upload was independently read. The PE listing shows section name `PAGEdBIN` in the 8-byte header at `0x140000670`, `VirtualSize=0xFD40` (64,832 bytes), `VirtualAddress=0x06D01000` (image virtual start `0x146D01000` with pinned base `0x140000000`), `SizeOfRawData=0xFE00` (65,024 bytes), `PointerToRawData=0x06C6A400`, and `Characteristics=0xC0000040` (initialized data, readable, writable, not executable).
+
+This **closes the prior unknown "does PAGEdBIN exist as a mapped section?"**: yes, one section, 64 KiB mapped at `0x146D01000..0x146D10FFF`, initialized and R/W not X. Its mapped length is section-aligned, **not** a proven payload length; the distinct PE `VirtualSize=0xFD40` and raw size `0xFE00` must be preserved when interpreting offsets/hashes. A section name containing `BIN` is **not** evidence of an NVIDIA Booter bindata archive, image signature or live secure firmware stage. `PAGEdBIN` start bytes `0C 00 00 00` appear as `OR AL,0x0` and `ADD byte ptr [RAX],AL` in Ghidra's auto-disassembly, but because this block has `X=False`, these are **not** justified as executed instructions and may instead be structured data; their meaning is unknown without a producer/consumer trace.
+
+## Concrete high-priority function lead
+
+Ghidra's listing gives three references to the mapped section **start** `0x146D01000`:
+- PE header `0x14000067C`, a pointer/section metadata field, **not code use**;
+- `FUN_140A74E50:0x140A74EBB`, existing function code/data reference;
+- `FUN_140A74E50:0x140A74ECD`, second existing code/data reference.
+
+These two same-function references are now a **narrow, grounded candidate** for identifying how the section start is consumed. It is **not yet known** whether this code parses a header, copies a compressed blob, checks security signatures, registers a resource, or is unrelated to the HS Booter. Ghidra XREF markers alone do not prove actual runtime use, a particular GPU branch or source bytes fed into `FUN_140BF3880`.
+
+## Next read-only action and falsifiable stop conditions
+
+Inspect the **existing** `FUN_140A74E50` body and both reference instructions with the existing bounded PyGhidra script, avoiding a whole-image scan, any memory write, or dynamic execution:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140a74e50"], "TRACE_INSTRUCTION_SITES": ["0x140a74ebb", "0x140a74ecd"], "__name__": "__main__"})
+```
+
+Classify the references as pointer use, header/length access, memory copy, resource registration or unrelated operation, and trace only genuinely relevant dataflow. If `FUN_140A74E50` shows a trivial table or unrelated buffer consumer, close this `PAGEdBIN` Booter-source hypothesis instead of scanning the entire block. If an actual concrete firmware producer emerges, record its exact source+size and call edge before making any Booter claim. The primary independent P0 gap remains **actual invoker through the published nested 0x9B0 Falcon dispatch instance and production Windows 617.42 signed Booter image/header/signature/patch descriptor provided to `FUN_140BF3880`**. The two prior `+0x168` register callbacks remain closed as direct descriptor-producer leads.
+
+No active GPU/driver/firmware/EFI/Ghidra DB modifications; `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Amend stable investigation and plan files in place and prepend evidence; immutable recovery audit unchanged.
+
+---
+
 # 2026-11-06 12:43 PST — +0x168 Falcon callbacks classified; Ghidra Comments.csv supplies PE-section lead only
 
 ## Primary uploads and scope
