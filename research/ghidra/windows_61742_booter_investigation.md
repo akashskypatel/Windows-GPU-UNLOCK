@@ -1,3 +1,15 @@
+# 2026-11-06 13:05 PST — PAGEdBIN callback +0x148 registered, PAGErGEN 79.45 MiB PE section lead
+
+User-run file `nvlddmkm-61742-booter-discovery-20261106-130501-043021.txt`, SHA-256 `863dced885466ef8ab2b50cbb6864f9f72199b692626a960a7872257b8b948d9`, four local code instruction sites and four 64-byte initialized non-executable PAGEdBIN samples, driver MD5 `3fb9afac9d0e394723e830aa14e60512`, final `STATUS=COMPLETE`, `DECOMPILATION=SKIPPED`, no DB/GPU changes. `FUN_14179DE70` writes callback `FUN_140A74E50` to `[R8+0x148]` at `0x14179DF28/2F` and `0x14179DFAE/B5` on condition-dependent paths. Adjacent `[R8+0x140]=FUN_140A74CA0` (or fallback `FUN_1400061B0`) and `[R8+0x150]=FUN_140A74FA0` are exposed. The exact selector dataflow, runtime invoker and object alias with separate `FUN_1417E8550` HS dispatch `[R9+0x170]` are unknown. No direct calls established.
+
+PAGEdBIN `0x146D01000`: first four LE qwords each 12, `+0x30` repeats `0xDEADBEEF` four times, `+0x20` opaque bytes; three other 64-byte samples at `0x146D01DE0`, `0x146D046A0`, `0x146D05AA0` apparently high entropy but **no verified format/signature interpretation**.
+
+User pasted PE header sections `Pasted text(1).txt`, SHA-256 `243ea7ef5cfdb0da11616f6463a5b5416185d1450f93386a7a2f4bbae116852f`: **PAGErGEN** is separate large **79.45 MiB** initialized readable non-executable section `0x141D8C000 .. 0x146D00017` (PE raw `0x4F74200`, virtual `0x4F74018`, char `0x40000040`); **PAGEdBIN** virtual `0xFD40`, R/W non-X. Neighbor PE layout is not a proven Booter archive; PAGErGEN loaded block and content not yet verified.
+
+Next one read-only bounded run: `TARGET_FUNCTIONS=["0x14179de70","0x140a74ca0","0x140a74fa0"]`, `TRACE_STATIC_BYTES=["0x141d8c000"]`, `SCAN_STRINGS=False`. Confirm interface role and reject unrelated table paths; do not turn 64-byte sample or physical section size into firmware provenance. Active gate flags all false, recovery unverified; audit unchanged, stable docs in place.
+
+---
+
 # 2026-11-06 13:00 PST — PAGEdBIN fixed/conditional section pointers exposed by FUN_140A74E50
 
 User-run `nvlddmkm-61742-booter-discovery-20261106-130011-003670.txt`, SHA-256 `bf8481618b29cc16182e818a12624e0a980331cb0eb25ac8ac5c29163808699c`, original 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`. Full `FUN_140A74E50` decompilation `clipped=False` plus exact `0x140A74EBB` and `0x140A74ECD` machine windows, final `STATUS=COMPLETE`, no driver/DB/GPU writes.

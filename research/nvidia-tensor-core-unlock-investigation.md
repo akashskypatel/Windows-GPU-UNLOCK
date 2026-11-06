@@ -1,3 +1,60 @@
+# 2026-11-06 13:05 PST — PAGEdBIN sample and +0x148 callback registration; large PAGErGEN section is a separate passive lead
+
+## New primary user data and provenance
+
+- Read-only exact-site Ghidra report `nvlddmkm-61742-booter-discovery-20261106-130501-043021.txt`, actual uploaded-file SHA-256 `863dced885466ef8ab2b50cbb6864f9f72199b692626a960a7872257b8b948d9`. Driver `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512` at image base `0x140000000`. Four `TRACE_INSTRUCTION_SITES` and four 64-byte `TRACE_STATIC_BYTES` captured; `SCAN_STRINGS=SKIPPED_BY_CALLER`, `DECOMPILATION=SKIPPED`; final `STATUS=COMPLETE`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`, `ELAPSED_SECONDS=0.026`. Report completion applies **only to bounded read-only reference and byte samples**, not decompilation of `FUN_14179DE70` or signed-firmware execution.
+- User pasted Ghidra PE section header listing `Pasted text(1).txt`, actual uploaded-file SHA-256 `243ea7ef5cfdb0da11616f6463a5b5416185d1450f93386a7a2f4bbae116852f`. It is **header metadata**, not a file contents dump or Ghidra block-attributes verification. The previous Ghidra block report independently established `PAGEdBIN` mapped initialized/R/W/non-X, but no `PAGErGEN` mapped-block report yet.
+
+## Exact nested section-pointer interface registration proven statically
+
+The four instruction windows resolve inside `FUN_14179DE70` and show **two** source locations assigning the previously classified `PAGEdBIN` pointer-table initializer `FUN_140A74E50` as an indirect callback to `[R8+0x148]`:
+
+```asm
+0x14179DF1A LEA RAX,[0x140A74CA0]
+0x14179DF21 MOV qword ptr [R8+0x140],RAX
+0x14179DF28 LEA RAX,[0x140A74E50]
+0x14179DF2F MOV qword ptr [R8+0x148],RAX
+0x14179DF36 LEA RAX,[0x140A74FA0]
+0x14179DF3D MOV qword ptr [R8+0x150],RAX
+...
+0x14179DF94 LEA RAX,[0x1400061B0]
+0x14179DF9B MOV qword ptr [R8+0x140],RAX
+0x14179DFA2 CMP R10D,1
+0x14179DFA6 JNZ 0x14179DFCC
+0x14179DFAA TEST ECX,ECX
+0x14179DFAC JZ 0x14179DF5B
+0x14179DFAE LEA RAX,[0x140A74E50]
+0x14179DFB5 MOV qword ptr [R8+0x148],RAX
+0x14179DFBC LEA RAX,[0x140A74FA0]
+0x14179DFC3 MOV qword ptr [R8+0x150],RAX
+```
+
+In the first visible branch, before `0x14179DF14`, `ECX=EAX & 0x300`; `R10D` is compared with 1; a nonzero `ECX` is required to reach the first `+0x140/148/150` trio on that visible path. In the second visible branch, `R10D==1` and `ECX!=0` precede another pair of `+0x148/+0x150` stores while `+0x140` has a different target. This establishes **callback registration and branch dependence**, not who owns `R8`, whether callers invoke `[R8+0x148]`, what `R10D` selects on the two actual physical cards, or an alias to the **separate** `FUN_1417E8550` `[R9+0x170]` HS-loader instance. The Ghidra function XREFs are DATA (pointer registration) rather than a direct CALL. `FUN_140A74CA0`, `FUN_140A74FA0` are now *specifically grounded adjacent-interface helpers*, not proven Booter functions.
+
+## Actual four 64-byte samples from PAGEdBIN
+
+- `0x146D01000`: offsets `+0x00,+0x08,+0x10,+0x18` each contain LE qword `0x000000000000000C`; `+0x20..+0x2F` are nonobvious binary bytes; `+0x30..+0x3F` repeats LE dword `0xDEADBEEF` four times. The `0xC` and `0xDEADBEEF` patterns suggest some structured/sentinel data, but **no verified format, archive count, signature layout or firmware parser**.
+- `0x146D01DE0`, `0x146D046A0`, `0x146D05AA0`: nonobvious seemingly high-entropy bytes across 64-byte samples. This observation alone cannot distinguish opaque compiled constants, compressed binary, random test vectors, cryptographic assets or signed firmware. There is **no established source-to-sink connection** from any of these bytes to `FUN_140BF3880` or its descriptor.
+- Previous full static decompilation of `FUN_140A74E50` showed it writes section offsets to a `param_3` output structure, but this new report **only establishes that another initializer registers the function at callback slot +0x148**. Registration is not invocation or signed Booter provenance.
+
+## PE-section header context: PAGErGEN versus PAGEdBIN
+
+`PAGErGEN` (section header VA `0x140000648`): virtual RVA `0x01D8C000` -> VA `0x141D8C000`, `VirtualSize=0x04F74018` = **83,312,664 bytes / 79.45 MiB**; `SizeOfRawData=0x04F74200`, `PointerToRawData=0x01CF6200`, `Characteristics=0x40000040` (initialized readable data, not writable/executable by PE header). Virtual end exclusive `0x146D00018`; section-aligned next known `PAGEdBIN` starts at `0x146D01000`, leaving a small alignment gap. The very large initialized read-only data region is a **concrete bounded candidate for later metadata/sample inspection**, not an identified Booter bindata archive or direct upstream source. A neighbor in the PE section table is not a callback/dataflow edge.
+
+`PAGEdBIN` (header `0x140000670`): RVA `0x06D01000`, `VirtualSize=0xFD40`, `SizeOfRawData=0xFE00`, `PointerToRawData=0x06C6A400`, `Characteristics=0xC0000040` (initialized R/W non-X). Independently verified mapped block `0x146D01000..0x146D10FFF` (65,536 bytes aligned) from previous report. Other pasted headers `PAGE_DD` (virtual 0x22855D), `PAGE` (0x11B4A8), `PAGE_NVA` (0x1EB3C) have `0x60000020` executable code flags; `INIT` has `0x62000020` (code, executable/readable, discardable). These section names and sizes do **not** identify HS firmware, signature data or a live NVIDIA secure Booter stage.
+
+## Discriminating next passive step; no broad memory scan
+
+Decompile the **specific callback-registration owner `FUN_14179DE70`** and its two **adjacent interface functions `FUN_140A74CA0` and `FUN_140A74FA0`**, which may reveal whether this table serves a diagnostic/config/data-table interface rather than the HS Booter. Also request just one 64-byte initialized nonexecuting sample from the `PAGErGEN` start `0x141D8C000` via the pre-existing bounded script; if the block is absent/noninitialized/executable, the script should return `STATUS=PARTIAL` and the gap remains. No claim that sample identifies whole payload. The next Ghidra run:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x14179de70", "0x140a74ca0", "0x140a74fa0"], "TRACE_STATIC_BYTES": ["0x141d8c000"], "__name__": "__main__"})
+```
+
+**Stop condition:** if these are simple array/table/diagnostics configuration callbacks without consumers leading to the actual HS loader descriptor, close `PAGEdBIN` as a source candidate and avoid expanding to a section-wide scan. The primary independent P0 remains locating an **actual invocation** of the published nested Falcon 0x9B0 instance and tracing the true production Windows 617.42 signed Booter image/header/signature/patch descriptor into `FUN_140BF3880`. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`; immutable recovery audit unchanged. Preserve stable in-place note and execution-map filenames; no versions.
+
+---
+
 # 2026-11-06 13:00 PST — PAGEdBIN multi-pointer table initialized by FUN_140A74E50; Booter ownership still unproven
 
 ## Primary original-driver static evidence
