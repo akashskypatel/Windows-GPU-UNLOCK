@@ -1,3 +1,46 @@
+# 2026-11-05 17:06 PST — Writer field cluster confirmed; focused decompilation did NOT resolve R8/RDI provenance
+
+## Primary source, identity, and exact completion boundary
+
+User-run passive PyGhidra report `nvlddmkm-61742-booter-discovery-20261105-170648-353403.txt` (3,213 bytes, SHA-256 `42353f86452dc88048aed507711399f721d613efaca8eea217893b19bb6a0e7d`). Ghidra source: original NVIDIA Windows 617.42 `nvlddmkm.sys`, MD5 `3fb9afac9d0e394723e830aa14e60512`, loaded VA base `0x140000000`. Explicit `TRACE_INSTRUCTION_SITES=['0x1400af749']`, `TARGET_FUNCTIONS=['0x1400af170']`, `DECOMP_FOCUS_TERMS=['10000','0x2710']`, `SCAN_STRINGS=False`. Script returned `STATUS=COMPLETE`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE` and reported the output path. This status applies to the bounded request; it does **not** establish object identity, execution, firmware load, or the full decompilation dataflow.
+
+The decompiler obtained a **9,511-character complete C representation internally**, but it emitted only **focused excerpts**, not the full C body. The focus term `10000` matched **one unrelated numeric literal**, `0x8C10000` in `FUN_1400E0C10(3,0x38169535,0x8C10000)`; the requested `0x2710` matched **zero** lines. `excerpt_truncated=False` means the emitted excerpt stayed within limits, **not** that the relevant writer's `R8` or `RDI` provenance was obtained. This is a misleading lexical focus result rather than evidence of a store-source trace. Future step should omit `DECOMP_FOCUS_TERMS` altogether because 9,511 characters are below existing `MAX_DECOMP_CHARS=14,000`.
+
+## Exact writer context and control-flow limitation
+
+The report confirms a cluster of qword stores at addresses inside `FUN_1400AF170`:
+
+```asm
+0x1400AF734 MOV qword ptr [RDI+0x26F8],R8
+0x1400AF73B MOV qword ptr [RDI+0x2700],R8
+0x1400AF742 MOV qword ptr [RDI+0x2708],R9
+0x1400AF749 MOV qword ptr [RDI+0x2710],R8
+0x1400AF750 MOV qword ptr [RDI+0x2718],RBX
+0x1400AF757 MOV qword ptr [RDI+0x2720],R9
+0x1400AF75E MOV qword ptr [RDI+0x2728],RBP
+0x1400AF765 MOV qword ptr [RDI+0x2730],R14
+```
+
+The clustered stores suggest structured field initialization but **do not prove** whether R8 is zero, a generic pointer or the nested Falcon HS dispatch. The instruction window also lists `0x1400AF72F JMP 0x1400AF536` immediately before the later-addressed cluster: previous `BEFORE` lines cross a **control-flow boundary** and are not necessarily executed as fallthrough leading to `0x1400AF749`. Register values and branch reachability must be read from the containing function's actual paths rather than spatial listing order.
+
+Ghidra's incoming references to `FUN_1400AF170`: four conventional direct calls at `0x1400AF86A`, `0x1400AF9A0`, `0x141925C57`, `0x1419289AE`, and five DATA references. These are potential provenance entry points, not a demonstrated link to `FUN_140532110` or the nested HS dispatch. The initial focused excerpt shows a guarded call and error check, but has no demonstrated bearing on the field store.
+
+## Impact on unlock proof and exact next task
+
+The earlier exact `+0x2710` filter found one recognized direct store `[RDI+0x2710]=R8`; the separately established `FUN_140532110` reads `receiver=[owner+0x2710]` with `owner=[ [param_1+0x160]+0xE8 ]` and transfers through `receiver+0x170`. **Same displacement alone is still not object alias proof.** The 0x9B0-byte Falcon HS dispatch instance is independently stored at outer+0x108 (embedded context+0x18). No register value, producer–consumer object alias, `FUN_140BF3880` runtime invocation or production signed Booter blob has been proven in this run.
+
+**One remaining bounded discrimination**, without additional scans: request the complete 9,511-character decompilation of `FUN_1400AF170` with no focus terms. Determine whether the write `+0x2710` is initialization/clear or an actual pointer publication, and obtain the source of `R8` and the owner in `RDI`. Follow a caller only if a concrete object-identity bridge appears. If it does not, **close this side branch as unlinked and return to the P0 Windows production signed Booter image/header/signature bytes, third-argument descriptor producer for `FUN_140BF3880`, and proven invocation**. Do not count static callback registration or reference firmware as active validation.
+
+Ghidra Python 3 console (one line, read-only; no new script required):
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1400af170"], "__name__": "__main__"})
+```
+
+**Physical/authorization gates unchanged:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`; AD102/GA102 selection, cryptographic acceptance, recovery and unlocked tensor issue-rate have not been tested. No driver/Ghidra database/UEFI/GPU writes. The immutable `windows_gpu_unlock_process_and_recovery_audit_2026-11-04.md` remains untouched.
+
+---
+
 # 2026-11-05 17:00 PST — One recognized literal +0x2710 writer in Windows 617.42; producer/consumer object alias still open
 
 ## Source, identity and scan completeness
