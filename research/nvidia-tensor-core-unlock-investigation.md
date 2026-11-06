@@ -1,3 +1,27 @@
+# 2026-11-06 14:37 PST — Diagnostic callback +0x218 proven; register-read wrapper narrowed
+
+## Input identity and completion boundary
+
+User-uploaded `nvlddmkm-61742-booter-discovery-20261106-143742-215152.txt`, **4,682 bytes** and SHA-256 `7e6b1c9f78634ad5cb2902d08c8d1bc62c2f9e126beae3601d2e3051e7b7a215`, obtained by inspecting the mounted original file, against the imported original Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra image base `0x140000000`. Inputs `SCAN_STRINGS=False`, `TRACE_INSTRUCTION_SITES=[0x1417E9665,0x1417E966C]`, `TARGET_FUNCTIONS=[0x1406B63F0]`. `ELAPSED_SECONDS=0.249`, `STATUS=COMPLETE`, `clipped=False` for the requested decompilation; `TARGET_INCOMING_REFS_TRUNCATED=true` applies to the **caller list**, not to the decompiled function body. `HARDWARE_ACTION=NONE` and `GHIDRA_MUTATION=NONE`; no runtime or signature-acceptance conclusion follows.
+
+## Machine-proven diagnostic callback slot and branch
+
+Within `FUN_1417E8550`, instruction `0x1417E9665` loads the address of `FUN_140BF2B30` into `RAX`, and `0x1417E966C` stores `RAX` to `[R9+0x218]`, thereby conditionally registering the already-characterized diagnostic/state-dump function in the **same Falcon callback initializer family** that also installs the HS loader at `+0x170` and signature transformation at `+0x250`. The captured alternate path at `0x1417E9655/5C` installs `FUN_1400061B0` at `[R9+0x218]`. The shown control flow checks `(R8D & 0xFFFFFFE0)==0x20`; for that group, if `((R10D << (R8D & 31)) & 0x020807E0)!=0`, the fallback is selected; otherwise the diagnostic `FUN_140BF2B30` is selected. The captured path is **not a full classification of all invocations or live GPU selectors**. These writes are callback registration, not proof that either target executes.
+
+## Exact low-level read wrapper; return-value ABI ambiguity
+
+The complete `FUN_1406B63F0(longlong param_1,longlong param_2,int param_3)` decompilation reads `param_2+0x459` and calls logging/assert helpers on a false state, reads the index at `param_2+0x430`, clamps it to `0` when greater than `0xC` (negative handling not established), then forwards the calculated offset `*(int *)(param_2+0x420)+param_3` to `FUN_140126650(param_1+0x4410,index,0,offset,0)`. This confirms the previously studied `FUN_140BF2B30` immediates `0x240` and `0x250` are inputs to a low-level offset-based read helper, **not** Falcon dispatch object field accesses or signed-image lengths. The underlying register accessor `FUN_140126650` has not been decompiled in this report; do not claim its exact MMIO semantics or physical side effects.
+
+**Explicit Ghidra prototype discrepancy:** current body is rendered `void FUN_1406B63F0(...)` and makes a trailing call to `FUN_140126650`; previous fully decompiled callers such as `FUN_140BF2B30` assign its return value (`uVar5/uVar6`) and later log that value. A no-return-value interpretation is inconsistent across the independent decompilations. It is possible the wrapper forwards a callee `EAX` value, but **no instruction-level proof** of return forwarding is present in this report. Resolve by checking the epilogue, actual `RAX/EAX` definition at the call site and the callee's body; do not silently 'fix' the prototype based on expectations.
+
+## Boundaries and next priorities
+
+The scalar `0x250` search lead remains closed as a *direct signed Booter producer*. New structural `+0x218` diagnostic registration does not close the original P0: no actual nested Falcon dispatch invocation, no Windows signed Booter image/header/patch/signature provenance, no proved `FUN_140BF2740` input-descriptor producer or dependency to `FUN_140BF3880`'s third argument, no AD102/GA102 runtime selection proof, no hardware recovery. Highest-priority next work should follow the specific nested 0x9B0 object published via `FUN_141752AA0` at `outer+0x108` to a real receiver-specific consumer and source fields `param_2+0x308/+0x310/+0x318/+0x320/+0x328..+0x338`. As an optional narrow **diagnostic ABI** task, decompile `FUN_140126650` and inspect instructions at `0x1406B63F0`, `0x140BF2D29`, `0x140BF2D3D` without scanning the executable again. Avoid spending P0 work on repeated offset-number coincidences.
+
+**Gate state:** `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. No GPU or Ghidra database mutation. Older chronological investigation notes follow unchanged.
+
+---
+
 # 2026-11-06 14:33 PST — Scalar-immediate +0x250 lead resolved as a diagnostic read
 
 ## Input and evidence classification
