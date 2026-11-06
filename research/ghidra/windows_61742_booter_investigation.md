@@ -1,3 +1,17 @@
+# 2026-11-06 13:19 PST — PAGEdBIN callback family and PAGErGEN pointer records classified
+
+User-run report `nvlddmkm-61742-booter-discovery-20261106-131915-948969.txt`, uploaded SHA-256 `6b1eedafbb36f07f80ca7c7c887428692c511e269f30aac1f1ae42761e68b1e1`, original 617.42 driver MD5 `3fb9afac9d0e394723e830aa14e60512`. Exact `TARGET_FUNCTIONS=["0x14179de70","0x140a74ca0","0x140a74fa0"]`, all unclipped `clipped=False`, bounded `TRACE_STATIC_BYTES=0x141D8C000` 64 bytes, final `STATUS=COMPLETE`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`.
+
+`FUN_14179DE70` reads 16-bit selector `param_2+0x10`, registers a class-dependent callback table at `param_1+0x130..+0x1B0`. Verified direct incoming CALL `0x14179E820` (other refs DATA). For the group-1 low-bits 8/9 branch it registers `FUN_140A74CA0` at +0x140, `FUN_140A74E50` at +0x148, `FUN_140A74FA0` at +0x150; other branches use alternates and fallbacks. Critically **this separate interface also assigns +0x170** to `FUN_140A74A20`, `FUN_140A74A50`, `FUN_140A75FC0`, `FUN_140A76000`, `FUN_140A76100` or fallback, NOT `FUN_140BF3880`. Matching displacement is no alias to the separately constructed 0x9B0 Falcon HS dispatch instance whose `FUN_1417E8550` installed `+0x170` HS loader.
+
+`FUN_140A74CA0` full body writes PAGEdBIN addresses at output `param_3+0x00,0x18,0x28,0x40`, chooses paired VAs by opaque guard result, and writes additional scalar fields `+0x08..+0x54`. No proven meaning for scalars, no Booter code/signature parser or HS loader call. `FUN_140A74FA0` full body directly calls `FUN_140A75B10`, then publishes PAGEdBIN pointers at output +0x20 and +0x28; callee not yet classified.
+
+PAGErGEN initial 64-byte read yields 64-bit sequence `1,0x27,0x141D933A0,1,0x27,0x141D93388,1,0x27`, suggesting repeated 24-byte records with pointers into same mapped non-executable section. Record format, pointed-to content, size/type semantics and any relation to PAGEdBIN or Booter are not proven. No broad scan authorized by section name/size alone.
+
+Next single bounded read-only Ghidra run: `TARGET_FUNCTIONS=["0x140a75b10","0x140a74a20","0x140a74a50"]`, `TRACE_INSTRUCTION_SITES=["0x14179e820"]`, `TRACE_STATIC_BYTES=["0x141d93388","0x141d8c040"]`. Preserve safe status; original recovery audit immutable; stable notes and plan updated in place, no numbered copies.
+
+---
+
 # 2026-11-06 13:05 PST — PAGEdBIN callback +0x148 registered, PAGErGEN 79.45 MiB PE section lead
 
 User-run file `nvlddmkm-61742-booter-discovery-20261106-130501-043021.txt`, SHA-256 `863dced885466ef8ab2b50cbb6864f9f72199b692626a960a7872257b8b948d9`, four local code instruction sites and four 64-byte initialized non-executable PAGEdBIN samples, driver MD5 `3fb9afac9d0e394723e830aa14e60512`, final `STATUS=COMPLETE`, `DECOMPILATION=SKIPPED`, no DB/GPU changes. `FUN_14179DE70` writes callback `FUN_140A74E50` to `[R8+0x148]` at `0x14179DF28/2F` and `0x14179DFAE/B5` on condition-dependent paths. Adjacent `[R8+0x140]=FUN_140A74CA0` (or fallback `FUN_1400061B0`) and `[R8+0x150]=FUN_140A74FA0` are exposed. The exact selector dataflow, runtime invoker and object alias with separate `FUN_1417E8550` HS dispatch `[R9+0x170]` are unknown. No direct calls established.

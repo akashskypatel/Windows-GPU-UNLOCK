@@ -1,3 +1,61 @@
+# 2026-11-06 13:19 PST — PAGEdBIN interface family classified; PAGErGEN sample reveals repeated internal pointer records
+
+## Primary evidence and bounded completion
+
+User-run read-only Ghidra report `nvlddmkm-61742-booter-discovery-20261106-131915-948969.txt`, uploaded file SHA-256 `6b1eedafbb36f07f80ca7c7c887428692c511e269f30aac1f1ae42761e68b1e1`, original Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512` with loaded image base `0x140000000`. `SCAN_STRINGS=False`; `TARGET_FUNCTIONS=["0x14179de70","0x140a74ca0","0x140a74fa0"]` and `TRACE_STATIC_BYTES=["0x141d8c000"]`. All three decompilations `clipped=False`; 64 initialized nonexecuting bytes captured at the exact `PAGErGEN` virtual start. Final `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.295`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. Scope is these three static bodies and one 64-byte sample; no actual driver/firmware execution, decrypt, signature verification or physical device classification.
+
+## FUN_14179DE70: class-dependent callback-table initializer, separate from Falcon HS dispatcher
+
+The *complete* body reads `uVar1=*(ushort *)(param_2+0x10)`, derives `group=uVar1>>5` and `low5=uVar1&0x1F`, then populates many callbacks on `param_1`, from `+0x130` through `+0x1B0`, selecting named functions or generic fallbacks. A **direct UNCONDITIONAL_CALL** incoming to this initializer is reported at `0x14179E820`; other incoming refs at `0x1414A4390`, `0x141095EC4`, `0x141095ED4` are DATA. The exact callsite/body at `0x14179E820` has **not** yet been recovered in this run, and does not establish any callback invocation.
+
+For one `group==1` subset, the initializer registers the PAGEdBIN pointer publishing callbacks `FUN_140A74CA0` at `param_1+0x140`, `FUN_140A74E50` at `+0x148`, and `FUN_140A74FA0` at `+0x150`. The local mask `(1<<low5)&0x300` selects bit positions 8/9 for the triple registration. Other selector branches substitute `FUN_140A74BC0`, `FUN_140A74D80`, `FUN_140A74F20`, `FUN_140A75A50` and generic fallback functions, so these are **optional registered callbacks**, not guaranteed selected for the user's specific GA102 or AD102.
+
+**Critical object-identity safeguard:** `FUN_14179DE70` itself also stores *other* callbacks at `param_1+0x170`: e.g. `FUN_140A74A20` for the shown group-1 low-bits 5..7 path; `FUN_140A74A50` for group-1 low-bits 8..9; other branches register `FUN_140A75FC0`, `FUN_140A76000`, `FUN_140A76100` or `FUN_140092D80`. These callbacks are **not** `FUN_140BF3880`; this is a **distinct class-dependent registration context** from `FUN_1417E8550` and its HS loader `[R9+0x170]`. The identical `+0x170` displacement in different tables does not prove alias or actual HS execution.
+
+## FUN_140A74CA0: PAGEdBIN address-and-scalar descriptor publisher, meaning open
+
+The whole body obtains an opaque CFG-guarded byte return to choose one of two address sets. It writes the output `undefined8* param_3`, with pointer fields to the previously confirmed initialized R/W non-executable PAGEdBIN section:
+
+- `+0x00`: `0x146D02620` if return byte is zero; else `0x146D02820`.
+- `+0x18`: `0x146D01330` / `0x146D01430`.
+- `+0x28`: `0x146D046A0` / `0x146D05AA0`.
+- `+0x40`: `0x146D096A0` / `0x146D0A8A0`.
+
+Additional numeric output fields and values observed: `+0x08=0x200`, `+0x0C=0xB00`, `+0x10=0x130`, `+0x20=0x100`, `+0x24=0x600`, `+0x30=0x1400`, `+0x34=0xD00`, `+0x38=0x12`, `+0x48=0x1200`, `+0x4C=0x2100`, `+0x50=0x102`, `+0x54=0x1300`. Field *meaning* (length, slot, index, key, blob layout, etc.) is **not determined** by this writer body alone. These values must not be assigned a firmware-descriptor type merely because some look size-like. This is a direct, static publisher of data-section pointers with scalars, not evidence of signed Booter image/header/signature or a write into HS loader argument 3.
+
+## FUN_140A74FA0: chained initializer and two more PAGEdBIN pointers
+
+Its complete body checks a null third argument, logs/asserts on null, **calls `FUN_140A75B10(param_1,param_2,param_3)`**, and writes `param_3+0x20=0x146D01020`, `param_3+0x28=0x146D01050` (both mapped PAGEdBIN). The downstream helper `FUN_140A75B10` has not yet been inspected here: this is a **direct, grounded callee** for further classification, not proof it copies firmware or calls the Falcon loader.
+
+## PAGErGEN exact 64-byte sample: self-referential table-like data, not Booter proof
+
+From `0x141D8C000`, eight consecutive little-endian qwords, decoded directly from the captured hex:
+
+| Offset | Qword |
+|---|---|
+| `+0x00` | `1` |
+| `+0x08` | `0x27` |
+| `+0x10` | `0x141D933A0` |
+| `+0x18` | `1` |
+| `+0x20` | `0x27` |
+| `+0x28` | `0x141D93388` |
+| `+0x30` | `1` |
+| `+0x38` | `0x27` |
+
+This is consistent with repeating 24-byte records containing values `1`, `0x27` and a **VA inside the same 79.45-MiB PAGErGEN virtual range**, at least for the first two records. It is **not yet established** whether `1` is a type/flag, `0x27` is a length/identifier, or whether the pointed-to bytes are data, code-address metadata, table strings, signature material, etc. The successful `TRACE_STATIC_BYTES` means these 64 bytes are mapped, initialized and non-executable; it does not verify the entire PAGErGEN memory-block extent/permissions or its connection to PAGEdBIN. No observed producer/consumer link between this record table and `FUN_140BF3880` or `FUN_140A74CA0` exists.
+
+## Bounded next discriminator and status
+
+Use existing passive discovery script once for `FUN_140A75B10` (direct callee of the PAGEdBIN data pointer publisher), `FUN_140A74A20` and `FUN_140A74A50` (two concrete `+0x170` callbacks of the *separate* interface); inspect exact direct initializer callsite `0x14179E820` plus just two 64-byte static PAGErGEN samples `0x141D93388` (covers both observed internal pointer targets) and `0x141D8C040` (next table segment). Report `clipped=True` or missing mapped samples as PARTIAL, not complete proof. These checks determine whether to **close the entire PAGEdBIN/PAGErGEN side branch** as unrelated tables rather than escalating to whole-driver content scans.
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140a75b10", "0x140a74a20", "0x140a74a50"], "TRACE_INSTRUCTION_SITES": ["0x14179e820"], "TRACE_STATIC_BYTES": ["0x141d93388", "0x141d8c040"], "__name__": "__main__"})
+```
+
+Main P0 **OPEN:** exact runtime indirect caller through the *published* 0x9B0 nested Falcon HS dispatch object and real production Windows 617.42 signed Booter image/header/signature/patch descriptor supplied to `FUN_140BF3880`. Distinguish GSP/UCODES packaging and Linux reference Booter bindata from confirmed Windows bytes. Physical AD102/GA102 class values, signature acceptance, unlock and physical recovery NOT tested. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. No driver/firmware/EFI/Ghidra DB modification, new repo versioned docs or changes to immutable audit.
+
+---
+
 # 2026-11-06 13:05 PST — PAGEdBIN sample and +0x148 callback registration; large PAGErGEN section is a separate passive lead
 
 ## New primary user data and provenance
