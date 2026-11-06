@@ -1,3 +1,19 @@
+# 2026-11-05 16:30 PST — 246 slot-0x170 guard-transfer candidates, 80 captured (PARTIAL)
+
+**Primary evidence:** read-only user report `nvlddmkm-61742-booter-discovery-20261105-163029-235692.txt` (17,752 bytes, SHA-256 `15817a80243963559ea50002e06f34eb153f94f845a3057ec6b97e8c7e5f3772`), expected `nvlddmkm.sys` Windows 617.42 MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. `SCAN_STRINGS=False`; executable-only `SCAN_SLOT_DISPLACEMENT=0x170`, `SLOT_SCAN_FOCUS=transfer`. All **12** executable blocks were visited; **19,689,472 bytes scanned**, **2,445** raw disp32 hits, **1,901** distinct instruction candidates, **246** transfer-filtered candidates. **Only first 80 candidates printed (67 functions)**, so `capped=True scan_complete=False`, `STATUS=PARTIAL`. This is a candidate **reporting cap**, not an interrupted scan, Ghidra timeout, or firmware failure. No decompilation, database mutations or hardware action.
+
+**Meaning of filter:** `_slot_transfer_evidence` accepts a bracketed `[base+0x170]` load when a register transfer/guarded indirect call appears within an eight-instruction lookahead. Proximity alone does **not** prove the guard consumes that function pointer, that a code path reaches it, or that the base is the **0x9B0-byte Falcon HS dispatch instance** registered by `FUN_1417E8550`. The known `FUN_140124A90` at `0x140124B56` recurs among the 80; its context has not been proved to alias the nested dispatch. The first-80 VA order and sparse records are **not a ranking** or exhaustive inventory. No actual `FUN_140BF3880` invocation, third-argument signed descriptor production, signature acceptance, device-family branch or GPU unlock was proven.
+
+**Next bounded inspection** (existing `nvlddmkm_booter_discovery.py`, four instruction windows only, no rescan) uses a *weak locality and duplicate-site heuristic* for recorded candidates. Do not promote those addresses to Falcon evidence without object provenance:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x140532154", "0x140588dd2", "0x1405890ac", "0x14059b970"], "__name__": "__main__"})
+```
+
+The decision gate is concrete traced provenance from `outer+0x108` (`embedded+0x18`) through the actual nested dispatch `+0x170` to the CFG indirect call, then actual image descriptor (callee third argument) provenance. If neither these four windows nor the known owner chain yields a bridge, avoid further arbitrary offset sampling; redirect P0 to native Windows signed Booter byte/header/signature source and descriptor producer. Current execution map updated *in place*, while full investigation v113 prepends evidence. `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. Immutable audit unchanged.
+
+---
+
 # 2026-11-05 16:20 PST — Static Falcon interface table XREFs closed, no executable invoker
 
 **User-run source:** `nvlddmkm-61742-booter-discovery-20261105-162054-788737.txt`, 2,252 bytes, SHA-256 `bb22716045a90d4af84db35e092e669171b6cbcbd9c8d5467d58878c9fc68536`. Read-only Ghidra of `nvlddmkm.sys` Windows 617.42, MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. Three `TRACE_DATA_SITES` inspections completed, no caps or decompilation (`STATUS=COMPLETE`; `DECOMPILATION=SKIPPED`; `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`).
