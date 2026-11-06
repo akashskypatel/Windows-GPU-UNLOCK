@@ -1,3 +1,23 @@
+# 2026-11-05 17:56 PST — Windows GA10x/TU10x UCODES v1 header inventory complete, Booter source unresolved
+
+**Primary evidence:** user-pasted complete JSON from read-only `python .\research\windows_firmware_provenance.py --root "$env:SystemRoot\System32\DriverStore\FileRepository" --output .\windows-61742-firmware-inventory-v2.json` on Windows, `schema_version=1`, `STATUS=COMPLETE`, no warnings, `files_truncated=false`, `facts.hardware_modified=false`. No new Ghidra run or installed-file access in this assistant environment. The earlier default two-root `STATUS=PARTIAL` was accurate due to absent standalone `System32\drivers\nvlddmkm.sys`; the explicit DriverStore-only scope is complete and must not retroactively rewrite that older report.
+
+**Pinned DriverStore directory** `nv_dispsi.inf_amd64_ccd7fbb71bb72370`: `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, SHA-256 `db407b964c11441642a1642a0922c35990de974c267a08537c3432765365f84b`; `gsp_ga10x.bin` 27,043,992 B, SHA-256 `f89d8f615e6146ed2808df974b7af7f1aabda876596391b0aabcc32ba293c34f`; `ucodes_ga10x.bin` 58,215,936 B, SHA-256 `eed53d76248582d71c629e8b6230aee48ce673c91d782301c94e98ac6a6db7aa`. Also pinned `gsp_tu10x.bin` SHA-256 `35fcaefc3edcc1d288c449b26e62cf069227e283f9cc07d71f1e6a83a0073d9d` and `ucodes_tu10x.bin` SHA-256 `6027ab3736f733b5a06e6e61aaae957d1f990426a263849ebcfa8a49eeb4a5d0`.
+
+**New user-recorded header facts:** `ucodes_ga10x.bin`: `NVUCODES` v1, `numEntries=1293`, fingerprint `0x2d38befecdb703a6`. `ucodes_tu10x.bin`: `NVUCODES` v1, `numEntries=496`, fingerprint `0x8d1990ab6b98ae2b`. NVIDIA Linux source `615.78.08 src/nvidia/src/kernel/core/bin_data_pvt.h` specifies a 24-byte header and defines the count as **build-time possible bindata files**, **not an enumerated record list**. An older user-run report already found the GA10x fingerprint bytes once within installed GSP `.fwimage` at absolute offset 17,492,248. That pairing observation was **not rerun in this turn**; it supports static file association only, not signature acceptance or active Booter loading. GSP `.fwsignature_ad10x` and `.fwsignature_ga10x` ELF sections (4,096 B each) are **not** the production SEC2 Booter signature records.
+
+**Gates:** scoped firmware file+header inventory **PASS (USER-RUN)**. Static GSP/UCODES pairing **PARTIAL (previous observed matching fingerprint)**. Actual Windows production Booter `IMAGE_PROD`/header/signature/patch byte source, `FUN_140BF3880` third-argument image descriptor, *specific nested 0x9B0 instance* indirect invoker, physical GA102/AD102 selection and cryptographic acceptance **OPEN**. Linux 615.78.08 generated AD102/GA102 Booter production `IMAGE_PROD` fields are embedded (`EXTERNAL: NO`); do not infer same Windows packaging.
+
+**Single bounded next Ghidra target:** read-only decompile code containing `0x140AF28A0`, an unreviewed `RMAcrExecuteOnSec2`/`RMEnableAcrRiscv`/`RmBootFromHs` configuration XREF owner. It may only select registry/config values; if so eliminate this branch, not escalate to speculative firmware provenance. No generic callback-offset rescan.
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140af28a0"], "__name__": "__main__"})
+```
+
+**Docs:** cumulative notes `research/nvidia-tensor-core-unlock-investigation-v122.md` prepend new primary findings; authoritative `research/nvidia_unlock_evidence_to_execution_map.md` is updated in place as a status snapshot, not a diary. Immutable process/recovery audit unchanged. `CAN_DETACH=false`; `CAN_UNLOCK=false`; `CAN_FLASH=false`; `RECOVERY_VERIFIED=false`. No firmware or GPU writes.
+
+---
+
 # 2026-11-05 — Installed Windows 617.42 firmware source pinned; Booter supplier remains open
 
 **Evidence type:** user-supplied output of committed `windows_firmware_provenance.py`, read-only local Windows DriverStore file inventory. This **is not a new Ghidra decompilation or GPU runtime trace**. Original `STATUS=PARTIAL` reflects one absent default second root `C:\\WINDOWS\\System32\\drivers\\nvlddmkm.sys`; available DriverStore files were successfully read. The system driver `nvlddmkm.sys` in `nv_dispsi.inf_amd64_ccd7fbb71bb72370` is 113,971,432 bytes and MD5 **`3fb9afac9d0e394723e830aa14e60512`**, exactly matching the pinned Ghidra program. SHA-256 **`db407b964c11441642a1642a0922c35990de974c267a08537c3432765365f84b`**.
