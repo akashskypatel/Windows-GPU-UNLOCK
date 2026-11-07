@@ -29,6 +29,8 @@ MAX_TARGETS = 4
 MAX_INCOMING_REFS = 24
 MAX_DATA_SITES = 8
 MAX_INSTRUCTION_SITES = 4
+MAX_CALL_TRACE_FUNCTIONS = 2
+MAX_CALL_TRACE_SITES = 32
 MAX_SLOT_CANDIDATES = 80
 DECOMP_TIMEOUT_SECONDS = 12
 MAX_DECOMP_CHARS = 20000
@@ -365,6 +367,63 @@ def inspect_instruction_sites(program, sites, log):
     return complete
 
 
+
+
+def inspect_function_calls(program, targets, log):
+    """Report bounded instruction windows around existing CALLs in named functions.
+
+    Includes CFG-guard dispatch setup when adjacent; no decompilation,
+    instruction creation, indirect target inference, or Ghidra database writes.
+    """
+    if (isinstance(targets, (str, bytes)) or not isinstance(targets, (list, tuple)) or
+            len(targets) > MAX_CALL_TRACE_FUNCTIONS):
+        raise ValueError('TRACE_FUNCTION_CALLS requires at most %d addresses' % MAX_CALL_TRACE_FUNCTIONS)
+    listing = program.getListing()
+    functions = program.getFunctionManager()
+    complete = True
+    for raw in targets:
+        address = _address(program, int(str(raw), 0))
+        fn = functions.getFunctionContaining(address)
+        if fn is None:
+            log('FUNCTION_CALLS_UNAVAILABLE VA=%s no existing function' % address)
+            complete = False
+            continue
+        entry = fn.getEntryPoint()
+        body = fn.getBody()
+        logged = 0
+        capped = False
+        log('FUNCTION_CALLS_BEGIN entry=%s name=%s max_calls=%d' % (
+            entry, fn.getName(), MAX_CALL_TRACE_SITES))
+        for insn in listing.getInstructions(body, True):
+            if str(insn.getMnemonicString()).upper() != 'CALL':
+                continue
+            if logged >= MAX_CALL_TRACE_SITES:
+                complete = False
+                capped = True
+                log('FUNCTION_CALLS_TRUNCATED entry=%s limit=%d' % (entry, MAX_CALL_TRACE_SITES))
+                break
+            log('  FUNCTION_CALL VA=%s asm=%s' % (insn.getAddress(), insn))
+            preceding = []
+            cursor = insn
+            for _ in range(12):
+                older = listing.getInstructionBefore(cursor.getAddress())
+                if older is None or not body.contains(older.getAddress()):
+                    break
+                preceding.append(older)
+                cursor = older
+            for previous in reversed(preceding):
+                log('    BEFORE VA=%s asm=%s' % (previous.getAddress(), previous))
+            cursor = insn
+            for _ in range(4):
+                newer = listing.getInstructionAfter(cursor.getAddress())
+                if newer is None or not body.contains(newer.getAddress()):
+                    break
+                log('    AFTER VA=%s asm=%s' % (newer.getAddress(), newer))
+                cursor = newer
+            logged += 1
+        log('FUNCTION_CALLS_END entry=%s recorded=%d capped=%s' % (entry, logged, capped))
+    log('FUNCTION_CALLS_SCOPE=Existing CALL instructions only, including indirect guard sites; excludes JMP aliases and runtime target identity')
+    return complete
 
 
 def _slot_displacement_hits(previous, current, needle):
@@ -838,6 +897,10 @@ def main():
         if instruction_sites and not inspect_instruction_sites(program, instruction_sites, output):
             status = 'PARTIAL'
             output('INSTRUCTION_SITES_COMPLETE=FALSE; one or more sites unavailable')
+        call_functions = globals().get('TRACE_FUNCTION_CALLS', ())
+        if call_functions and not inspect_function_calls(program, call_functions, output):
+            status = 'PARTIAL'
+            output('FUNCTION_CALL_TRACE_COMPLETE=FALSE; function unavailable or bounded callsite limit reached')
         sites = globals().get('TRACE_DATA_SITES', ())
         if sites and not inspect_data_reference_sites(program, sites, output):
             status = 'PARTIAL'

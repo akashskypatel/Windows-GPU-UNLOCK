@@ -1,3 +1,29 @@
+# 2026-11-06 16:32 PST — Resource allocation/mapping confirmed; targeted parent-interface CALL trace prepared
+
+## Complete original-driver report and scope
+
+User-uploaded `nvlddmkm-61742-booter-discovery-20261106-163259-813855.txt`: **4,443 bytes**, SHA-256 `a03a9646fa0fe7c69de33e4de2b15449f5ab1c0a8a82c3c8fab255a235ddbdb7`, **155 physical lines**, pinned Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`. `FUN_1402E7CE0` C is full (`clipped=False total_chars=1227 output_limit=131072`); callsite instruction windows at `0x140BF16CF`, `0x1406B92E1` are present. No database or GPU writes; `STATUS=COMPLETE`, elapsed 0.253 s. Completion here means two given instruction windows and one decompiled body, **not** production Booter proof.
+
+## Grounded allocation and callsite findings
+
+`FUN_1402E7CE0(param_1,param_2,param_3,param_4,param_5,param_6,param_7)` checks `param_1+0xA0D` and whether `*param_4` already exists. `FUN_140637160()` can select resource flag `0x200000000000` on one `param_7==1` branch. When allocating, it calls `FUN_1401B9020(param_4,param_1,param_5,param_6,1,param_7,1,flags)`, then `FUN_1401B87B0(*param_4)`; on success/reuse it calls `FUN_1401BC180(param_1,*param_4,0)` and stores the mapping through `*param_3`. The failure paths log errors, free/unmap through `FUN_1401BD630`, `FUN_1401BABD0` and `FUN_1401BA330`, clear output pointers, return upstream error or `0xFFFF`. There is **no visible firmware archive read, binary copy, descriptor parse or signature authentication in this helper**. It is a resource/mapping helper, not an established producer of production Windows signed Booter bytes. Mapping/buffer semantics in static code do not prove external helper implementations are safe on hardware.
+
+The first trace `FUN_140BF1390:0x140BF16CF` shows `RDX=RBX`, `RCX=R15`, `CALL FUN_1402EA6F0`, followed by `MOV R14D,EAX; TEST EAX,EAX`; prior operations conditionally write literal dword `0x4E56524D`, call an interface through parent `[vtable+0x28]`, write two header/status fields, but there is no established Booter metadata meaning. Second trace `FUN_1406B8E10:0x1406B92E1` similarly sets `RDX=RBX`, `RCX=RBP`, then checks `EAX`; its nearby `[vtable+0x20]` guarded call and field writes are separate preceding actions. **Neither earlier vtable call can be equated to the later guarded parent-interface transfer in `FUN_1402EA6F0` without that function's actual instruction-register trace**. Prior full `FUN_1402EA6F0` body established conditional size default `0x2000`, allocation at nested `+0x550` with mapped-pointer helper and guarded transfer of `(parent,5,mapped_address,descriptor+8)`; **signed-image source and target identity still absent**.
+
+## Bounded next evidence capture; source-only change
+
+The existing `research/ghidra/nvlddmkm_booter_discovery.py` already reports targeted decompilation and explicit `TRACE_INSTRUCTION_SITES`, but the precise guarded CALL VAs inside `FUN_1402EA6F0` have not yet been grounded. Added opt-in `TRACE_FUNCTION_CALLS`: read-only enumeration of **existing** `CALL` instructions for at most 2 explicitly selected functions, up to 32 callsites per function, each with 12 preceding and 4 following existing instructions from within the same Ghidra function body. Missing functions/cap saturation produce `PARTIAL`; no disassembly, program mutation, runtime inference or hardware operations. Added host-only tests exercising two CALL contexts, cap/partial and malformed requests; **these tests have not been executed yet**.
+
+After updating the local repository, run:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_FUNCTION_CALLS": ["0x1402ea6f0"], "TARGET_FUNCTIONS": [], "__name__": "__main__"})
+```
+
+Check report `FUNCTION_CALLS_BEGIN`, `FUNCTION_CALL ...`, `FUNCTION_CALLS_END`, and explicit final `STATUS`+report path. Inspect the exact parent/vtable register setup for descriptor getter and method/action-5 transfer; connect only a real register-backed receiver, not the CFG dispatcher symbol. If no suitable calls appear, retain target identity as unresolved rather than inventing it. Stop all active actions: `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Immutable process/recovery audit remains unchanged.
+
+---
+
 # 2026-11-06 16:29 PST — Full parent-interface resource handoff and 0xF4 status callback analysis; Booter origin unproven
 
 ## Provenance and completion

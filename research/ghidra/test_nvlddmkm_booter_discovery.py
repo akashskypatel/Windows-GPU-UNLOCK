@@ -237,6 +237,92 @@ class DecompilationCoverageTests(unittest.TestCase):
                     self._analyze('int main() {}', full_output_limit=limit)
 
 
+class FunctionCallTraceTests(unittest.TestCase):
+    """Read-only host fake for bounded call-site evidence, not Ghidra execution."""
+
+    class Instruction:
+        def __init__(self, va, mnemonic, assembly):
+            self.va, self.mnemonic, self.assembly = va, mnemonic, assembly
+
+        def getAddress(self):
+            return self.va
+
+        def getMnemonicString(self):
+            return self.mnemonic
+
+        def __str__(self):
+            return self.assembly
+
+    class Fixture:
+        def __init__(self, calls):
+            self.instructions = [FunctionCallTraceTests.Instruction(
+                i, 'CALL' if i in calls else 'MOV',
+                'CALL qword ptr [0x140e02aa8]' if i in calls else 'MOV RAX,RBX'
+            ) for i in range(7)]
+
+        def getListing(self):
+            return self
+
+        def getFunctionManager(self):
+            return self
+
+        def getFunctionContaining(self, address):
+            return self
+
+        def getEntryPoint(self):
+            return 0
+
+        def getName(self):
+            return 'FUN_FAKE'
+
+        def getBody(self):
+            return self
+
+        def contains(self, address):
+            return 0 <= address < len(self.instructions)
+
+        def getInstructions(self, body, forward):
+            return iter(self.instructions)
+
+        def getInstructionBefore(self, address):
+            return self.instructions[address - 1] if address > 0 else None
+
+        def getInstructionAfter(self, address):
+            return self.instructions[address + 1] if address + 1 < len(self.instructions) else None
+
+    def test_only_existing_calls_are_reported_with_context(self):
+        fixture = self.Fixture({2, 5})
+        logs = []
+        with patch.object(probe, '_address', side_effect=lambda program, value: value):
+            result = probe.inspect_function_calls(fixture, ['0x0'], logs.append)
+        output = '\n'.join(logs)
+        self.assertTrue(result)
+        self.assertEqual(output.count('  FUNCTION_CALL VA='), 2)
+        self.assertIn('FUNCTION_CALL VA=2', output)
+        self.assertIn('FUNCTION_CALL VA=5', output)
+        self.assertIn('BEFORE VA=1', output)
+        self.assertIn('AFTER VA=6', output)
+        self.assertIn('recorded=2 capped=False', output)
+
+    def test_callsite_cap_is_explicit_partial(self):
+        fixture = self.Fixture({1, 2, 3, 4, 5})
+        logs = []
+        with patch.object(probe, '_address', side_effect=lambda program, value: value), \
+             patch.object(probe, 'MAX_CALL_TRACE_SITES', 2):
+            result = probe.inspect_function_calls(fixture, ['0x0'], logs.append)
+        output = '\n'.join(logs)
+        self.assertFalse(result)
+        self.assertEqual(output.count('  FUNCTION_CALL VA='), 2)
+        self.assertIn('FUNCTION_CALLS_TRUNCATED', output)
+        self.assertIn('recorded=2 capped=True', output)
+
+    def test_invalid_requests_rejected(self):
+        for targets in ('0x1', ['0x1'] * 3):
+            with self.subTest(targets=targets):
+                with self.assertRaisesRegex(ValueError, 'TRACE_FUNCTION_CALLS'):
+                    probe.inspect_function_calls(None, targets, lambda x: None)
+
+
 class NestedReceiverCandidateTests(unittest.TestCase):
     """Host-only regression tests for candidate matching, not live Ghidra proof."""
 
