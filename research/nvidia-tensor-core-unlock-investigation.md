@@ -1,3 +1,54 @@
+# 2026-11-06 18:15 PST — Parent interface +0x50/+0x60 targets resolved, +0xE8 no-op verified; +0xE0 record callback is still an indirect forwarding wrapper
+
+## Original report and integrity
+
+Original user-supplied `nvlddmkm-61742-booter-discovery-20261106-181530-276068.txt`: **4,062 bytes**, **97 physical lines**, SHA-256 **`e5b9e456f95ad5f969c23e61d161848bb1522ae9f3e64f8b26d382e23dfa7208`**, independently measured from the uploaded bytes. Original imported Windows 617.42 NVIDIA `nvlddmkm.sys`, MD5 `3fb9afac9d0e394723e830aa14e60512`, loaded image base `0x140000000`. Script reports `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`, final **`STATUS=COMPLETE`** in **11.913 seconds**. The specific `FUN_1400061B0` incoming reference list reports `TARGET_INCOMING_REFS_TRUNCATED=true` (24-entry cap), but the two requested C bodies and both static `.rdata` slot reads are complete. Never interpret the capped incoming reference enumeration as exhaustive.
+
+## Embedded parent vtable slot readback and defined code targets
+
+With earlier constructor-installed embedded parent vptr **`0x140E764A8`**, this report reads the two outstanding candidate vtable locations in initialized `.rdata`, confirms both data definitions and direct outgoing Ghidra references:
+
+| Embedded-parent virtual slot | Exact VA | Verified little-endian QWORD | Defined target | Prior grounded machine-caller |
+|---|---|---|---|---|
+| `+0x50` | `0x140E764F8` | `0x0000000140179070` | **`FUN_140179070`** | `FUN_1406B2F10` CFG call at `0x1406B319F` via `[parent_vptr+0x50]`, before nested-state registration |
+| `+0x60` | `0x140E76508` | `0x0000000140178460` | **`FUN_140178460`** | `FUN_1406B2F10` CFG call at `0x1406B313D` via `[parent_vptr+0x60]`, passing `nested+0x41C` |
+| `+0xE0` | `0x140E76588` | `0x0000000140178F50` (18:08 confirmed) | **`FUN_140178F50`** | `FUN_1406BB9A0` first record-pointer getter-like guarded callback at `0x1406BBA27` |
+| `+0xE8` | `0x140E76590` | `0x00000001400061B0` (18:08 confirmed) | **`FUN_1400061B0`** | `FUN_1406BB9A0` second guarded callback after writing record fields at `0x1406BBA94` |
+
+These are **verified static pointer contents under the constructor-installed parent table**, not runtime confirmation that the nested `+0x4B0` pointer retains that vptr, that AD102/GA102 choose the path, or that a signature or HS loader is present. The new `+0x50/+0x60` target bodies **have not been decompiled** in the current report.
+
+## Important semantic distinction — `FUN_140178F50` not yet resolved
+
+The complete decompiler output for **`FUN_140178F50(void)`**, 102 characters, is:
+
+```c
+void FUN_140178f50(void)
+{
+    (*(code *)PTR__guard_dispatch_icall_140e02aa8)();
+    return;
+}
+```
+
+This proves the function **invokes a CFG-guarded indirect dispatch**, *not* that the dispatch helper `0x140E02AA8` is the effective record implementation. The decompiler emits neither its target-pointer source nor a proven ABI/return value; `void` is a decompiler-inferred prototype and must not be used to deny the caller's use of an `RAX`-returned record pointer. This is a **forwarding/wrapper candidate requiring machine instructions** to establish the effective target and argument/return propagation. The record-provider semantic status is thus **OPEN**, despite `DECOMPILER_END` and `clipped=False`.
+
+The other callback **`FUN_1400061B0(void)`** decompiles completely to an empty function that directly returns (49 C characters). This **confirms an inert no-op body** at the `+0xE8` table entry for the observed static table, not a firmware transfer or record memory writer. Its global incoming reference listing is capped at 24 sites, but that cap does not affect the complete function body. The no-op status is conditional on use of this exact installed parent table; alternative class tables or runtime replacement remain unverified.
+
+## Unchanged larger dependency and next narrow probe
+
+Earlier static analysis confirms the rooted Falcon outer object `0x3550` bytes, embedded parent at `outer+0xF0`, conditional getter function `FUN_1405785E0` returns `outer+0x3E8` with optional `0x98` only when guard `outer+0x3518` is zero; the guard writer and its two state-flag conditions are known. Nothing in this 18:15 report identifies the **contents, provenance, or actual secure-firmware relevance** of that region. `FUN_140118320` has already been closed as 71-entry nested-state registration; outer `+0x308` callbacks have already been closed as bounded address encoders. Do not re-open them as if they were Booter loader implementations.
+
+**Next original Windows NVIDIA 617.42, read-only, MD5-pinned Ghidra Python 3 command:**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140179070", "0x140178460"], "FULL_DECOMP_MAX_CHARS": 131072, "TRACE_FUNCTION_CALLS": ["0x140178f50"], "TRACE_INSTRUCTION_SITES": ["0x140178f50"], "__name__": "__main__"})
+```
+
+Fully decompile newly verified parent `+0x50` target `FUN_140179070` and parent `+0x60` target `FUN_140178460`. Separately use existing CALL-trace and instruction-window facilities at **`FUN_140178F50`** to recover the actual `RAX` target pointer and any tail-call/CFG forwarding setup that Ghidra C obscured. Do not equate a CFG dispatcher with a record producer; inspect actual machine registers and the receiver layout. If the wrapper is a jump-only thunk with zero CALL-site hits, the explicit entry instruction window is still useful; a complete report may therefore show `FUNCTION_CALLS_END ... recorded=0` without resolving forwarding. Follow only the actual grounded target(s) in a later turn.
+
+Signed production Windows Booter source/image/wrapper/signatures, actual nested HS loader invocation, AD102 RTX 4090 / GA102 RTX 3080 runtime class, cryptographic acceptance, recovery and tensor improvements remain **OPEN**. Physical actions not authorized: `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Immutable recovery audit untouched.
+
+---
+
 # 2026-11-06 18:08 PST — Embedded-parent record callbacks resolved to two code pointers; nested Falcon registration cap and parent-vtable call sources proved
 
 ## Original user-run report identity and scoped verification
