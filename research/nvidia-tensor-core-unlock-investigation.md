@@ -1,3 +1,27 @@
+# 2026-11-06 16:52 PST — Corrected parent-vtable base: 0x140EBF210 is metadata-like, not an established callable table
+
+## Original static report, identity and partial boundary
+
+User-provided `nvlddmkm-61742-booter-discovery-20261106-165202-840297.txt` verified from mounted bytes: **4,046 bytes**, SHA-256 `c31bee93acf451eeb0b23462f984b46f6fdf6edf951c451b27905fe3be6ae135`, **63 physical lines**; pinned Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. `SCAN_STRINGS=SKIPPED_BY_CALLER`, read-only existing reference map, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. Four requested `STATIC_BYTES` regions all read 64 bytes without error. Data sites for `0x140EDE188`, `0x140EBF210`, `0x140EBF240`, `0x140EBF368` were read, but `0x140EBF210` has `INBOUND_ROOT count=10 capped=True`; therefore `DATA_SITES_COMPLETE=FALSE` and overall **`STATUS=PARTIAL`**, elapsed 14.625 s. This cap limits reference enumeration only; it does not invalidate already recorded bytes or imply no references elsewhere.
+
+## Evidence of an incorrectly calculated vtable base
+
+Earlier active plan (16:47) suggested using `0x140EBF210`, the first qword **stored at** `0x140EDE188`, as the callable parent vtable and calculated method addresses `0x140EBF240` (getter `+0x30`) and `0x140EBF368` (transfer `+0x158`). **That derivation was unsupported and is corrected here.** The actual qword values from the 64-byte window beginning at `0x140EBF210` are: `0x0060E6AF00000020`, `0x140E51850`, `0`, `0x140EBF238`, `0x140EBF248`, `1`, `0x140EBF260`, `0`. At `0x140EBF240`, the qword is `0x140EBF260`, followed by zeros. These are metadata/descriptor-like, not a straightforward executable vtable at those offsets. The full 64 bytes at `0x140EBF368` are eight pointers: `0x14056CA00`, `0x14056CAA0`, `0x14056C790`, `0x14056C640`, `0x1400061B0`, `0x1400061B0`, `0x140006190`, `0x14000B520`. Ghidra `DATA_SITE 0x140EBF368` confirms an outbound DATA ref to defined executable `FUN_14056CA00`, but its location was selected by the incorrect base calculation; **no logical link to `FUN_1402EA6F0`'s resource-transfer call is established**. Do not decompile `FUN_14056CA00` merely because it happens to occupy this wrongly computed offset.
+
+`0x140EDE188` is the original `.rdata` interface-head region **referenced** by two instructions within the independently established embedded-owner constructor `FUN_14179E530` (`0x14179E7F8`, `0x14179E806`, plus a third inbound DATA ref `0x140EDE0B0`). Its decoded qwords from `+0x00..+0x38` are `0x140EBF210`, `0x14010DC40`, `0xF0`, `0x14056CE70`, `0x140006190`, `0x140006190`, `0x140006190`, and `0x14056CA90`. This is consistent with a **mixed metadata / function-pointer interface table**, but class selection, owner alias and method ABI are unverified. The actually observed `FUN_1402EA6F0` machine-level dispatches `owner->[vtable+0x30]` and `owner->[vtable+0x158]` remain independent verified facts. **If** the actual parent instance's first qword is `0x140EDE188`, then its candidate entries are `0x140EDE1B8` (observed static pointer `0x140006190`) and `0x140EDE2E0` (not inspected). The presence of the repeated `0x140006190` could indicate a stub/fallback; it would be premature to assign descriptor-getter semantics without inspecting the target body and confirming the instance.
+
+## Focused next read-only evidence
+
+Use the existing script with `TRACE_STATIC_BYTES` and `TRACE_DATA_SITES` only at the **correct** candidate entry addresses, plus two known constructor data-reference machine windows, and a bounded function body for the pointer already observed in the getter candidate:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_STATIC_BYTES": ["0x140ede1b8", "0x140ede2e0"], "TRACE_DATA_SITES": ["0x140ede1b8", "0x140ede2e0"], "TRACE_INSTRUCTION_SITES": ["0x14179e7f8", "0x14179e806"], "TARGET_FUNCTIONS": ["0x140006190"], "__name__": "__main__"})
+```
+
+Verify `.rdata` contents, target function entry if defined, exact constructor store receiver, whether `0x140006190` can return a non-null descriptor, and how the parent vtable is installed. This must precede naming the concrete `+0x158` transfer method or connecting it to a signed Windows production Booter resource. Firmware/header/signature/patch source, runtime physical AD102/GA102 selection, actual nested `+0x170/+0x250` invocation and hardware recovery remain unproved. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Immutable recovery/process audit unchanged; no source-code changes or new runtime tests were performed.
+
+---
+
 # 2026-11-06 16:47 PST — Parent Falcon interface vtable offsets +0x30 and +0x158 proven by full bounded CALL trace
 
 ## Original report identity and scope
