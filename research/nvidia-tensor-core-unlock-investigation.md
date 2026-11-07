@@ -1,3 +1,53 @@
+# 2026-11-06 17:48 PST — Falcon outer descriptor getter guard writer and condition resolved; root-interface association strengthened
+
+## Original report and exact completion scope
+
+Original user-uploaded read-only Ghidra report `nvlddmkm-61742-booter-discovery-20261106-174800-556033.txt`: verified **12,139 bytes, 354 physical lines**, SHA-256 **`41eb0cc757fdd0e5a346d3007d2676052a5c9d277b373b1b1de07b7b85e5d543`**. Pinned Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`, `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. Final `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.268`. Full `FUN_140578210` decompilation **unclipped** (2,307 C characters, cap 65,536); one 17-instruction vicinity trace at `0x1405783B2` and complete existing CALL enumeration, **9** recorded, no cap. `STATUS=COMPLETE` concerns only these static queries, not execution on the dual-GPU host.
+
+## Exact guard-value producer and branch reachability
+
+`FUN_140578210(longlong param_1,longlong param_2)` uses `param_1` as the containing device/state context, `param_2` as the pointer to the large destination object (outer candidate). It obtains a state pointer `lVar6` by reading `*(param_2+0x190)` in the displayed machine assembly (Ghidra C shows `(param_2+400)` decimal) followed by `*(+0x18)`. The C may dereference assumed live pointers even when zero, so no claim of safe runtime reachability or physical alias is implied.
+
+On the normal path, before the flag assignment it calls `FUN_14017F730`, `FUN_140577EC0(param_1,param_2)`, `FUN_14017F6D0(param_1)` and then **`iVar5=FUN_140579FF0(param_1,param_2)`**. Only if this status equals zero does it call **`FUN_1406BB9A0(param_1,lVar6)`**, invoke a CFG guarded function pointer loaded from `*(param_2+0x2B0)` at `0x14057833D..0x14057834A`, and continue to the gate assignment. The guarded pointer's **effective target is not identified** by this report. On nonzero `FUN_140579FF0` status, it logs/forwards an error and returns that status without the visible `+0x3518` assignment.
+
+### Complete decompiled condition (only on `FUN_140579FF0` success path)
+
+```c
+char blocked =
+    ((*(longlong *)(param_1 + 0x2690) != 0) &&
+     (*(char *)(*(longlong *)(param_1 + 0x2690) + 0x248) != 0))
+    ||
+    ((*(longlong *)(param_1 + 0x25E0) != 0) &&
+     (*(char *)(*(longlong *)(param_1 + 0x25E0) + 0x2A0) != 0));
+*(uint8_t *)(param_2 + 0x3518) = blocked ? 1 : 0;
+*(uint32_t *)(param_2 + 0x351C) = 0;
+*(uint32_t *)(param_2 + 0x3524) = 0;
+```
+
+This C pseudocode restates the machine path at `0x140578389..0x1405783C4`: `MOV RAX,[RDI+0x2690]`, `CMP byte ptr [RAX+0x248],0`, `CMP byte ptr [RSI+0x2A0],0`, conditional `MOV AL,1` / `XOR AL,AL`, then **`0x1405783B2 MOV byte ptr [RBX+0x3518],AL`**, followed by zero stores at `+0x351C` and `+0x3524`. The source values are **two state flags**, not signed firmware bytes. The offset gate `+0x3518` becomes `1` if either state flag is set and `0` only if both are absent/clear; this is a static assignment rule, not the actual observed hardware state.
+
+## Stronger evidence of outer root-interface membership, with remaining ABI limit
+
+`TARGET_CALLER` includes **DATA** reference `0x140E766A8` to `FUN_140578210`; earlier read-only constructor analysis verified root interface pointer `0x140E763F0` installed at outer base, so `0x140E766A8 = 0x140E763F0 + 0x2B8`. The independent getter `FUN_1405785E0` is referenced at `0x140E766C8 = root+0x2D8` and checks **the same `param_2+0x3518` field** before returning `param_2+0x3E8` and optional literal `0x98`. This is **strong class/interface-level association** of the guard writer and getter with the same rooted outer-object layout. The full Ghidra C and instruction window use `RBX+0x3518` for the writer. The report does not include machine proof of every root invocation's receiver argument ABI nor actual alias/reachability on 4090/3080, and a DATA reference is not a runtime CALL. Do not promote static table membership to physical dispatch proof.
+
+## Status of descriptor and signed Booter dependency
+
+**Proven:** static gate assignment on writer's successful branch, two upstream state flag sources and reset of outer `+0x351C/+0x3524`; conditional getter returns an in-object pointer `outer+0x3E8` iff gate is zero. **Not proven:** contents, producer, actual size/format of region `outer+0x3E8` (getter optional `0x98` output alone is not signed Booter metadata); function-pointer target at `outer+0x2B0`; physical class selector for RTX 4090/RTX 3080; where Windows signed Booter image/wrapper/signatures come from; actual nested Falcon HS loader callback invocation/crypto acceptance; recovery. All three known `outer+0x308` callbacks remain closed as bounded address encoders, not actual DMA or firmware transfers.
+
+## Next exact read-only original-Ghidra Python 3 command
+
+Because the guard write itself is resolved, focus on its **three concrete setup/initialization callees** with plausible producer/consumer proximity, all directly observed on the 17:48 trace: `FUN_140577EC0` (pre-init), `FUN_140579FF0` (success-gating init), and `FUN_1406BB9A0` (post-success state/descriptor helper). None has been decompiled in the present evidence, and proximity does not establish that any writes `outer+0x3E8`:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140577ec0", "0x140579ff0", "0x1406bb9a0"], "FULL_DECOMP_MAX_CHARS": 131072, "__name__": "__main__"})
+```
+
+Inspect `param_2+0x3E8`, `param_2+0x3518`, propagated pointers, descriptors, any signed image byte sources and gating errors. Only if a helper accesses or modifies the correct outer object/region should its child calls be followed. If all three lack the producer, do not claim that bytes are never written: inspect grounded other object-initializer or indirect callback paths, including `outer+0x2B0`, without broad global offset matching. `FULL_DECOMP_MAX_CHARS=131072` is permitted by the existing script, 3 targets within its cap of 4, read-only identity-checked and produces explicit `STATUS`/`REPORT`.
+
+**Gates unchanged:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. No source/firmware edits or hardware transaction occurred; immutable recovery audit untouched.
+
+---
+
 # 2026-11-06 17:41 PST — Exact outer-object getter-guard offset `+0x3518` write candidate found in `FUN_140578210`
 
 ## Original user report; verified complete bounded read-only scan
