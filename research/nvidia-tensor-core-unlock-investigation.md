@@ -1,3 +1,33 @@
+# 2026-11-06 17:26 PST — Constructor root vptr machine-store confirmed; candidate getter dispatch function resolved
+
+## Source integrity and limited result
+
+Original uploaded report `nvlddmkm-61742-booter-discovery-20261106-172617-217613.txt` (8,339 bytes; SHA-256 `2e5ddaacb5e1ba1204d6cb822345328194ec5d1a5567435ad53f12ae1e6a7fca`). Imported Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. This original report ended `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.266`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. It performed two 64-byte `.rdata` reads, two defined-reference inspections, two constructor instruction windows and one full 3,590-character C decompilation (`clipped=False`, limit 16,000); no GPU/runtime or database mutation. No inference of runtime GPU choice or signed firmware provenance is permitted.
+
+## Verified static object and method pointer chain
+
+1. `FUN_14017AF30` allocates or reuses an outer object of **0x3550 bytes**; `FUN_1400DF9F0(puVar3,0,0x3550)` zeroes it. `puVar1=puVar3+0x1E` in eight-byte units is embedded owner **outer+0xF0**. The C and machine windows agree: at `0x14017B21D` `LEA RAX,[0x140E764A8]`, then at `0x14017B22B` `MOV [RSI],RAX` writes the embedded-owner table. At `0x14017B231` `LEA RAX,[0x140E763F0]`, then `0x14017B23B` `MOV [RDI],RAX` installs the **outer root interface pointer**. These are true machine stores, not just decompiler assignments.
+2. The preceding `FUN_140178DD0` (`parent +0x30` dispatch entry in `0x140E764A8`) subtracts `0xF0` from its `RDX` receiver, loads the outer's root pointer, then reads the root pointer's **`+0x2D8`** function slot into `RAX` before tail-jumping via CFG helper `0x140E02AA8`. Given the newly machine-confirmed root pointer `0x140E763F0` **and no subsequent replacement on the actual invoking path**, that candidate slot address is **`0x140E766C8`**.
+3. This report reads `STATIC_QWORD0_LE=0x00000001405785E0` at `0x140E766C8`; defined DATA outbound resolves the value to executable **`FUN_1405785E0`**. There are zero direct incoming XREFs to the slot, which does not rule out vtable-indirect use. The root `.rdata` head `0x140E763F0` itself begins with QWORD `0x140E768E0` (function UNKNOWN), and has uncapped DATA incoming references `0x14017B231`, `0x14017B23B`, `0x140E763A0`. The candidate slot lies beyond other adjacent interface heads; this does **not** prove a conventional flat vtable extent, and dynamic root replacement or alternate ABI/receiver alias remains unverified. **Do not yet assert `FUN_1405785E0` returns a valid descriptor.**
+4. The other embedded-owner entry `+0x158 → FUN_140179130` subtracts `0xF0` and reads an actual target pointer from outer-instance field **`outer+0x308`**, then invokes CFG. The complete `FUN_14017AF30` C does **not** visibly assign a function pointer directly to this field after initial zeroing. It does call `FUN_140179580(puVar3,lVar5,lVar7)` immediately after both interface assignments and `FUN_1401793C0` later on the full success path. Side effects in these callees and later runtime writes remain unresolved; the absence of a direct constructor C store is not proof the callback stays null.
+5. The full constructor requires class descriptor lookups for IDs `0x74BC71` and `0x34A6D6` and success through `FUN_14173CE00`, `FUN_141752AA0`, `thunk_FUN_14056A280`, and `FUN_141750C80` before successful post-initialization / return. This is constructor control flow, **not** actual hardware class or callback reachability for either NVIDIA card.
+
+## Relation to historical evidence
+
+Older original-driver evidence already described `FUN_140179580` as an architecture-conditioned outer callback/function-pointer initializer writing at least `outer+0x1B0..+0x278`, **but its decompilation was clipped**. The newly important `outer+0x308` pointer's initializer was not proven by that prior excerpt. An earlier complete body of `FUN_1401793C0` covers flags (`+0x58`, `+0x104`, `+0x3C3..+0x3E1`) and showed no direct signed Booter source; re-running that known function is lower priority than the unresolved initializer and new getter candidate. The constructed `0x9B0` nested Falcon dispatch object and `+0x170` loader callback remain a **separate object**.
+
+## Bounded next original-Ghidra Python 3 command
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1405785e0", "0x140179580"], "FULL_DECOMP_MAX_CHARS": 131072, "__name__": "__main__"})
+```
+
+Classify `FUN_1405785E0` as the **conditional** getter target, looking for descriptor return/output, error fallback, delegation and actual signature/firmware byte provenance. Recover the **complete** `FUN_140179580` constructor-time callback initializer (previously clipped), specifically seeking writes to `outer+0x308` and identifying the controlling class/architecture branches and concrete stored code pointers. `FULL_DECOMP_MAX_CHARS=131072` is within the existing script's opt-in bound; if either function is still clipped (`STATUS=PARTIAL`), constrain a later run with focused terms rather than interpreting absent output as absence of writes. No repo source, tests or hardware actions needed for this static step.
+
+**Unresolved gates:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. No signed Windows Booter provenance, actual loader invocation, exact AD102/GA102 runtime branch, cryptographic acceptance or physical recovery proven.
+
+---
+
 # 2026-11-06 17:22 PST — Alternative parent methods forward through outer-object pointer sources; CFG helper is not the effective target
 
 ## Original read-only report and completion scope
