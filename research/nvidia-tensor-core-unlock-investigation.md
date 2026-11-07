@@ -1,3 +1,36 @@
+# 2026-11-06 17:41 PST — Exact outer-object getter-guard offset `+0x3518` write candidate found in `FUN_140578210`
+
+## Original user report; verified complete bounded read-only scan
+
+Original uploaded `nvlddmkm-61742-booter-discovery-20261106-174125-575444.txt`, independently read from supplied sandbox path; **2,339 bytes, 31 physical lines**, SHA-256 **`d20451fefcf3c614fb141189099d472f1b191b41681cb7f00b0ff596bc5d6db7`**. Imported Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `DECOMPILATION=SKIPPED` explicitly. `STATUS=COMPLETE` after 0.103 seconds. Exact displacement scan: `SCAN_SLOT_DISPLACEMENT=0x3518`, `SLOT_SCAN_FOCUS=write`, max recorded 80, 12 executable blocks scanned, 19,689,472 bytes examined, `raw_hits=11`, `distinct_instruction_candidates=8`, `recorded=1`, `capped=False`, `scan_complete=True`, `selected_candidates=1`. This **proves completion of this limited direct-displacement write filter**, not all possible writes to any object or hardware behavior.
+
+## Concrete write lead and relation to already-confirmed getter
+
+Only filtered write candidate from the existing Ghidra instruction listing:
+
+```asm
+0x1405783B2  MOV byte ptr [RBX + 0x3518], AL
+; containing defined function: FUN_140578210(0x140578210)
+```
+
+The earlier complete `FUN_1405785E0` body (conditional outer root-vtable candidate via slot `0x140E766C8`) checks `*(byte *)(param_2 + 0x3518) != 0` and returns null if set; when zero, returns `param_2+0x3E8` and optionally stores literal `0x98` through `param_3`. Therefore this literal-offset write is a **strong, newly grounded candidate for the getter's guard-byte producer**. However the scan does **not** establish that `RBX` at `0x1405783B2` aliases the same `0x3550`-byte object as getter `param_2`, nor which value is placed in `AL` or which branch makes the write reachable. There are 8 distinct instructions containing the displacement, but only one matched the script's direct-memory-write syntax. Absence of other filtered hits does not rule out computed address, block zeroing, nonliteral displacement, or unvisited runtime code. The nearby VA of getter/candidate does not substitute for an object-alias proof.
+
+**Interpretation boundary:** Neither the exact write nor the getter establishes the bytes/producer of `outer+0x3E8`, a signed Windows Booter descriptor, a live nested `+0x170/+0x250` HS loader invocation, GPU physical class selection, firmware crypto acceptance, or physical recovery. The previously classified alternative-parent `+0x158` callbacks remain **bounded address encoders**, not DMA/Booter transport routines.
+
+## Next read-only, source-anchored Ghidra probe
+
+Decompile only the defined candidate writer function, show an existing instruction window at the exact write, and include bounded existing CALL contexts:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140578210"], "FULL_DECOMP_MAX_CHARS": 65536, "TRACE_INSTRUCTION_SITES": ["0x1405783b2"], "TRACE_FUNCTION_CALLS": ["0x140578210"], "__name__": "__main__"})
+```
+
+Check the provenance of RBX and AL, conditions determining AL and execution of the store, whether RBX truly aliases the 0x3550-byte Falcon outer object (including any offsets or wrappers), and which caller supplies the relevant object/class. If the relationship holds, trace only concrete producers/consumers that set/clear the guard and populate/copy the `outer+0x3E8` region. Do not confuse a textual `[register+0x3518]` match with proven object identity. The repo script is unchanged, MD5 pinned, read-only and ends with explicit `STATUS` and `REPORT`.
+
+**Gates:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Active implementation remains blocked; no GPU/UEFI test authorized.
+
+---
+
 # 2026-11-06 17:35 PST — All three alternative-parent +0x158 callback bodies are address encoders, not DMA or signed-Booter transfers
 
 ## Original Windows Ghidra 617.42 evidence and execution scope
