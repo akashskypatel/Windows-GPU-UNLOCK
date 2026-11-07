@@ -1,3 +1,64 @@
+# 2026-11-06 17:35 PST — All three alternative-parent +0x158 callback bodies are address encoders, not DMA or signed-Booter transfers
+
+## Original Windows Ghidra 617.42 evidence and execution scope
+
+Original user-uploaded `nvlddmkm-61742-booter-discovery-20261106-173559-777188.txt`: independently verified **5,836 bytes**, **376 physical lines**, SHA-256 **`c72a9ff8c1f2bffa2fbc647864ae1cba188fbe60d1602972153adfcdcaf75a6a`**. Imported original Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, loaded base `0x140000000`. `SCAN_STRINGS=SKIPPED_BY_CALLER`, `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`, final `STATUS=COMPLETE`, elapsed 0.258 seconds, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. Full Ghidra C output, unclipped for all requested functions: `FUN_14056B9A0` 955 C characters, `FUN_140576DE0` 1,014, and `FUN_14056D670` 1,018; per-target limit 131,072. Completion is scoped to static decompilation; driver runtime branch and physical GPU actions remain unproven.
+
+## Correction to earlier vocabulary: `+0x158` is an address-encoding/translation interface
+
+The prior names **'resource-transfer candidate'** and **'DMA/resource-transfer callback'** were provisional interpretations from a virtual invocation, not established function semantics. This report **disproves that characterization for all three implementations installed by `FUN_140179580` into `outer+0x308`**. The previously machine-proven alternative-parent `+0x158` forwarding thunk `FUN_140179130` adjusts embedded `RDX` receiver by `-0xF0`, loads an indirect target from `[outer+0x308]` to `RAX`, then CFG-calls that target. The full constructor-time initializer selects among `FUN_14056B9A0` / `FUN_140576DE0` / `FUN_14056D670` based on a class selector. Each target **only encodes/validates a region-relative offset into a 64-bit address**, with an output parameter and status codes. None directly copies firmware bytes, maps a resource, submits DMA, invokes a nested Falcon loader, authenticates signatures, or performs an unlock. The `+0x158` method can serve address calculation within a larger resource flow, but the method itself is not a transfer or signed-image producer.
+
+## Exact observed parameter behavior and statuses
+
+All three functions have Ghidra prototype `undefined8 fn(undefined8 param_1, undefined8 param_2, undefined4 param_3, ulonglong param_4, longlong *param_5)`; the first two arguments are unused in the shown C body. `param_3` selects a region/type; `param_4` is an unsigned offset tested against a per-region maximum, and `param_5` is a required output pointer. The logic, for all three, is:
+
+```c
+if (param_5 == NULL) return 0x1F;
+switch (param_3) { /* choose base and inclusive maximum offset */
+    default: return 0x2C;
+}
+if (max_offset < param_4) return 0x37;
+*param_5 = base + param_4;
+return 0;
+```
+
+The `0x37` bound test is **strict `<`**: `param_4 == max_offset` is accepted. This does **not** prove no 64-bit wraparound in the later `base+offset` expression or establish address-space provenance. These codes are directly observable return constants; their exact NVIDIA named error-symbol translations are not proven. `0x1F` = output pointer null, `0x2C` = unsupported selector, `0x37` = offset exceeds selected bound, `0` = successful output write.
+
+## Explicit address bases and permitted offsets from full C bodies
+
+Each cell is **`base / maximum param_4`**, in hex; two's-complement negative literals below are normalized to their 64-bit unsigned bit patterns for clarity. A dash means the function returns `0x2C` for that selector.
+
+| param_3 | `FUN_14056B9A0` | `FUN_140576DE0` | `FUN_14056D670` |
+|---:|---|---|---|
+| 0 | `0x0 / 0x100000000` | `0x100000 / 0x80000` | `0x100000 / 0x80000` |
+| 1 | `0x100000000 / 0x100000000` | `0x180000 / 0x80000` | `0x180000 / 0x80000` |
+| 2 | `0x200000000 / 0x100000000` | `0x1200000 / 0x80000` | `0x1200000 / 0x80000` |
+| 3 | `0x2000000000000000 / 0x100000000` | `0x2000000000000000 / 0x4000000` | `0x2000000000000000 / 0x4000000` |
+| 4 | `0x6180000000000000 / 0x800000000000` | `0x6060000000000000 / 0x20000000000000` | `0x7400000000000000 / 0x400000000000000` |
+| 5 | `0x8180000000000000 / 0x800000000000` | `0x8060000000000000 / 0x20000000000000` | `0x9400000000000000 / 0x400000000000000` |
+| 6 | `0xA000000000000000 / 0x2000000000000` | `0xA000000000000000 / 0x2000000000000` | `0xA000000000000000 / 0x200000000000000` |
+| 7 | — | `0x80000 / 0x80000` | `0x80000 / 0x80000` |
+
+The specific region numbering, GPU MMIO/virtual vs physical semantics, and which target is selected for **either physical RTX 4090 AD102 or RTX 3080 GA102** are unresolved. These look like region-relative address encodings, but those high-level labels require more driver/type evidence.
+
+## Distinct open dependency: getter-provided region and gate
+
+The earlier fully decompiled conditional getter `FUN_1405785E0` (under confirmed root interface setup and conditional receiver alias) returns **`outer+0x3E8`** when the byte at **`outer+0x3518` is zero**, writes `0x98` through an optional output pointer, and otherwise returns null. Today's three callbacks **do not initialize this region or guard byte**, and their return values are not the descriptor contents. No production Windows Booter image source, descriptor bytes/signatures, nested Falcon `+0x170/+0x250` invocation or actual AD102/GA102 runtime object selection is proven. The 0x98 output remains a fixed value, not a proved signed-Booter descriptor length/type. The prior search for the `outer+0x308` writer is CLOSED; *that* callback is now semantically classified, so do not repeat it.
+
+## Next grounded, bounded read-only Ghidra lead
+
+Use the existing MD5-pinned script's **exact displacement write** filter for the distinctive object-gating field `outer+0x3518` (not a generic 0x3E8 all-driver search), with the prior scanner's explicit byte/time/candidate caps:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "SCAN_SLOT_DISPLACEMENT": "0x3518", "SLOT_SCAN_FOCUS": "write", "SLOT_SCAN_MAX_RECORDED": 80, "__name__": "__main__"})
+```
+
+Correlate `SLOT_CANDIDATE` instructions with the **specific 0x3550-byte outer-object** using register provenance and object creation/consumer call chains; arbitrary `[reg+0x3518]` writes alone are offset collisions, not alias proof. The script scans a bounded existing executable listing, makes no Ghidra modifications and prints a final status/report. `STATUS=PARTIAL` may mean scan budget or candidate cap; a zero-hit `COMPLETE` cannot exclude computed-address/short-displacement/block copy writers. A genuine guard-byte writer would reveal when the object-level descriptor view is enabled/disabled, and can guide a later targeted `outer+0x3E8` producer trace. Treat any candidate as a lead only; do not infer hardware readiness.
+
+**Authorization unchanged:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Immutable recovery audit untouched.
+
+---
+
 # 2026-11-06 17:30 PST — Alternative Falcon getter exposes a fixed outer buffer; transfer callback selection fully recovered
 
 ## User-run source and completion
