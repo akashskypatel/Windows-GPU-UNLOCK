@@ -1,3 +1,43 @@
+# 2026-11-06 18:00 PST — Falcon state allocation and CFG-indirect record handlers resolved to concrete pointer-source slots, not yet code targets
+
+## Source and completion
+
+Original user-uploaded report `nvlddmkm-61742-booter-discovery-20261106-180030-581593.txt`: **20,318 bytes**, **526 physical lines**, SHA-256 **`b79eec6788139e804ca846b4a61e0e50dbc5515fe9c6e3c893b81c8fc1531dea`** verified directly from provided mounted report. Imported original Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. Run was `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`, final **`STATUS=COMPLETE`**, elapsed **0.296s**. `FUN_1406B2F10` C decompilation completed unclipped (**2,865 characters**, output limit 131,072); CALL traces completed for `FUN_140579FF0` (**13** calls) and `FUN_1406BB9A0` (**5** calls), neither capped. This verifies the bounded static traces, **not** runtime AD102/GA102 selection, firmware acceptance or hardware recovery.
+
+## Falcon nested-state allocator/status helper `FUN_1406B2F10(param_1=context,param_2=nested_state)`
+
+On entry, `lVar1 = *(nested_state+0x4B0)` retrieves a back-reference which the earlier Falcon dispatch-object analysis tied to the embedded owner `outer+0xF0` **on the observed construction path**. It calls `FUN_14010DC60(lVar1,&DAT_140E9CD80)` for another related interface/type, and returns **`0x56`** if that result is nonnull and its byte `+0x50` is nonzero. If that check does not reject, it writes nested state `+0x459=1`, `+0x4C8=0`, sets `+0x528=1` only if previously zero, sets `+0x4B8=&DAT_140E8AAE8`, and `+0x4C0=1`. The function calls `FUN_1401BC9A0((*(uint32*)(context+0x5364)>>22)&3,"Falcon Inst")`; the literal label is static code evidence, **not proof of a specific active Falcon instance or GPU**.
+
+On its `*(byte*)(nested_state+0x45D) != 0` branch, it allocates **0x68 bytes** via `FUN_1400FF170`, stores pointer at nested `+0x4E8`, zeros it, then allocates **`*(byte*)(nested+0x45E) * 0xD0` bytes**, storing that pointer in the first allocation at `+0x48`, and zeros the second allocation. The preceding `FUN_140579FF0` writes WORD **0x0201** to nested `+0x45D`, i.e. byte `+0x45D=1` and `+0x45E=2` under normal byte interpretation; under those exact observed conditions this yields **0x1A0 bytes** for the second allocation. The separate nested `+0x460` record-count field is set to **0x100**, and `FUN_1406B2F10` checks that a nonzero count does not exceed **256**; neither the allocated 2×0xD0 structure nor the 256 record count proves any relationship to signed Booter bytes or the outer getter region. Allocation failure returns `0x51`; count out of range returns `0xFFFF` and invokes `FUN_1406B3200` cleanup.
+
+The function copies context `+0xE98` into nested `+0x434`, and conditionally invokes one **CFG-guarded indirect callback** involving parent `lVar1` and nested `+0x41C`, with an additional check of `nested+0x420`. Another **CFG-guarded indirect callback** takes context and parent pointer. It also reads `RmDisableRiscvDebugInfoBreakpoint` under a conditional `nested+0x528` state and sets nested `+0x295`. The effective targets of both guarded callbacks are **not determined** by this decompilation. It finally calls **`FUN_140118320(context,nested_state)`** and returns its status (with logging on error). This is **a concrete newly grounded downstream callee**, not an established descriptor/firmware source.
+
+**No direct write or known producer of `outer+0x3E8` appears in this complete function**. Initializing Falcon-related data structures does not itself prove secure HS loader invocation or signed image availability.
+
+## Original machine-instruction provenance of three indirect CFG targets
+
+1. `FUN_140579FF0:0x14057A0BF` reads `MOV RAX,qword ptr [RDX+0x1D0]`, immediately before **`0x14057A0C6 CALL qword ptr [0x140E02AA8]`**, with `RCX=RSI` already set and nested configuration writes preceding. Ghidra C shows an anonymous indirect call with `param_1`, but assembly identifies the **function pointer as a field at the object in RDX, apparently the outer param_2 on this path**. Do not confuse the CFG guard helper with this effective callback. Earlier full `FUN_140179580` initializer stored class-selected functions at outer `+0x1D0`; exact runtime selector and callback body have not been resolved for this call.
+2. `FUN_1406BB9A0:0x1406BBA10..0x1406BBA27` gets `RDX=[RDI+0x4B0]` from the nested-state parameter, sets `R8D=record_index`, `RCX=context`, `RAX=[RDX]`, then **`RAX=[RAX+0xE0]`** before CFG CALL `0x1406BBA27`. The first callback therefore comes from **the parent-interface virtual slot `+0xE0`**, and the function's result is subsequently used as the record pointer. The report does not identify its concrete code target or prove the output is always valid.
+3. `FUN_1406BB9A0:0x1406BBA83..0x1406BBA94` likewise gets `RDX=[RDI+0x4B0]`, `RAX=[RDX]`, then **`RAX=[RAX+0xE8]`** before a second CFG CALL at `0x1406BBA94`, after initializing the record's `+0`, `+0x4`, `+0x8`, `+0x10` and `+0x18` fields. This is a second **parent-interface virtual slot `+0xE8`** target, not the CFG helper itself.
+
+The previously confirmed `FUN_14017AF30` constructor installs embedded parent-interface table **`0x140E764A8` at outer+0xF0**. Under the **unproven requirement that the actual nested `+0x4B0` parent pointer refers to that embedded interface and the vptr remains unmodified at the CALL**, slot `+0xE0` computes to candidate `.rdata` VA **`0x140E76588`**, and slot `+0xE8` to **`0x140E76590`**. These addresses and their targets have **not been inspected in the current report**; must read actual bytes/defined outgoing references before naming functions or claiming actual caller reachability.
+
+## Implications, explicit unknowns and next bounded run
+
+The user-requested three-way next investigation (status helper + two caller CALL windows) completed. It established concrete Falcon-related nested state initialization and a **new receiver/vtable path for two record callbacks**; it did **not** establish contents/producer of conditional `outer+0x3E8` getter region, the provenance of Windows signed production Booter image/wrapper/signatures, real AD102/GA102 object selection, or actual nested HS loader `+0x170/+0x250` invocation. The outer `+0x308` methods remain fully proven as bounded address **encoders**, not DMA/firmware transfers.
+
+**Next original MD5-pinned read-only Ghidra Python 3 command:**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140118320"], "FULL_DECOMP_MAX_CHARS": 131072, "TRACE_FUNCTION_CALLS": ["0x1406b2f10"], "TRACE_STATIC_BYTES": ["0x140e76588", "0x140e76590"], "TRACE_DATA_SITES": ["0x140e76588", "0x140e76590"], "__name__": "__main__"})
+```
+
+This inspects the two exact **conditional parent vtable candidate slots** `0x140E76588` / `0x140E76590` (64-byte static `.rdata` windows and existing defined data refs), decompiles the **actual named downstream final status call `FUN_140118320`**, and prints bounded CALL windows in `FUN_1406B2F10` so its two indirect call target-pointer sources can be recovered. If a slot points to an executable implementation, follow only that verified function next; the helper alone does not establish Booter semantics. All steps are read-only, no new code or hardware action; capped/unavailable data will be explicitly `PARTIAL`.
+
+**Authorization gates unchanged:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`; immutable recovery audit untouched.
+
+---
+
 # 2026-11-06 17:51 PST — Three Falcon outer setup helpers classified; getter-region producer still missing
 
 ## Original report identity and read-only completion
