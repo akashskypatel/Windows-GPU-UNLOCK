@@ -1,3 +1,32 @@
+# 2026-11-06 16:12 PST — Nested parent-interface callback and 0x668 status wait; large HS-path decompilation incomplete
+
+## Source identity and verification boundary
+
+User-uploaded `nvlddmkm-61742-booter-discovery-20261106-161258-492358.txt`: 26,848 bytes, SHA-256 `14d5fa7c2c85beb1764e6ce65dac3c1f26063d252b1f55b4b517223dc613d274`, 1,219 physical lines. The Ghidra program matches original Windows 617.42 `nvlddmkm.sys`, MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. `SCAN_STRINGS=SKIPPED_BY_CALLER`, four instruction sites successfully displayed. `FUN_140BF4DB0` has `DECOMPILER_BEGIN ... clipped=False`; `FUN_140BF1390` has `clipped=True` and explicitly `DECOMPILER_OUTPUT_INCOMPLETE=TRUE`. Overall `STATUS=PARTIAL`, elapsed 0.438 s, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. Do not represent the clipped function as fully classified.
+
+## New machine-level details
+
+- `FUN_1402E7E60:0x1402E7E64`: `MOV [RCX+0x4B0],RDX`; immediately calls `FUN_1406B3FD0` with the unchanged `RCX`. This reconfirms the independently established dispatcher-to-embedded-parent store, not a runtime callback.
+- `FUN_140BF1390:0x140BF13C3`: `MOV R12,[RDX+0x4B0]`, while `RCX+0x2550` supplies another object and `RDX+0x27F` supplies a byte; the **visible decompiler prefix** reads `param_2+0x4C4` as several class/tag predicates, invokes helpers including `FUN_1406B94D0`, `FUN_14010DC60(parent,&DAT_140EE8790)` on a conditional branch, checks `param_2+0x2C0` metadata, and enters buffer/mapping helper calls `FUN_1401B9020`, `FUN_1401B87B0`, `FUN_1406B4560`, `FUN_1406B99D0`. It also contains guarded indirect dispatches whose concrete targets are unresolved. These support a substantial HS-path preparation/dispatch hypothesis, **not a proven signed Booter image source**, and the rest of the body is missing from the report.
+- `FUN_140BF2740:0x140BF2786`: `MOV R8,[RDX+0x4B0]`, alongside reads of `+0x308/+0x318/+0x320/+0x328`; this matches previously reviewed signature-layout transformation, still without proving `RDX` aliases a specific instantiated nested object at runtime.
+- `FUN_140BF4DB0:0x140BF4DCF..0x140BF4DE0`: `MOV RDX,[RDX+0x4B0]; MOV RAX,[RDX]; MOV RAX,[RAX+0x140]; CALL [0x140E02AA8]`, with CFG guard dispatch. This is an **actual machine-level indirect call sequence through a parent interface**, not a resolved target identity or observation that the callback was executed. The complete decompilation reads status/control address `0x668` using `FUN_1406B9810`, checks bit `0x10`, issues a guarded callback with `0x668,0`, initializes a wait context via `FUN_140114E70`, then while bit `0x1` is unset calls `FUN_140114740(...,0x92D)` and checks multiple error/state fields before further reads. The actual timeout/error guarantees of the helper and physical recovery behavior are **OPEN**. Decompiler output omits the vtable target at the initial guarded call; prefer machine-level ABI for the call target.
+
+Four incoming refs to `FUN_140BF1390` are DATA (`0x1414692B4`, `0x140E199E8`, `0x1417E885A`, `0x1417E8861`); six incoming refs to `FUN_140BF4DB0` are DATA (`0x141469458`, `0x1410DB744`, `0x1410DB754`, `0x140E19A5C`, `0x1417E97D6`, `0x1417E97DD`). DATA references are candidates for callback slot publication, not direct CALLs.
+
+## Next bounded investigation and source change
+
+The existing targeted Ghidra script previously clipped full decompiled output at 20,000 characters. Added an **opt-in** `FULL_DECOMP_MAX_CHARS` (validated integer 256..131072; default remains 20000) for complete C body reports, preserving `PARTIAL` when a new cap is still hit. Existing host-only tests were expanded to check explicitly extended output, still-clipped output, and invalid limits; **not claimed executed** until an independent run confirms them. This changes only read-only report formatting, not analysis state or device behavior.
+
+After updating the local checkout, run:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140bf1390"], "FULL_DECOMP_MAX_CHARS": 131072, "TRACE_INSTRUCTION_SITES": ["0x1417e885a", "0x1417e97d6"], "__name__": "__main__"})
+```
+
+Inspect `FUN_140BF1390` full flow and exact instructions at the two DATA registration sites. Resolve the callback slots, parameter receiver, and any actual propagation into `FUN_140BF3880` third argument before claiming a production Booter source. No active GPU detach, DMA, SEC2 execution, FLR, selector/driver mutation, SPI, persistent boot changes or firmware flashing; `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-06 16:06 PST — Complete Windows 617.42 +0x4B0 displacement scan identifies focused Falcon reader candidates
 
 ## Source and actual coverage

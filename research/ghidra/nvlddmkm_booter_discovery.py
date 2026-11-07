@@ -32,6 +32,7 @@ MAX_INSTRUCTION_SITES = 4
 MAX_SLOT_CANDIDATES = 80
 DECOMP_TIMEOUT_SECONDS = 12
 MAX_DECOMP_CHARS = 20000
+MAX_FULL_DECOMP_CHARS = 131072  # Opt-in upper limit for full target C report output.
 
 # Exact ASCII string virtual addresses from the user's Ghidra 617.42 CSV.
 # These are data anchors, not established function addresses or runtime selectors.
@@ -710,6 +711,9 @@ def targeted_decompile(program, addresses, log):
         return True
     if len(addresses) > MAX_TARGETS:
         raise ValueError('too many explicit target addresses; limit=%d' % MAX_TARGETS)
+    full_output_limit = globals().get('FULL_DECOMP_MAX_CHARS', MAX_DECOMP_CHARS)
+    if type(full_output_limit) is not int or not 256 <= full_output_limit <= MAX_FULL_DECOMP_CHARS:
+        raise ValueError('FULL_DECOMP_MAX_CHARS must be an integer from 256 to %d' % MAX_FULL_DECOMP_CHARS)
     from ghidra.app.decompiler import DecompInterface
     from ghidra.util.task import TaskMonitor
     decompiler = DecompInterface()
@@ -757,9 +761,10 @@ def targeted_decompile(program, addresses, log):
                     all_targets_completed = False
                     log('FOCUS_INCOMPLETE=TRUE no selected evidence or some excerpts omitted')
             else:
-                clipped = len(code) > MAX_DECOMP_CHARS
-                log('DECOMPILER_BEGIN entry=%s clipped=%s' % (entry, clipped))
-                log(code[:MAX_DECOMP_CHARS])
+                clipped = len(code) > full_output_limit
+                log('DECOMPILER_BEGIN entry=%s clipped=%s total_chars=%d output_limit=%d' % (
+                    entry, clipped, len(code), full_output_limit))
+                log(code[:full_output_limit])
                 if clipped:
                     all_targets_completed = False
                     log('DECOMPILER_OUTPUT_INCOMPLETE=TRUE clipped C output; use DECOMP_FOCUS_TERMS')

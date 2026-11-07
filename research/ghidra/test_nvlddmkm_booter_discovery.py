@@ -136,7 +136,7 @@ class FocusedDecompileTests(unittest.TestCase):
 
 
 class DecompilationCoverageTests(unittest.TestCase):
-    def _analyze(self, c_source):
+    def _analyze(self, c_source, full_output_limit=None):
         """Exercise the real targeted path through a minimal Java API simulation."""
         import types
 
@@ -185,7 +185,9 @@ class DecompilationCoverageTests(unittest.TestCase):
         modules['ghidra.app.decompiler'].DecompInterface = Decompiler
         modules['ghidra.util.task'].TaskMonitor = type('TaskMonitor', (), {'DUMMY': None})
         logs = []
+        options = {} if full_output_limit is None else {'FULL_DECOMP_MAX_CHARS': full_output_limit}
         with patch.dict(sys.modules, modules), \
+             patch.dict(probe.__dict__, options), \
              patch.object(probe, '_address', side_effect=lambda program, address: Address()):
             result = probe.targeted_decompile(Program(), ['0x1401b0e00'], logs.append)
         return result, logs
@@ -211,6 +213,28 @@ class DecompilationCoverageTests(unittest.TestCase):
         self.assertIn(source, lines)
         self.assertIn('DECOMPILER_BEGIN entry=1401b0e00 clipped=False', lines)
         self.assertFalse(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in item for item in lines))
+
+
+    def test_explicit_output_budget_preserves_large_complete_function(self):
+        source = 'BEGIN_FUNCTION\n' + ('x' * (probe.MAX_DECOMP_CHARS + 100)) + '\nEND_FUNCTION'
+        completed, lines = self._analyze(source, full_output_limit=65536)
+        self.assertTrue(completed)
+        self.assertIn(source, lines)
+        self.assertIn('output_limit=65536', '\n'.join(lines))
+        self.assertIn('clipped=False', '\n'.join(lines))
+
+    def test_exceeding_extended_output_budget_is_still_incomplete(self):
+        completed, lines = self._analyze('x' * 66000, full_output_limit=65536)
+        self.assertFalse(completed)
+        self.assertTrue(any('clipped=True' in line for line in lines))
+        self.assertTrue(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in line for line in lines))
+        self.assertNotIn('x' * 66000, '\n'.join(lines))
+
+    def test_invalid_explicit_full_output_limits_are_rejected(self):
+        for limit in (0, -1, True, 131073, '65536'):
+            with self.subTest(limit=limit):
+                with self.assertRaisesRegex(ValueError, 'FULL_DECOMP_MAX_CHARS'):
+                    self._analyze('int main() {}', full_output_limit=limit)
 
 
 class NestedReceiverCandidateTests(unittest.TestCase):
