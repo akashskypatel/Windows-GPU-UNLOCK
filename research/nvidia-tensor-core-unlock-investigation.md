@@ -1,3 +1,25 @@
+# 2026-11-06 16:37 PST — No function-CALL trace despite STATUS=COMPLETE: stale/misrouted source or option
+
+## Source report identity
+
+Original user-uploaded report `nvlddmkm-61742-booter-discovery-20261106-163742-289621.txt`: **1,052 bytes**, SHA-256 `f2b7ff30cf658c26d014d325dd13b7361a512144b9f18c02f113be68b870abc0`, **15 physical lines**. Correct original Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. It says `STATUS=RUNNING`, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `DECOMPILATION=SKIPPED no explicit TARGET_FUNCTIONS provided`, `ELAPSED_SECONDS=0.005`, and final `STATUS=COMPLETE`; no driver/Ghidra mutation.
+
+**Critical discrepancy:** The entire report lacks `FUNCTION_CALLS_BEGIN`, any individual `FUNCTION_CALL`, and `FUNCTION_CALLS_END`. GitHub main as of prior commit `7f1933e7a7638606ece5c92f987bfd128a52bf93` already defines `inspect_function_calls`, consumes `globals().get('TRACE_FUNCTION_CALLS', ())`, and emits BEGIN/END even if zero existing CALL instructions are found in a requested defined function. Accordingly **the requested call trace did not execute**: an older/different local script, or missing/mispassed `TRACE_FUNCTION_CALLS` option, caused the no-op behavior. The report cannot isolate which mechanism was responsible. A no-op `STATUS=COMPLETE` is not successful evidence collection, not an absence-of-CALL finding, and not resolution of the unknown parent interface.
+
+## Status effect and next action
+
+The last independently valid 16:32 static report remains authoritative: `FUN_1402E7CE0` is a generic resource allocation/backing/mapping helper and does not reveal the production Windows Booter asset. The CFG-guarded parent-interface receiver for resource transfer in `FUN_1402EA6F0`, signed descriptor producer and runtime Falcon callback invocation remain unresolved. No code fix is warranted because the intended tracer already exists in the current script.
+
+After pulling `main`, run the following guarded source check and **read-only** trace in Ghidra Python 3:
+
+```python
+src = open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(); assert "def inspect_function_calls(program, targets, log):" in src and "FUNCTION_CALLS_BEGIN entry=" in src and "globals().get('TRACE_FUNCTION_CALLS', ())" in src, "Local Ghidra discovery script lacks TRACE_FUNCTION_CALLS: pull origin main"; exec(src, {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_FUNCTION_CALLS": ["0x1402ea6f0"], "TARGET_FUNCTIONS": [], "__name__": "__main__"})
+```
+
+Verify new report contains `FUNCTION_CALLS_BEGIN entry=1402ea6f0`, `FUNCTION_CALLS_END entry=1402ea6f0 ... capped=False`, and `STATUS=COMPLETE REPORT=...`. If these are absent, retain **NO TRACE EVIDENCE** even if final status says COMPLETE. If capped/missing target, report PARTIAL. No speculative vtable target or production Booter claim is justified; all active gates remain `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-06 16:32 PST — Resource allocation/mapping confirmed; targeted parent-interface CALL trace prepared
 
 ## Complete original-driver report and scope
