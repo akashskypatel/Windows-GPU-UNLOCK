@@ -1,3 +1,44 @@
+# 2026-11-06 17:19 PST — Both resolved alternative Falcon-parent methods decompile to CFG guard-dispatch calls
+
+## Original Windows 617.42 evidence and integrity
+
+Original user-uploaded `nvlddmkm-61742-booter-discovery-20261106-171949-123339.txt`, **1,765 bytes, 59 physical lines**, SHA-256 `60eada4479bddf695cdf0b963703b044d0063e20380b01c55984347695a83be1`. Target NVIDIA Windows `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; `SCAN_STRINGS=SKIPPED_BY_CALLER`; `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`; final `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.252`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. Both requested decompilations succeeded and were **not clipped** (`total_chars=102` each, `output_limit=65536`). A complete decompiler output is not proof that the compiler's/guard's actual runtime target or calling convention was recovered.
+
+## Complete selected decompilations
+
+```c
+void FUN_140178dd0(void) {
+    (*(code *)PTR__guard_dispatch_icall_140e02aa8)();
+    return;
+}
+
+void FUN_140179130(void) {
+    (*(code *)PTR__guard_dispatch_icall_140e02aa8)();
+    return;
+}
+```
+
+| Alternative parent slot | Function | Ghidra incoming references (all `DATA`, **not CALL**) | Supported conclusion |
+|---|---|---|---|
+| `0x140E764A8+0x30=0x140E764D8` | `FUN_140178DD0` | `0x140E0653C`, `0x140E764D8` | No descriptor construction/return is visible directly in this 102-character C; CFG guard-dispatch call needs instruction-level and ABI inspection. |
+| `0x140E764A8+0x158=0x140E76600` | `FUN_140179130` | `0x1413DCC08`, `0x140E065A0`, `0x140E76600` | No resource-copy, DMA or firmware bytes visible directly; same CFG guard-dispatch call requires target-setup analysis. |
+
+**Interpretation boundary:** Both function-pointer slots are populated by different code addresses; both **Ghidra-rendered bodies** only call the pointer named `PTR__guard_dispatch_icall_140e02aa8` and return. Do **not** assert descriptor production, resource-transfer functionality, explicit fallback, signed Windows Booter source, a null return, or an actual runtime dispatch target from this C alone. The decompiler prints `void`, but that may conceal relevant machine registers/ABI and does not establish the virtual method's effective return semantics. The `TARGET_CALLER` report entries are DATA references, not proof of a live invocation. Previous 0x588-byte constructor's concrete zero/not-supported stubs are still scoped to that class, not automatically this parent.
+
+## Next limited original-Ghidra Python 3 instruction inspection
+
+The existing `nvlddmkm_booter_discovery.py` has read-only instruction-window and existing-CALL tracing modes. Run against the same verified imported driver:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x140178dd0", "0x140179130"], "TRACE_FUNCTION_CALLS": ["0x140178dd0", "0x140179130"], "TRACE_DATA_SITES": ["0x140e02aa8"], "__name__": "__main__"})
+```
+
+Inspect at each function's **entry** and around any CALLs to determine whether the guard helper is a tail/indirect-call thunk, what register/memory location supplies the guarded target, whether there is any setup or return-value propagation, and whether `0x140E02AA8` is defined as guard-dispatch-related data in the existing Ghidra map. This command is bounded and does not create instructions, change database state, or operate hardware. If the instruction bodies contain no actual descriptor or transfer logic, record the slot as a guard trampoline and follow only grounded receiver/target producers next. Status COMPLETE proves the limited read, not an unlock path.
+
+Remaining proof gaps: Windows-signed SEC2 Booter asset/descriptor provenance, direct producer→loader argument chain, invocation of nested Falcon callbacks (`+0x170/+0x250`), RTX 4090 vs 3080 runtime class selection, signature acceptance, and physical recovery. Authorization unchanged: `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-06 17:16 PST — Alternative Falcon parent table resolves descriptor and resource-transfer function targets
 
 ## Pinned source and passive scope
