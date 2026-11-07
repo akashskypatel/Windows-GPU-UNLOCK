@@ -1,3 +1,29 @@
+# 2026-11-06 16:29 PST — Full parent-interface resource handoff and 0xF4 status callback analysis; Booter origin unproven
+
+## Provenance and completion
+
+Original user-run report `nvlddmkm-61742-booter-discovery-20261106-162950-226286.txt`: **3,913 bytes**, SHA-256 `444f593cb10e01810bc0d145fef8c78a3ef296468cc7ad171ec33988172b9da7`, 184 physical lines (mixed CRLF/decompiler line endings). The report records pinned Windows 617.42 driver `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra base `0x140000000`, passive existing-reference-map mode, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`, elapsed 0.251 seconds and final `STATUS=COMPLETE`. Both requested targets are full `clipped=False` C at `output_limit=131072`: `FUN_1402EA6F0` 1,917 characters and `FUN_140BF5150` 217 characters. This closes the precise two-function static decompilation, not the secure-boot/hardware gates.
+
+## Exact findings: FUN_1402EA6F0
+
+`FUN_1402EA6F0(param_1,param_2)` is directly called from `FUN_140BF1390` at `0x140BF16CF` and elsewhere from `0x1406B92E1`; it also has DATA references. It obtains an initial value through a CFG-guarded callback and `FUN_14001ADB0` (the meaning of those values is **not determined**). It reads `lVar1=*(param_2+0x4B0)`, fails with `0x55` when null, and on the branch `(*(int*)(param_2+0x528)-2U < 2)` (integer state 2 or 3) makes an unresolved guarded indirect call `(param_1,lVar1,0)` returning `lVar6`. Null `lVar6` yields `0x56`. The code treats `lVar6` as a descriptor-like memory object. When `*(int*)(param_1+0x584C)!=4`, it reads `*(int*)(lVar6+0x10)`, defaults it to `0x2000` when zero (also writes the default back), and **only if** the resource `*(param_2+0x550)` is null, calls `FUN_1402E7CE0(param_1,param_2,param_2+0x558,param_2+0x550,size,uVar3,1)`. The helper is not yet decompiled; its exact role, input source and allocation semantics remain unverified. Then `FUN_1401BB0B0(*(param_2+0x550),1,0)` obtains a mapped address `uVar7`, which the function passes to an unresolved guarded indirect callback along with `(param_1,lVar1,5,uVar7,lVar6+8)`. This establishes *static resource-to-parent-interface transfer* and an apparently descriptor-relative parameter, not a known runtime implementation of the interface method or any link to a production signed Windows Booter descriptor/image. The wrapper reports errors and invokes `FUN_1401BABD0` / `FUN_1401BA330` on the guarded callback failure path; do not infer safe ownership/cleanup without confirming helper contracts and object lifetime.
+
+## Exact findings: FUN_140BF5150
+
+The complete 217-character `FUN_140BF5150(param_1,param_2)` body reads `uVar1=FUN_1406B63F0(param_1,param_2,0xF4)` and returns `CONCAT31((uint3)(uVar1 >> 0x15),~(byte)(uVar1 >> 0xD)) & 0xFFFFFF01`. In other words, the low return bit reflects the inversion of the source bit at index 13, while additional returned bits originate from the source shifted 21 places and packed into higher return bytes; do not simplify this to a one-bit Boolean without resolving caller ABI. **No wait, register write, cleanup, timeout, descriptor handling or signing is present in this callback body.** Any repeated polling/timeout behavior belongs to `FUN_1401148A0` or its callers and remains unproven in the hardware context. It has only incoming DATA references in this report, including `0x140BF250C` from the previously inspected callback registration.
+
+## Next bounded read-only discriminator
+
+Read `FUN_1402E7CE0` to determine whether it merely allocates/maps a buffer or actually obtains signed image bytes; also collect direct caller instruction windows at `0x140BF16CF` and `0x1406B92E1` for target receiver context. Existing script with 131072 character limit:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1402e7ce0"], "FULL_DECOMP_MAX_CHARS": 131072, "TRACE_INSTRUCTION_SITES": ["0x140bf16cf", "0x1406b92e1"], "__name__": "__main__"})
+```
+
+Do not equate `+0xF4` or `+0x65C` register offsets to nested callback slots, and do not infer that the parent-interface fifth action (`5`) is a documented Windows Booter command without its true guarded target. Original Windows production signed Booter image/header/signature/patch origin, GSP/SEC2 cryptographic acceptance, physical AD102/GA102 selection, and recovery remain unproved. **All active gates unchanged:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-06 16:25 PST — Complete Falcon +0xB0 preparation callback establishes resource/0x65C path; signed Booter provenance still open
 
 ## Original pinned source and result integrity
