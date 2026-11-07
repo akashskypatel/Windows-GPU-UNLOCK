@@ -1,3 +1,17 @@
+# 2026-11-06 — Host-only bounded +0x4B0 scalar-displacement scan preparation (database run pending)
+
+The authoritative execution plan identified a narrow same-instance Falcon question: whether the nested dispatcher `+0x4B0` embedded-owner back-pointer read by `FUN_140BF2740` can be traced to a real caller/receiver for callbacks at nested `+0x170/+0x250`. The existing read-only Windows 617.42 PyGhidra scanner already discriminates raw four-byte displacement hits against **existing** executable instructions, but previously retained no more than 80 candidates. This repository update adds the opt-in integer `SLOT_SCAN_MAX_RECORDED` parameter (1..5000, default unchanged at 80), reports its value in `SLOT_SCAN_BEGIN`, and keeps `STATUS=PARTIAL` when a result cap or scan time/byte budget truncates coverage. Added host-only regression checks for two actual decoded candidate sites, cap truncation, and invalid limit rejection. Tests are committed as source, **not yet claimed executed**; Ghidra output and physical GPU results remain absent.
+
+Read-only Ghidra command after updating the local checkout:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "SCAN_SLOT_DISPLACEMENT": "0x4b0", "SLOT_SCAN_FOCUS": "all", "SLOT_SCAN_MAX_RECORDED": 5000, "__name__": "__main__"})
+```
+
+Limits: literal `disp32` operand filter only; incidental numerical matches do not establish object identity. Even a complete bounded scan neither proves that `FUN_140BF2740` was invoked on the known nested Falcon instance nor finds signed Windows production Booter bytes; these remain hard gates. The known `FUN_1400AF170` `+0x2710` writer hypothesis stays rejected. No EFI, GPU, driver, BAR, DMA, FLR or boot-order change in this commit; `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-06 15:51 PST — Full three-function Ghidra review closes generic constructor-offset candidates
 
 ## Input and evidence boundary

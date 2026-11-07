@@ -315,5 +315,105 @@ class NestedReceiverCandidateTests(unittest.TestCase):
         self.assertIn('scan_complete=False', report)
 
 
+
+class SlotDisplacementBudgetTests(unittest.TestCase):
+    """Two verified +0x4B0 instructions prove that the requested cap is enforced."""
+
+    def _scan(self, limit):
+        import time
+
+        base = 0x140000100
+
+        class Address(int):
+            def getOffset(self):
+                return int(self)
+
+        class Instruction:
+            def __init__(self, offset):
+                self.offset = offset
+
+            def getAddress(self):
+                return Address(base + self.offset)
+
+            def __str__(self):
+                return 'MOV RAX,qword ptr [RBX + 0x4b0]' if self.offset == 0 else (
+                    'MOV qword ptr [RBX + 0x4b0],RAX')
+
+        class Block:
+            def getStart(self):
+                return Address(base)
+
+            def getSize(self):
+                return 8
+
+            def isInitialized(self):
+                return True
+
+            def isExecute(self):
+                return True
+
+            def getName(self):
+                return '.text'
+
+        class Listing:
+            def getInstructionContaining(self, where):
+                return Instruction(int(where) - base)
+
+        class Functions:
+            def getFunctionContaining(self, address):
+                return self
+
+            def getName(self):
+                return 'FUN_TEST'
+
+            def getEntryPoint(self):
+                return Address(base)
+
+        class Program:
+            def getMemory(self):
+                return self
+
+            def getBlocks(self):
+                return [Block()]
+
+            def getListing(self):
+                return Listing()
+
+            def getFunctionManager(self):
+                return Functions()
+
+        lines = []
+        with patch.object(probe, '_address', side_effect=lambda program, value: Address(value)), \
+             patch.object(probe, '_memory_bytes',
+                          return_value=(0x4b0).to_bytes(4, 'little') * 2):
+            complete = probe.scan_existing_slot_displacements(
+                Program(), '0x4b0', lines.append, time.monotonic() + 2,
+                max_recorded=limit)
+        return complete, '\n'.join(lines)
+
+    def test_two_hits_are_complete_with_sufficient_limit(self):
+        complete, report = self._scan(2)
+        self.assertTrue(complete)
+        self.assertEqual(report.count('SLOT_CANDIDATE VA='), 2)
+        self.assertIn('selected_candidates=2', report)
+        self.assertIn('capped=False scan_complete=True', report)
+
+    def test_truncated_hit_list_is_partial_not_complete(self):
+        complete, report = self._scan(1)
+        self.assertFalse(complete)
+        self.assertEqual(report.count('SLOT_CANDIDATE VA='), 1)
+        self.assertIn('selected_candidates=2', report)
+        self.assertIn('capped=True scan_complete=False', report)
+
+    def test_invalid_record_limits_fail_before_reading_program(self):
+        import time
+        for limit in (0, 5001, True, '5000', None):
+            with self.subTest(limit=limit):
+                with self.assertRaisesRegex(ValueError, 'SLOT_SCAN_MAX_RECORDED'):
+                    probe.scan_existing_slot_displacements(
+                        None, '0x4b0', lambda line: None, time.monotonic() + 2,
+                        max_recorded=limit)
+
+
 if __name__ == '__main__':
     unittest.main()

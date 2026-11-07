@@ -442,7 +442,7 @@ def _slot_write_evidence(instruction, slot):
     return None
 
 
-def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
+def scan_existing_slot_displacements(program, slot, log, deadline, focus="all", max_recorded=MAX_SLOT_CANDIDATES):
     """Find candidate x64 [register+disp32] uses in existing executable code.
 
     Bytes are never disassembled; raw matches are accepted only when already
@@ -454,6 +454,8 @@ def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
         raise ValueError('SLOT_DISPLACEMENT must be a positive x64 disp32 >= 0x80')
     if focus not in ('all', 'transfer', 'write'):
         raise ValueError('SLOT_SCAN_FOCUS must be all, transfer or write')
+    if type(max_recorded) is not int or not 1 <= max_recorded <= 5000:
+        raise ValueError('SLOT_SCAN_MAX_RECORDED must be an integer from 1 to 5000')
     memory = program.getMemory()
     listing = program.getListing()
     functions = program.getFunctionManager()
@@ -468,8 +470,8 @@ def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
     recorded = 0
     seen_instructions = set()
     complete = True
-    log('SLOT_SCAN_BEGIN slot=0x%x focus=%s block_count=%d max_bytes=%d deadline_bounded=True' % (
-        slot, focus, len(blocks), MAX_SCAN_BYTES))
+    log('SLOT_SCAN_BEGIN slot=0x%x focus=%s block_count=%d max_bytes=%d max_recorded=%d deadline_bounded=True' % (
+        slot, focus, len(blocks), MAX_SCAN_BYTES, max_recorded))
     for block_index, block in enumerate(blocks):
         base = int(block.getStart().getOffset())
         length = int(block.getSize())
@@ -511,7 +513,7 @@ def scan_existing_slot_displacements(program, slot, log, deadline, focus="all"):
                     if evidence is None:
                         continue
                 relevant += 1
-                if recorded >= MAX_SLOT_CANDIDATES:
+                if recorded >= max_recorded:
                     complete = False
                     continue
                 recorded += 1
@@ -815,7 +817,8 @@ def main():
         slot_displacement = globals().get('SCAN_SLOT_DISPLACEMENT', None)
         if slot_displacement is not None and not scan_existing_slot_displacements(
                 program, slot_displacement, output, time.monotonic() + MAX_SCAN_SECONDS,
-                focus=globals().get('SLOT_SCAN_FOCUS', 'all')):
+                focus=globals().get('SLOT_SCAN_FOCUS', 'all'),
+                max_recorded=globals().get('SLOT_SCAN_MAX_RECORDED', MAX_SLOT_CANDIDATES)):
             status = 'PARTIAL'
             output('SLOT_SCAN_COMPLETE=FALSE; results incomplete or candidate cap reached')
         if bool(globals().get('TRACE_NESTED_RECEIVER_CANDIDATES', False)):
