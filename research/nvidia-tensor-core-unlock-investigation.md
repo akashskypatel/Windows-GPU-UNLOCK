@@ -1,3 +1,33 @@
+# 2026-11-06 16:06 PST — Complete Windows 617.42 +0x4B0 displacement scan identifies focused Falcon reader candidates
+
+## Source and actual coverage
+
+User-uploaded original Ghidra report `nvlddmkm-61742-booter-discovery-20261106-160635-159733.txt`: 44,053 bytes, SHA-256 `73afd4f30ec263ccd5f99e7c5612adde02a84bf3e859c9f29b30596f1825f6c9`, 348 physical lines. The report pins `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`, `SCAN_STRINGS=False`, `SCAN_SLOT_DISPLACEMENT=0x4b0`, `SLOT_SCAN_FOCUS=all`, `SLOT_SCAN_MAX_RECORDED=5000`. It inspected 12 initialized executable blocks / 19,689,472 bytes, detected 402 raw 4-byte hits, verified 318 distinct existing instruction candidates spread across **244 unique owning functions**, and recorded all 318; `capped=False`, `scan_complete=True`, `ELAPSED_SECONDS=0.174`, `STATUS=COMPLETE`. Explicit `DECOMPILATION=SKIPPED`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. Report `COMPLETE` refers only to the scanner's defined literal-disp32 coverage, not to every possible computed alias or a firmware provenance claim.
+
+## Grounded related sites and classification
+
+| Existing Ghidra function | Exact site and instruction | Meaning supported by present evidence |
+|---|---|---|
+| `FUN_1402E7E60` | `0x1402E7E64 MOV qword ptr [RCX+0x4B0],RDX` | The **previously independently decompiled** nested 0x9B0 Falcon dispatch-object to embedded-parent back-pointer store; the current scan independently locates its literal instruction |
+| `FUN_140BF2740` | `0x140BF2786 MOV R8,qword ptr [RDX+0x4B0]` | Previously fully decompiled overlay-signature-layout transform; whether its `RDX` is the particular allocated dispatcher at runtime remains unproven |
+| `FUN_140BF4F00` | `0x140BF4F19 MOV RAX,qword ptr [RDX+0x4B0]` | Previously investigated GA102 reset/wait callback reader; static pointer offset alone is not execution proof |
+| `FUN_140BF1390` | `0x140BF13C3 MOV R12,qword ptr [RDX+0x4B0]` | **New investigation candidate**; reader confirmed, function body/receiver and callback relationship not yet classified |
+| `FUN_140BF4DB0` | `0x140BF4DCF MOV RDX,qword ptr [RDX+0x4B0]` | **New investigation candidate**; receiver and purpose not yet classified |
+
+The 318 hits span many unrelated driver classes; the matching numeric `+0x4B0` is not an alias. The report gives no new executable HS-loader `+0x170` invocation, does not decompile the new readers, and does not reveal the signed Windows Booter image/header/signature/patch producer or `FUN_140BF3880` argument three. The prior `FUN_1400AF170` computed `+0x2710` writer hypothesis remains rejected; the previous generic `+0x308..+0x338` constructor/source triage should not be repeated without new object linkage.
+
+## Next exact read-only discrimination
+
+Run the existing bounded original-driver Ghidra script with two new `TARGET_FUNCTIONS` and four anchored `TRACE_INSTRUCTION_SITES`:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140bf1390", "0x140bf4db0"], "TRACE_INSTRUCTION_SITES": ["0x1402e7e64", "0x140bf13c3", "0x140bf2786", "0x140bf4dcf"], "__name__": "__main__"})
+```
+
+Read the complete unclipped bodies of `FUN_140BF1390` and `FUN_140BF4DB0` (record `PARTIAL` if unavailable/clipped). Compare actual register owners with the already proven constructor write and signature-transform reads. This can close or narrow the same-instance hypothesis without GPU activation. No installed-driver patch, EEPROM/SPI, UEFI vendor Stop, DMA, FLR, register or selector writes are authorized; `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-06 — Host-only bounded +0x4B0 scalar-displacement scan preparation (database run pending)
 
 The authoritative execution plan identified a narrow same-instance Falcon question: whether the nested dispatcher `+0x4B0` embedded-owner back-pointer read by `FUN_140BF2740` can be traced to a real caller/receiver for callbacks at nested `+0x170/+0x250`. The existing read-only Windows 617.42 PyGhidra scanner already discriminates raw four-byte displacement hits against **existing** executable instructions, but previously retained no more than 80 candidates. This repository update adds the opt-in integer `SLOT_SCAN_MAX_RECORDED` parameter (1..5000, default unchanged at 80), reports its value in `SLOT_SCAN_BEGIN`, and keeps `STATUS=PARTIAL` when a result cap or scan time/byte budget truncates coverage. Added host-only regression checks for two actual decoded candidate sites, cap truncation, and invalid limit rejection. Tests are committed as source, **not yet claimed executed**; Ghidra output and physical GPU results remain absent.
