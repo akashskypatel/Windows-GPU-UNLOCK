@@ -1,3 +1,28 @@
+# 2026-11-06 16:18 PST — Falcon +0xB0/+0x240 callback registrations identified; clipped decompilation caused by stale local output-limit implementation
+
+## Input verification and discrepancy
+
+User-uploaded report `nvlddmkm-61742-booter-discovery-20261106-161801-432055.txt`: exactly **23,761 bytes**, SHA-256 `0005aa3dea3a04cb9a6d61869a701657e8c365733bc1cebc429f90dc447bca8c`, **1,106 physical lines**. Report pins original Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`, has two valid bounded machine-instruction windows, no GPU/database mutation, elapsed 0.409 s, final **`STATUS=PARTIAL`**. Target `FUN_140BF1390` emitted precisely the former default **20,000 characters** of decompiled C and `DECOMPILER_OUTPUT_INCOMPLETE=TRUE`. Its log line is `DECOMPILER_BEGIN entry=140bf1390 clipped=True`, with **no** `total_chars` or `output_limit` markers. By contrast GitHub `main` already includes the opt-in `FULL_DECOMP_MAX_CHARS` code and always prints `total_chars=... output_limit=...` in non-focused mode. Thus the report was produced using an old local implementation (or other old script copy), **not evidence that the new 131,072-character budget is inadequate**. The `FULL_DECOMP_MAX_CHARS` runtime option would be ignored by the old implementation. Do not misreport this as a successful full C review.
+
+## Two callback slots newly established by machine instruction
+
+- `FUN_1417E8550:0x1417E885A LEA RAX,[0x140BF1390]` followed at `0x1417E8861 MOV [R9+0xB0],RAX`: conditional registration of the previously partially decompiled firmware-preparation/callback candidate. Adjacent class/group predicate uses `R8D & 0xffffffe0` and a bitmask test `0x30FE` for one nearby alternative `FUN_140BF78C0`; the full branch graph is not shown by this window. Do not assert which physical GPU selects this callback.
+- `FUN_1417E8550:0x1417E97D6 LEA RAX,[0x140BF4DB0]` followed at `0x1417E97DD MOV [R9+0x240],RAX`: class-conditional registration of the already fully decompiled parent-interface +0x140 guarded-dispatch and 0x668 register/status routine. The visible alternative is `FUN_1400061B0` stored at `[R9+0x240]` after class-group `0x20` and mask `0x20807E0` checks; precise runtime class remains unproven.
+
+These are **DATA XREF registration locations**, not executable direct calls to either callback. The object layout is consistent with prior known nested Falcon builder, `+0x4B0` back-pointer and `+0x170/+0x250` registrations, but neither a same-instantiated-object *invocation* nor any signed production Booter descriptor is proved.
+
+## Corrective next read-only run (no source-code change)
+
+GitHub source does not need another edit. First update the user's local checkout from `main`; the exact Ghidra Python one-liner below checks two new-source markers before any execution and then requests full C for only `FUN_140BF1390`:
+
+```python
+src = open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(); assert "FULL_DECOMP_MAX_CHARS" in src and "output_limit=%d" in src, "Local script is stale: pull origin main"; exec(src, {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140bf1390"], "FULL_DECOMP_MAX_CHARS": 131072, "__name__": "__main__"})
+```
+
+Accept a complete full-body review only if the report prints `DECOMPILER_BEGIN ... total_chars=<actual> output_limit=131072 clipped=False` and `STATUS=COMPLETE`. If still clipped, do not infer missing calls, loader input or return behavior. After seeing the body, focus on the exact producer/consumer chain for `FUN_140BF3880` argument 3, the Falcon instance and parent-interface callback ABI, rather than more global displacement searches. No active UEFI vendor Stop, secure GPU code execution, BAR/selector writes, PCI FLR, DMA or ROM flash; `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-06 16:12 PST — Nested parent-interface callback and 0x668 status wait; large HS-path decompilation incomplete
 
 ## Source identity and verification boundary
