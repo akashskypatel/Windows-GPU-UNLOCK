@@ -1,3 +1,29 @@
+# 2026-11-06 16:47 PST — Parent Falcon interface vtable offsets +0x30 and +0x158 proven by full bounded CALL trace
+
+## Original report identity and scope
+
+User-uploaded `nvlddmkm-61742-booter-discovery-20261106-164730-008919.txt`: **15,416 bytes**, SHA-256 `7e925a2f58a0c446904fc9aab469fe47d2ac6818e459d61ec9cc3186cb4b103d`, **318 physical lines**. Imported original Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. The **previously missed** opt-in trace ran successfully: `FUNCTION_CALLS_BEGIN entry=1402ea6f0 name=FUN_1402ea6f0 max_calls=32`, `FUNCTION_CALLS_END entry=1402ea6f0 recorded=18 capped=False`, `ELAPSED_SECONDS=0.033`, `STATUS=COMPLETE`. No Ghidra/database or GPU mutation, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `DECOMPILATION=SKIPPED` by explicit caller choice. Complete refers only to the existing instruction CALL enumeration, not signature validation or execution.
+
+## Exact new low-level receiver and method-slot evidence
+
+1. **Parent owner and descriptor getter.** At `0x1402EA745`, `MOV RBX,[RDI+0x4B0]` with non-null check; `RDI` is the nested Falcon callback object's `param_2` from its entry. At `0x1402EA7A5`, `MOV RAX,[RBX]` gets the parent's first-qword interface pointer; at `0x1402EA7B1`, `MOV RAX,[RAX+0x30]` gets its method slot; at `0x1402EA7B5`, `CALL qword ptr [0x140E02AA8]` CFG-dispatches the target in `RAX` with `RCX=RSI` (caller context), `RDX=RBX` (parent), `R8D=0`. Return `RAX` is immediately tested for null; prior unclipped `FUN_1402EA6F0` C treats the result as a descriptor-like pointer. This is a **machine-level indirect call through owner_vtable+0x30**, not proof of the actual concrete destination, a signed asset or runtime execution.
+2. **Mapped buffer transfer and parent action 5.** On the success/allocation path, `0x1402EA852..0x1402EA861` calls `FUN_1401BB0B0` on resource `[RDI+0x550]` with `(1,0)` to obtain `RAX` mapped address. Before `0x1402EA887` guard call, instructions are: `MOV RCX,[RBX]`; `MOV R9,RAX`; `MOV R8D,5`; `MOV [RSP+0x20],R14`; `MOV RDX,RBX`; `MOV R10,[RCX+0x158]`; `MOV RCX,RSI`; `MOV RAX,R10`; `CALL [0x140E02AA8]`. Therefore the method is selected from **parent_vtable+0x158** and receives `(context, parent, 5, mapped_address, R14)`. Prior full C maps the fifth argument to a descriptor-relative address (`lVar6+8`), but this bounded CALL window itself does **not** show the original `R14` definition; classify its exact provenance as supported jointly by the decompilation, not the 12-instruction excerpt alone. Return `EAX` tested at `0x1402EA88F`, with logging and memory cleanup on nonzero return. Again, an indirect call *instruction* is not proof of a real runtime callback invocation or firmware acceptance.
+3. **Different indirect call mechanism at entry.** `0x1402EA704 MOV RAX,[RDX+0x1B0]` precedes guarded `0x1402EA711`; branch guarded `0x1402EA733` reloads `RAX=[RDI+0x1B0]`. These are direct field function-pointer dispatches, not `+0x30`/`+0x158` parent vtable entries. This distinction closes misleading attribution of all CFG calls to the same vtable.
+
+## Concrete candidate vtable data link and next bounded probe
+
+A **prior independent** complete constructor analysis (historical notes and ledger) recorded `FUN_14179E530` storing `PTR_DAT_140EDE188` at embedded `outer+0xF0`, which is the owner context associated with nested pointer `outer+0x108` (`owner+0x18`). Earlier static data results reported `0x140EDE188 -> 0x140EBF210`. This suggests a *candidate* parent vtable base `0x140EBF210`; at newly proven offsets `+0x30` and `+0x158`, candidate entry addresses are **`0x140EBF240`** and **`0x140EBF368`**. Whether the candidate head is the **actual concrete vtable for this callsite** (including class selection on RTX 4090 or RTX 3080), whether these entries contain executable function pointers, and whether the guard calls are reached, are all **UNPROVEN**. Also note a **separate unrelated owner** has registered callback offset `R8+0x158` in `FUN_1417930C0`; that numeric equality must not be used as pointer alias proof.
+
+Read four 64-byte initialized non-executable windows and Ghidra data references (no new scan, no Ghidra modification):
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_STATIC_BYTES": ["0x140ede188", "0x140ebf210", "0x140ebf240", "0x140ebf368"], "TRACE_DATA_SITES": ["0x140ede188", "0x140ebf210", "0x140ebf240", "0x140ebf368"], "__name__": "__main__"})
+```
+
+If data/references verify a candidate executable target, follow it only after establishing the actual embedded-owner instance and vtable binding. **Not proven:** signed Windows production Booter image/header/signature/patch bytes and producer, third argument of `FUN_140BF3880`, real `+0x170/+0x250` dispatch, per-device AD102/GA102 runtime class selector, signature acceptance or safe physical recovery. All gates remain `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. No physical actions or firmware/driver writes.
+
+---
+
 # 2026-11-06 16:37 PST — No function-CALL trace despite STATUS=COMPLETE: stale/misrouted source or option
 
 ## Source report identity
