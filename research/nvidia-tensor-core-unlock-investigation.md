@@ -1,3 +1,37 @@
+# 2026-11-06 17:16 PST — Alternative Falcon parent table resolves descriptor and resource-transfer function targets
+
+## Pinned source and passive scope
+
+User-uploaded original Ghidra report `nvlddmkm-61742-booter-discovery-20261106-171443-533390.txt`: **2,917 bytes**, **45 physical lines**, SHA-256 `74d0bf91846531a401c5874b97d7d1114a5b460f40f0d30914474039d3c97928`. Target `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, loaded image base `0x140000000`, Windows NVIDIA version 617.42. Script reported `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`, final `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.013`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. String scan was intentionally skipped. `TARGET_FUNCTIONS` was **not supplied**, so the report contains **no decompilation**.
+
+## Direct table and reference evidence
+
+| Table slot | 64-byte read: initial little-endian QWORD | Defined DATA outbound | Static interpretation |
+|---|---|---|---|
+| `0x140E764A8` (alternative parent head) | `0x140EBF210` | Target function UNKNOWN | First QWORD is not evidence of an executable method. Table head has 3 uncapped incoming DATA references. |
+| `0x140E764D8` (`head+0x30`) | `0x140178DD0` | `FUN_140178DD0` | Actual function pointer for the descriptor-getter **candidate**; behavior unknown. |
+| `0x140E76600` (`head+0x158`) | `0x140179130` | `FUN_140179130` | Actual function pointer for resource-transfer **candidate**; behavior unknown. |
+
+The parent-head inbound DATA reference sites are `0x14017B21D` and `0x14017B22B` (both within `FUN_14017AF30`), plus `0x140E763B8` (rdata; function UNKNOWN). These reinforce the prior 0x3550-byte constructor's `outer+0xF0` interface selection; they do **not** demonstrate which physical GPU runs that constructor. Both method-slot addresses have zero direct incoming references in the bounded reference map, which is expected to be possible for indirect vtable calls and is **not** proof the methods are unused. The last examined method slot is 24 bytes before adjacent distinct table head `0x140E76618`; inspect boundaries instead of conflating interfaces.
+
+## Narrow conclusion and outstanding proof
+
+**STATIC TARGETS RESOLVED:** parent interface `0x140E764A8` is distinct from previously rejected 0x588-byte owner table `0x140EDE188`; its `+0x30` and `+0x158` method pointers resolve to **different defined functions** (`FUN_140178DD0`, `FUN_140179130`). This disproves any claim that these two slots directly contain the previously established zero-return (`FUN_140006190`) and not-supported (`FUN_140092D80`) fallback targets. It does **not** yet prove the new functions themselves produce a signed descriptor, perform a real transfer, or refrain from calling fallback helpers. The original Windows signed Booter image/header/signature/patch source, descriptor provenance, actual nested `+0x170/+0x250` callback invocation, per-GPU selection, cryptographic acceptance, and physical recovery remain OPEN.
+
+## Next bounded original-Ghidra Python 3 run (read-only)
+
+Decompile both resolved method bodies **completely**, without scanning unrelated driver strings:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140178dd0", "0x140179130"], "FULL_DECOMP_MAX_CHARS": 65536, "__name__": "__main__"})
+```
+
+Classify parameters, return values, fallback/error branches, any sources of firmware bytes and descriptors, downstream calls and whether the transfer reaches any concrete memory/DMA handling. If the script reports clipped output or `STATUS=PARTIAL`, do not treat absent lines as negative evidence; use bounded focus terms or separately inspect the affected function. Do not assert caller reachability or hardware result from static decompilation.
+
+Current authorization remains `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. No GPU access, driver patches, test changes or EFI execution are authorized by this finding.
+
+---
+
 # 2026-11-06 17:10 PST — Alternative 0x3550-byte Falcon owner has distinct `0x140E764A8` interface table
 
 ## Pinned report and scope
