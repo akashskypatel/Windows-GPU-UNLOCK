@@ -1,3 +1,54 @@
+# 2026-11-06 17:22 PST — Alternative parent methods forward through outer-object pointer sources; CFG helper is not the effective target
+
+## Original read-only report and completion scope
+
+`nvlddmkm-61742-booter-discovery-20261106-172232-079805.txt` (original uploaded bytes independently measured): **3,567 bytes**, **55 physical lines**, SHA-256 **`09494d212df6ab23cb665d6a9f819256ccbdc6eabbc3002d94564a3c2711caa1`**. Pinned imported Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. Read-only existing Ghidra reference map, no Ghidra DB writes and no hardware action. `SCAN_STRINGS=SKIPPED_BY_CALLER`; `DECOMPILATION=SKIPPED` by caller. `ELAPSED_SECONDS=0.014`, final **`STATUS=PARTIAL` ONLY because the `.rdata` guard-dispatch data site's incoming reference list reached its ten-reference cap** (`INBOUND_ROOT count=10 capped=True`, `DATA_SITES_COMPLETE=FALSE`). Both explicit instruction entry windows and bounded CALL enumeration completed and are usable. This `PARTIAL` does not mean runtime use was tested, and the data-site's inbound list is incomplete.
+
+## Exact instruction-level forwarding
+
+```asm
+; alternative parent vtable +0x30 -> FUN_140178DD0
+140178DD0  ADD RDX,-0xF0
+140178DD7  MOV RAX,qword ptr [RDX]
+140178DDA  MOV RAX,qword ptr [RAX+0x2D8]
+140178DE1  JMP qword ptr [0x140E02AA8]
+
+; alternative parent vtable +0x158 -> FUN_140179130
+140179130  SUB RSP,0x38
+140179134  MOV R10,qword ptr [RSP+0x60]
+140179139  ADD RDX,-0xF0
+140179140  MOV qword ptr [RSP+0x20],R10
+140179145  MOV RAX,qword ptr [RDX+0x308]
+14017914C  CALL qword ptr [0x140E02AA8]
+140179152  ADD RSP,0x38
+140179156  RET
+```
+
+The `+0x30` method has **zero instructions classified as CALL**, since its guard dispatch is a tail `JMP`. The `+0x158` method has exactly **one existing CALL**, at `0x14017914C`, preceded by forwarding of the stack argument via `R10`. Interpreting the guard-dispatch convention, `RAX` supplies the indirect target to the CFG helper, not the helper address itself. The exact runtime code target is **not shown** in this report. `RDX-0xF0` is consistent with adjusting the embedded owner at `outer+0xF0` back to the outer object, **conditional on the relevant caller actually supplying that embedded owner pointer**. This relationship is a static object-layout hypothesis supported by the earlier constructor, not physical GPU selection or runtime alias proof.
+
+## Guard helper / actual target distinction
+
+`DATA_SITE 0x140E02AA8` is defined in `.rdata`; its direct outbound DATA reference points to `_guard_dispatch_icall` at `0x140CEDC00`. This is the CFG dispatch **helper**, not the resolved callback body. The incoming reference collection is capped; do not claim only the ten reported references exist, and do not waste follow-up effort treating them as exact target-producer paths. The prior full 102-character Ghidra C outputs hid target preparation and rendered `(*(code *)PTR__guard_dispatch_icall_140e02aa8)()` for both methods. Their `void` signature is not proof of the forwarded method's return semantics.
+
+## Immediate provenance hypotheses and limits
+
+1. **Getter source:** instruction sequence reads `object = RDX-0xF0`, then `vptr = *(object)`, then target pointer `*(vptr+0x2D8)`. The previously decompiled constructor `FUN_14017AF30` appears to assign primary outer pointer `0x140E763F0`; if that remains the effective vptr on a relevant instance, the *calculated candidate slot VA* would be `0x140E763F0+0x2D8=0x140E766C8`. This calculation is **conditional**, and the candidate crosses known adjacent interface-table heads, so do **not** treat the address as the getter target or a proven valid vtable slot until its actual bytes/typed data and construction-to-call alias are confirmed.
+2. **Transfer source:** instruction `MOV RAX,[RDX+0x308]` after subtracting `0xF0` reads the candidate outer-instance field `outer+0x308` as a function pointer. Its writer/initializer, runtime contents, and relation to a signed Booter transfer are **not established**. No transfer, memory-copy or firmware-signature validation happens in the wrapper itself; the actual callback may do such work and is currently unknown.
+
+Neither thunk by itself produces Windows SEC2 Booter signed image, header, patch/signature descriptor, selects RTX 4090/3080, or proves any nested `+0x170/+0x250` invocation. Do not conflate `0x140E02AA8` guard helper with the underlying indirect target or assume this parent implementation is production-capable.
+
+## Next bounded original-Ghidra Python 3 read-only command
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x14017af30"], "FULL_DECOMP_MAX_CHARS": 16000, "TRACE_STATIC_BYTES": ["0x140e763f0", "0x140e766c8"], "TRACE_DATA_SITES": ["0x140e763f0", "0x140e766c8"], "TRACE_INSTRUCTION_SITES": ["0x14017b21d", "0x14017b22b"], "__name__": "__main__"})
+```
+
+This inspects `FUN_14017AF30` fully (prior focused excerpt omitted constructor lines), two exact constructor instruction sites, and the conditional candidate outer-vtable slot `0x140E766C8` plus its presumed table head `0x140E763F0`. Check whether `outer+0x308` is initialized or modified in the constructor, and whether `0x140E766C8` really holds a defined executable pointer or lands in another interface table. If a writer is absent, it stays an **OPEN** producer lead; look next at concrete subsequent object initializer/caller paths, not a global `+0x308` heuristic scan. No source-code changes or active EFI/GPU operations required.
+
+**Gates unchanged:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-06 17:19 PST — Both resolved alternative Falcon-parent methods decompile to CFG guard-dispatch calls
 
 ## Original Windows 617.42 evidence and integrity
