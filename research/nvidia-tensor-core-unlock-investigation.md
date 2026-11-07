@@ -1,3 +1,29 @@
+# 2026-11-06 16:25 PST — Complete Falcon +0xB0 preparation callback establishes resource/0x65C path; signed Booter provenance still open
+
+## Original pinned source and result integrity
+
+User-supplied `nvlddmkm-61742-booter-discovery-20261106-162523-880517.txt`: **26,845 bytes**, SHA-256 `c9f5c5d026a8ea4981acdd322638f77154a54282a0819869f6463b6bca62e1dd`, **1,316 physical lines**, Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, Ghidra base `0x140000000`. `TARGET_FUNCTIONS=["0x140bf1390"]`, `SCAN_STRINGS=SKIPPED_BY_CALLER`, output line `DECOMPILER_BEGIN entry=140bf1390 clipped=False total_chars=24864 output_limit=131072`, `DECOMPILER_END`, `ELAPSED_SECONDS=0.405`, `STATUS=COMPLETE`, `HARDWARE_ACTION=NONE`, `GHIDRA_MUTATION=NONE`. **This closes only the previously clipped C-body/output-limit task**: it is not hardware-execution evidence. The prior 16:18 report used an old script; current report confirms the intended extended output-format version.
+
+## Complete-function findings and precise semantics
+
+`FUN_140BF1390(param_1,param_2)` is a concrete callback previously conditionally registered at `FUN_1417E8550:0x1417E8861` into nested dispatcher `+0xB0`. Entry dereferences `param_2+0x4B0` into `lVar2` and fails with `0x55` if null. It uses `param_1+0x2550/+0x23B0` state and class checks derived from `(uint)*(param_2+0x4C4)>>8`, with case values `0x8F99E1`, `0xE97B6C`, `0x2B3A54`, `0xDD7BAB`; no runtime mapping to either physical RTX 4090 or RTX 3080 is established. It checks `FUN_1406B94D0`, `param_2+0x459/+0x45A`, dereferences metadata pointer `param_2+0x2C0` (requires count `>=3`), branches on metadata fields, allocates/reuses a resource `param_2+0x2A0` with `FUN_1401B9020` and `FUN_1401B87B0` and obtains mapping via `FUN_1401BB0B0`. The function conditionally writes the literal dword `0x4E56524D` and adjacent version/flag bytes into a returned pointer; do **not** translate that little-endian dword into an unverified firmware header format. On subsequent branches, helper calls `FUN_1406B4560`, `FUN_1406A2F10` and `FUN_1406B99D0` stage/transfer metadata-derived ranges and `FUN_1406B6470` programs controller-style controls. All are **static code behavior**, not measured GPU authorization or proof of signed Booter source.
+
+**New completion callback anchor:** On a later path, `FUN_1401148A0(param_1+0x20A0,0,FUN_140BF5150,param_2)` registers the actual `FUN_140BF5150` callback pointer with dispatcher state and the `param_2` object. Its concrete semantics remain unreviewed. Near completion, the routine probes `0x65C` via `FUN_1406B9810(param_1,param_2,0x65C)` or a conditional guarded alternate and checks low 2 bits; one loop waits for `(value & 3)==0` (with yield `thunk_FUN_1401C2702`), another waits for `(value & 3)==2` or branches when they equal 3. Neither visible loop contains a local retry counter or deadline. It later sets `*(byte *)(param_2+0x45A)=1` and takes guarded indirect calls/error return paths. The absence of a local deadline **does not prove absence of an externally enforced timeout**; any active recovery guarantee is unresolved.
+
+The complete body shows **no direct call instruction represented in C** to either `FUN_140BF3880` (HS loader at nested `+0x170`) or `FUN_140BF2740` (overlay transform at `+0x250`). CFG-guarded calls appear as `(*(code *)PTR__guard_dispatch_icall_140E02AA8)(...)` with targets erased by decompiler lifting, so this result **cannot rule out indirect calls** or prove those callbacks take input from a signed image. The metadata pointer `+0x2C0` is consumed, **not constructed**, in this function; its producer/source, signed bytes, patch/header signatures and `FUN_140BF3880` third argument remain untraced. The full function also does not establish a direct physical GPU class selector, authenticated firmware acceptance, or a successful active unlock.
+
+## Next narrow read-only investigation
+
+Two **new-to-current-review**, grounded calls inside this completed C body merit full read-only classification: `FUN_1402EA6F0` (conditional metadata/staging helper shortly after the literal-header write) and `FUN_140BF5150` (deferred completion callback registered by `FUN_1401148A0`). Use existing source and request full unfiltered C with 131,072-character cap:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1402ea6f0", "0x140bf5150"], "FULL_DECOMP_MAX_CHARS": 131072, "__name__": "__main__"})
+```
+
+If a call is a generic CFG guard, require machine-level instruction and receiver provenance before assigning the target; do not infer from C decompiler parameter lists alone. Do not restart `+0x4B0` global scans or repeat the now complete `FUN_140BF1390` body. The immutable recovery audit stays untouched. All active gates remain `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-06 16:18 PST — Falcon +0xB0/+0x240 callback registrations identified; clipped decompilation caused by stale local output-limit implementation
 
 ## Input verification and discrepancy
