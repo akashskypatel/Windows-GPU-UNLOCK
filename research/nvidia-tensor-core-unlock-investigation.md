@@ -1,3 +1,51 @@
+# 2026-11-06 17:30 PST — Alternative Falcon getter exposes a fixed outer buffer; transfer callback selection fully recovered
+
+## User-run source and completion
+
+Original mounted report `nvlddmkm-61742-booter-discovery-20261106-173012-731422.txt`: **30,807 bytes**, SHA-256 `923aebb90264f128ce0ae847635feab8aefaccbe5b608f4e4ce6cc7c093aa795`, **1,714 physical lines** as splitlines. Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. Original script reported `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.394`, no hardware or Ghidra database writes, scan skipped. Both Ghidra C outputs **fully untruncated**: getter `FUN_1405785E0` 251 chars, outer initializer `FUN_140179580` 28,191 chars (per-target output limit 131,072). Incoming method references are DATA only for the getter (`0x140E0BE6C` and `0x140E766C8`); constructor `FUN_14017AF30` has confirmed CALL to initializer at `0x14017B23E`. This report is static, not proof of physical GPU execution or cryptographic acceptance.
+
+## Getter at root-vtable candidate `0x140E766C8`
+
+Complete Ghidra C of `FUN_1405785E0(undefined8 param_1,longlong param_2,undefined8 *param_3)`:
+
+```c
+if (*(char *)(param_2 + 0x3518) != 0)
+    return 0;
+if (param_3 != 0)
+    *param_3 = 0x98;
+return param_2 + 0x3E8; // Ghidra writes +1000 decimal
+```
+
+The previously established parent `+0x30` `FUN_140178DD0` performs `RDX -= 0xF0` (if `RDX` is the embedded parent, this becomes outer), reads `*(outer)` and then the root table's `+0x2D8` slot to dispatch through CFG. The separate constructor wrote root `0x140E763F0` and candidate slot `0x140E766C8` contains defined `FUN_1405785E0`. Therefore, **conditional on that root remaining effective and the receiver alias being correct**, the getter returns a pointer to **outer+0x3E8** when `outer+0x3518` byte is zero and optionally reports a **literal 0x98 length-like value** to a non-null third argument. It does not load image bytes or parse signatures within its body. `0x98` is an output literal, **not by itself proof of a valid descriptor size**, Booter header format, signature authentication, runtime call or existence of appropriate contents at the region. The producer, consumer, contents and lifetime of outer+0x3E8 are OPEN.
+
+## Exact constructor-time transfer callback writer `FUN_140179580`
+
+`FUN_140179580(param_1=outer,param_2=class_descriptor_A,param_3=class_descriptor_B)` reads the 16-bit selector `uVar1=*(ushort*)(param_2+0x10)` and separately `uVar2=*(ushort*)(param_3+0x10)`; `uVar3=uVar1>>5`, `uVar7=uVar1&0x1F`, `uVar11=uVar1`, `uVar12=uVar1`. Its now-complete C explicitly **writes `*(code**)(param_1+0x308)`** on every shown path. The exact class-driven selection for this field is:
+
+| Primary selector condition (from `param_2+0x10`) | Callback stored at `outer+0x308` |
+|---|---|
+| `(uVar1 & ~0x1F)==0x20` and `(uVar1&0x1F)` in **5..10** | `FUN_14056B9A0` |
+| Group `0x20`, low 5-bit selector not 5..10 and `(1 << low5) & 0x03F8F800` nonzero (bits **11..15 or 19..25**) | `FUN_140576DE0` |
+| Other selectors, including group != `0x20` or failing mask | `FUN_14056D670` |
+
+Direct excerpt around `+0x308` writes includes `pcVar4=FUN_14056B9A0` for group 0x20/low 5..10; alternative `pcVar4=FUN_140576DE0` when the mask passes; `*(code **)(param_1+0x308)=pcVar4`; fallback label `LAB_14017A7FB` stores `FUN_14056D670`. Other callback slots up to at least `+0x3B8` are also architecture-conditioned, with explicit zero/not-supported stubs on some **other** slots. Do not transfer those fallback classifications to these three `+0x308` targets before decompiling them. This **closes the missing constructor-time writer provenance** from the 17:22/17:26 snapshots. The prior assumption that the constructor had no such setter was only true for direct stores in `FUN_14017AF30`; it calls the initializer which does perform the write.
+
+## Scope limits and next exact step
+
+The three callback implementations are *not decompiled in this report*. Calling `FUN_140179130` through the CFG helper with `RDX` adjusted to outer and target loaded from `[outer+0x308]` is established by the prior assembly; the complete callback initializer supplies three possible code targets. Nothing proves which 16-bit selector is present for the physical AD102 RTX 4090 or GA102 RTX 3080, whether any of these callbacks performs a secure Booter resource transfer, where the outer+0x3E8 descriptor-like region is populated, or whether nested Falcon `+0x170/+0x250` callbacks actually execute. Signed firmware origin and physical recovery remain OPEN.
+
+**Next bounded original Windows 617.42 Ghidra Python 3 command:**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x14056b9a0", "0x140576de0", "0x14056d670"], "FULL_DECOMP_MAX_CHARS": 131072, "__name__": "__main__"})
+```
+
+Use full, read-only decompilation of the **three newly grounded concrete callback targets**. Classify real resource movement vs wrappers/error fallbacks; inspect arguments, status codes, any DMA mapping/copy, and evidence (if any) of descriptor/payload producer linkage. Distinguish a target's function body from actual class/receiver reachability. The script's `MAX_TARGETS=4` supports 3 explicit targets and 131,072 characters per function. If the report is `PARTIAL` from clipping, follow up with focus terms; never infer absence from unprinted lines. Later pursue the producer/contents of `outer+0x3E8` and the `outer+0x3518` condition using only concrete cross-references/known call chains, not global raw-offset scans.
+
+**Active authorization remains false:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Immutable recovery audit and implementation source untouched.
+
+---
+
 # 2026-11-06 17:26 PST — Constructor root vptr machine-store confirmed; candidate getter dispatch function resolved
 
 ## Source integrity and limited result
