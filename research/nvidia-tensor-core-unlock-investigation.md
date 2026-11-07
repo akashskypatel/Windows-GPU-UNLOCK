@@ -1,3 +1,60 @@
+# 2026-11-06 17:51 PST — Three Falcon outer setup helpers classified; getter-region producer still missing
+
+## Original report identity and read-only completion
+
+Source: original uploaded report `nvlddmkm-61742-booter-discovery-20261106-175135-701109.txt`, **8,169 bytes, 425 physical lines**, SHA-256 **`439664b2dfa6e6664af69119c4c970efd3fe383c5db3e872a84e9595212deec6`** (measured directly from user-mounted bytes). Imported original Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`, string scan skipped. Final `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.293`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. All three requested C decompilations completed **without clipping**: `FUN_140577EC0` 2,558 characters, `FUN_140579FF0` 2,131 characters, `FUN_1406BB9A0` 1,310 characters; report limit was 131,072 per target. These facts concern static code only, not physical or runtime execution.
+
+## `FUN_140577EC0(param_1, param_2)` — configuration and flag initialization, not direct descriptor bytes
+
+The function uses `FUN_14016AAD0` to query the literal configuration names **`RmDisableGsp`**, **`RmDisableGspLoad`**, **`RmGspRtosOverrides`**, **`RmSpdmEnableFuzz`**, **`RmBootFromHs`**, and **`RmStressTest`, `RmStressTestMaskLo`, `RmStressTestMaskHi`, `RmStressTestMaxLoops`, `RmStressTestFlags`**. It conditionally writes outer-object candidate flag/parameter fields:
+
+| Input or state | Directly visible field effect |
+|---|---|
+| `RmDisableGsp == 1` | `param_2+0x58 = 1` |
+| `RmDisableGspLoad` query succeeds | `param_2+0x3C1 = (value == 1)` |
+| `RmGspRtosOverrides` low two bits == `2` | `param_2+0x3C2 = 1` |
+| `RmSpdmEnableFuzz == 1` | `param_2+0x3C3 = 1` |
+| `RmBootFromHs`, after `(value >> 12) & 3` | `3` clears `param_2+0x3C7`; `1` sets it; other values preserve its current value |
+| `RmStressTest`, masks and loop/flags options | `+0x3C2`, `+0x3CC`, `+0x3D0`, `+0x3D4`, `+0x3D8`, `+0x3DC` |
+
+It also conditionally updates a related state object's `+0x528` when `param_1+0x25E0` refers to a flagged object, and calls `FUN_1402E9ED0(param_1, related_state)` at exit. **No direct write to `param_2+0x3E8` or direct signed Booter byte producer is present in this complete body**. A flag read in the stock driver is **not** evidence that toggling a registry value is a safe or sufficient unlock procedure; no configuration mutation is authorized.
+
+## `FUN_140579FF0(param_1, param_2)` — status-gated nested initialization
+
+This is the **status producer** checked by the earlier decompiled guard writer `FUN_140578210`:
+
+- Reads related state via `*(param_2+0x190)` (Ghidra prints `+400` decimal) and `+0x18`; if resulting pointer `lVar4` is null, logs and returns **`0x3D`**. The code's inferred null handling should not be extrapolated into a safe runtime calling sequence.
+- If `param_2+0x58` is **nonzero**, it logs a condition and **returns 0 without running the following setup block**; this is a distinct skipped-initialization success outcome, not evidence of an executable firmware loader.
+- If `param_2+0x58` is zero, initializes `lVar4` fields at `+0x438`, `+0x43C`, `+0x448`, `+0x45D`, `+0x460` (literal `0x100`), `+0x4C4` (literal `0xDA3DE400`), invokes an indirect CFG-guarded call with target **not resolved by C**, sets flags around `+0x4F8/+0x4F9`, and calls **`FUN_1406B2F10(param_1,lVar4)`**. Its nonzero return is propagated, with logging.
+- After that success, directly clears **`param_2+0x480` for `0x2800` bytes** via `FUN_1400DF9F0`, i.e. half-open range `[outer+0x480, outer+0x2C80)` under the outer-object alias. The separate getter's candidate **`outer+0x3E8`** lies **before** this cleared region; interpreting its optional `0x98` output as a length would place the presumed `[+0x3E8,+0x480)` region immediately adjacent to the cleared buffer. **Adjacency is a static layout clue, not proof `0x98` is a valid firmware descriptor length, buffer ownership, or source.**
+- It then obtains a different buffer pointer `puVar2 = *(lVar4+0x4E8)`; null pointer or zero field `*(puVar2+0x48)` triggers logged **`0x3D`**. Otherwise writes `*puVar2=0x16`, `*(puVar2+0xC)=0x78`, calls `FUN_1400E62E0(puVar2+0x30,0xB5)` and `FUN_1400E7440(puVar2+0x30,0xB5,0x32)`, writes `puVar2[1]=2`, and returns 0. The buffer's source and semantics remain **unverified**; do not label it a signed SEC2 Booter header without further evidence.
+
+No direct write to outer+0x3E8 was seen in this function either. A nested function or indirect callback could be responsible, but is not proven.
+
+## `FUN_1406BB9A0(param_1, param_2)` — conditional array/record initializer with two unresolved callbacks
+
+Called from the earlier 17:48 guard writer `FUN_140578210` using **`param_2=lVar6`**, a related **nested/secondary state pointer**, **not** the outer object itself. It checks a literal `+0x4C4` state value and a context flag at `param_1+0x23B0→+0x59E` before and within the loop, with logging/helper calls on special state. When the loop executes, it iterates `uVar2=0..*(uint32*)(param_2+0x460)-1` and obtains a record pointer through the first **unresolved CFG guard-dispatched call**, passing `(param_1, *(param_2+0x4B0), uVar2)` in Ghidra C. It writes the record index to byte 0 and, on its ordinary branch, sets fields at record `+0x4=0xFFFFFFFF`, `+0x8=0`, `+0x10=0`, `+0x18=0`, then invokes a second **unresolved guarded callback** with the record pointer. The first output pointer is **not yet independently proven non-null** in this static view.
+
+Under the preceding `FUN_140579FF0` initialization branch (which sets related state `+0x460=0x100`), the loop is configured for **256 records** if the same state instance reaches it and no early exit changes the count. This is **not** evidence of a signed-image copy, DMA, cryptographic acceptance, or physical GPU unlock. The guard-dispatch helper `0x140E02AA8` is not the actual callback target; this C output omits the RAX target setup and the receiver/ABI.
+
+## Decision and remaining status
+
+The three precisely selected setup callees were all completely reviewed. **No direct producer or byte source for the `outer+0x3E8` getter region was established**; do not mark descriptor sourcing complete. `FUN_140577EC0` is primarily configuration/feature initialization. `FUN_140579FF0` provides the status gate and buffered nested-state setup. `FUN_1406BB9A0` touches records reached through unresolved callbacks, not a directly established contiguous getter region. There is still a unique direct guard-byte writer `FUN_140578210` linked to the root-interface slot `+0x2B8` and a conditional getter at root `+0x2D8` returning outer+0x3E8. The three previously decompiled outer `+0x308` callbacks remain **address encoders**, not real firmware transfers.
+
+Open proof gaps: actual producer/contents/consumer of `outer+0x3E8`, code target of the `FUN_140579FF0` CFG dispatch and both `FUN_1406BB9A0` guarded callbacks, linkage to Windows production Booter image/wrapper/signature, nested HS loader callback invocation, class choice on RTX 4090 AD102 and RTX 3080 GA102, cryptographic acceptance, and recovery. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`.
+
+## Next original Ghidra Python 3 bounded, read-only investigation
+
+The strongest **concrete unexplored direct callee** in the status-gated setup path is `FUN_1406B2F10` (`FUN_140579FF0` passes the context and the same nested-state pointer). Decompile it while recovering existing CALL instruction windows for the two other complete functions with currently **unresolved indirect** dispatches. This is narrower than a driver-wide `+0x3E8` scan and avoids re-decompiling the same finished setup bodies:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1406b2f10"], "FULL_DECOMP_MAX_CHARS": 131072, "TRACE_FUNCTION_CALLS": ["0x140579ff0", "0x1406bb9a0"], "__name__": "__main__"})
+```
+
+Inspect whether `FUN_1406B2F10` populates state that indirectly reaches `outer+0x3E8`, sets up descriptor content, or merely prepares nested memory/queues. At both `FUN_140579FF0` and `FUN_1406BB9A0` guarded CALL sites, use pre-call assembly to recover the actual pointer source in `RAX`; the guard helper itself is not the callback. If the per-function CALL-site cap is reached the report will be `PARTIAL` even when the target decompilation completes; follow only the grounded truncated function next. This run is explicitly read-only and MD5 pinned.
+
+---
+
 # 2026-11-06 17:48 PST — Falcon outer descriptor getter guard writer and condition resolved; root-interface association strengthened
 
 ## Original report and exact completion scope
