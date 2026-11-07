@@ -1,3 +1,31 @@
+# 2026-11-06 17:04 PST — Specific embedded-parent table proven fallback: null descriptor getter and not-supported transfer
+
+## Input and integrity
+
+Original user-run `nvlddmkm-61742-booter-discovery-20261106-170453-759736.txt`: **5,358 bytes**, SHA-256 `67b7e8acf11f5fa33f513bf8bdbada7969aa384596f4d22e8ac597fee68fd7fb`, **113 physical lines**; pinned Windows NVIDIA 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. `SCAN_STRINGS=SKIPPED_BY_CALLER`, final `STATUS=COMPLETE`, `ELAPSED_SECONDS=0.255`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. Two static 64-byte `.rdata` reads, two constructor instruction windows, two defined-data outbound refs and a complete 57-character C decompilation of `FUN_140006190` succeeded. **Scope caveat:** `TARGET_INCOMING_REFS_TRUNCATED=true` means incoming reference enumeration for the ubiquitous stub was capped; not a full-XREF result. This does not clip or invalidate the full function body.
+
+## Exact constructor and two method implementations
+
+1. At `FUN_14179E530:0x14179E7F8`, `LEA RCX,[0x140EDE188]`; at `0x14179E806`, `MOV qword ptr [RDI+0xF0],RCX`. Thus the 0x588-byte outer constructor installs the **address** `0x140EDE188` at its embedded `outer+0xF0` object's leading pointer, after `FUN_141752B20(outer+0xF0,...)` at `0x14179E7E6` and before the previously established call to `FUN_141752AA0(outer+0xF0,...)` at `0x14179E841`. The existing bidirectional builder chain `FUN_14056C510 -> FUN_1402E7E60` stores this embedded-owner pointer in the nested 0x9B0 object's `+0x4B0` and publishes the dispatch pointer at owner `+0x18` on successful construction. **This is a concrete static constructor-to-owner-table assignment**, not runtime invocation.
+2. The candidate getter entry at `0x140EDE188+0x30=0x140EDE1B8` stores `0x140006190`; defined DATA reference targets `FUN_140006190`. Ghidra full body: `undefined8 FUN_140006190(void) { return 0; }`. The decompiler rendered the function without args because it is a generic constant-zero stub; it does **not** produce a descriptor pointer.
+3. The candidate resource-transfer method entry at `0x140EDE188+0x158=0x140EDE2E0` stores `0x140092D80`; Ghidra DATA references defined `FUN_140092D80`. Earlier independent complete Ghidra analysis already established that function's entire body returns constant `0x56`. Prior NVIDIA 615.78.08 status-header comparison interprets `0x56` as `NV_ERR_NOT_SUPPORTED`; that cross-version symbolic mapping is **not** a Windows 617.42 export. Do not decompile the same stub again.
+
+## Narrow conclusion and still-open variants
+
+Previously completed `FUN_1402EA6F0` assembly loaded parent from `[nested+0x4B0]`, called `parent->vtable+0x30` with `R8D=0`, tested the returned pointer for null and returned `0x56` on that branch. It calls `parent->vtable+0x158` only on the later mapped-resource handoff branch. **On a nested object constructed with the 0x588-byte `FUN_14179E530` embedded-owner table and retaining it**, the `+0x30` getter returns zero and the resource handoff is not reached by that route; its `+0x158` callback is an independent not-supported fallback. This falsifies the hypothesis that this specific parent table provides a functional signed Windows Booter descriptor producer or accepted resource-transfer method. It does **not** exclude distinct parent implementations, table replacement during initialization, different class branches or physical GPU runtime selection. No observed GPU execution, cryptographic acceptance, signed production asset, or tested rollback.
+
+## Next smallest read-only task
+
+Investigate **another already-grounded constructor** rather than global vtable/XREF searches: `FUN_14017AF30` independently creates an outer 0x3550-byte object and calls the same nested builder on an embedded `outer+0xF0` context. We need its concrete first-qword interface installation and to check whether that table's `+0x30/+0x158` are supported methods. One bounded focused C report and known callsite:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x14017af30"], "DECOMP_FOCUS_TERMS": ["FUN_141752B20", "FUN_141752AA0"], "TRACE_INSTRUCTION_SITES": ["0x14017b258"], "__name__": "__main__"})
+```
+
+The output must distinguish complete targeted excerpt versus absent/more-than-eight focus matches, validate report identity, and not infer unsupported code coverage from a clipped excerpt. All active gates remain `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Immutable process/recovery audit untouched; no source-code edits or hardware tests performed in this turn.
+
+---
+
 # 2026-11-06 16:52 PST — Corrected parent-vtable base: 0x140EBF210 is metadata-like, not an established callable table
 
 ## Original static report, identity and partial boundary
