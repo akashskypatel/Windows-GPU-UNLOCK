@@ -1,3 +1,29 @@
+# 2026-11-06 17:10 PST — Alternative 0x3550-byte Falcon owner has distinct `0x140E764A8` interface table
+
+## Pinned report and scope
+
+User-uploaded `nvlddmkm-61742-booter-discovery-20261106-171033-809747.txt`, **3,499 bytes**, SHA-256 `3353f3a802ae410335cc9d5875145fa5d3d1703b0e0313adfc6a1e7fc3472900`, 70 physical lines (mounted source measured directly). Original Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`; `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`, elapsed 0.274s, final `STATUS=COMPLETE`. Requested `FUN_14017AF30` focused decompilation produced `total_chars=3590`, `excerpt_truncated=False`, with one match each for `FUN_141752B20` and `FUN_141752AA0`. This is **complete coverage of selected excerpts**, not the full 3590-character function body; omitted portions are explicitly shown as `... omitted lines ...`. This report adds one verified instruction window at `0x14017B258`, not hardware runtime execution.
+
+## Exact selected C and prior machine-link evidence
+
+Selected C in `FUN_14017AF30`: `puVar1=puVar3+0x1E` is pointer arithmetic on an eight-byte type, so `puVar1` points at embedded `outer+0xF0`. The function calls `FUN_141752B20(puVar1,lVar5)` at focused line L87, then the excerpt shows other embedded heads initialized: `puVar3[2]=&PTR_DAT_140E76420`, `puVar3[0x22]=&PTR_DAT_140E76618`, `puVar3[1]=&PTR_DAT_140E76408`, and `puVar3[0x2E]=&PTR_DAT_140E76670`. At **L94** it writes `*puVar1=&PTR_DAT_140E764A8` and `*puVar3=&PTR_DAT_140E763F0`. This is the **concrete alternative parent-interface base** for the 0x3550-byte outer class, distinct from the 0x588-byte `FUN_14179E530` owner's `0x140EDE188` fallback table. The new excerpt also invokes `FUN_140179580` before status-gated `FUN_14173CE00(puVar3+1)` and `FUN_141752AA0(puVar1,lVar5)`.
+
+Machine instruction context at `FUN_14017AF30:0x14017B258` shows `MOV RDX,RBP`, `MOV RCX,RSI`, `CALL 0x141752AA0`, `MOV EBX,EAX`, `TEST EAX,EAX`, conditional jump on nonzero. Thus the constructor **checks nested-builder completion status** after passing this embedded owner. Prior independent complete construction chain `FUN_141752AA0 -> FUN_14056C510 -> FUN_1417E99B0 -> FUN_1402E7E60` linked the constructed 0x9B0 Falcon object's `+0x4B0` back to the owner and published dispatch pointer at owner `+0x18`, on successful construction. However, this does not prove the physical 4090/3080 instances select the 0x3550-byte class or ever invoke their HS loader.
+
+## New vtable discriminator and caution
+
+The independent 16:47 trace of `FUN_1402EA6F0` resolved virtual method offsets: parent `+0x30` obtains a descriptor-like pointer (returns `0x56` when null), parent `+0x158` handles mapped-resource transfer with action `5`, `R9=mapped address` and fifth argument descriptor-relative pointer. For the **new** parent base `0x140E764A8`, the *candidate entry addresses* are **`0x140E764D8`** (`+0x30`) and **`0x140E76600`** (`+0x158`). These are address arithmetic only; actual bytes/function pointers have **not** been read yet. Crucially the earlier 17:04 table `0x140EDE188` has zero-return getter `FUN_140006190` and not-supported transfer `FUN_140092D80`; that finding cannot be carried over to this newly identified table. Also `0x140E76618` is an adjacent **different embedded-object table head**, 24 bytes above the candidate `+0x158` entry; verify typed data and boundaries.
+
+Next exact read-only Ghidra Python 3 command:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_STATIC_BYTES": ["0x140e764a8", "0x140e764d8", "0x140e76600"], "TRACE_DATA_SITES": ["0x140e764a8", "0x140e764d8", "0x140e76600"], "__name__": "__main__"})
+```
+
+Check three static windows and their Ghidra DATA refs first. If entries contain actual defined executable functions, those bodies are the next step for determining whether the descriptor is generic or production signed Windows Booter material. Do not yet assert source firmware bytes, cryptographic acceptance, invocation of registered nested `+0x170/+0x250`, per-device selection or hardware readiness. All active gates remain `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Immutable process/recovery audit untouched; no source or test work necessary this turn.
+
+---
+
 # 2026-11-06 17:04 PST — Specific embedded-parent table proven fallback: null descriptor getter and not-supported transfer
 
 ## Input and integrity
