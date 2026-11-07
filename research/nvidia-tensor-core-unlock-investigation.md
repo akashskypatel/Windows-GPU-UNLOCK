@@ -1,3 +1,17 @@
+# 2026-11-07 — Universal fork passive B850 PCI drift localized; AMD display was not connected
+
+## Physical-style user-supplied capture, not an unlock result
+
+The user supplied `GPU-TOPOLOGY-DIAGNOSTIC-0001.TXT` (11,067 bytes, SHA-256 `1acc874082ace67413f57b180c571969e58d1e05bbca164c3c97c78009d7b4ef`). Strict PCI discovery returns EFI_SUCCESS with 50 handles (limit 128), but handle index 0 (boot-local handle `0x7edf5a18`) fails the second 256-byte PCI config comparison: `pci-refresh-config-changed` / `EFI_COMPROMISED_DATA`. Therefore `PCI_CAPTURE=0`, `PCI_NODES=0`, `EXACT_PAIR=0`, and `STATUS=ERROR` remain correct; config DWORD differences were not included in that run. The supplementary bounded read-only `AllHandles` collector reports `COMPLETE=1`, 579 total handles, 50 PCI protocols, 19 relevant records, zero errors and no truncation. It independently observes both GPU pinned identities (4090 `01:00.0 10de:2684 1043:88e6`; 3080 `04:00.0 10de:220a 19da:b612`) and AMD iGPU `0f:00.0 1002:13c0 1462:7e56`, including stable path observations and BY_DRIVER open records (boot-local agent handles, not independently named GOP binaries).
+
+Both GOP device paths extend the corresponding NVIDIA PCI paths and the two `ConOut` paths match those GOP paths byte-for-byte. **The user clarified there was no monitor connected to the AMD iGPU motherboard output.** The current absence of an AMD preboot `ConOut` association is therefore an observation under that cable configuration, not proof the AMD GOP cannot serve as an independent recovery console. The user subsequently **connected a monitor to the AMD motherboard output and confirmed BIOS setup is displayed through the AMD iGPU**. This is direct user-reported evidence of firmware/setup iGPU video output. It does **not** establish the diagnostic application's UEFI `ConOut` variable, `EFI_SYSTEM_TABLE.ConOut` controller association, or long-term console survival if any NVIDIA GOP is released. Keep NVIDIA monitor cables unchanged and cold-boot the next passive diagnostic to observe whether the AMD path appears in GOP and ConOut records.
+
+## Passive implementation and next evidence gate
+
+Universal fork commit [`ec0cecf034984c7e2b6918695493074f187f8a18`](https://github.com/akashskypatel/universal-gpu-unlock/commit/ec0cecf034984c7e2b6918695493074f187f8a18) adds fail-closed reporting of up to the first 12 changed 32-bit PCI config words (`OFFSET`, `FIRST`, `SECOND`, `XOR`) plus the total change count. No changed bit is masked or accepted, and no active path, local signing script, PCI mutation, driver detachment, MMIO/DMA/FLR, BootOrder or NVRAM is modified. [GitHub Actions run `42426660363`](https://github.com/akashskypatel/universal-gpu-unlock/actions/runs/42426660363) PASS includes existing host negative tests and Windows MSVC EFI builds with/without Windows handoff (CI handoff uses a synthetic, non-deployable ESP GUID). The signed local EFI and real updated boot have **not** been verified. Next: rebuild/re-sign locally, cold-boot with AMD motherboard display attached, inspect AMD vs NVIDIA GOP/ConOut and exact first-device PCI config drift, then assess the root cause without weakening identity/ownership validation. Actual GPU unlock and Windows 617.42 signed Booter, SEC2 execution, vendor GOP Stop, recovery remain blocked; `CAN_DETACH=false` and `CAN_UNLOCK=false`.
+
+---
+
 # 2026-11-07 — Universal fork shared PCI inventory implementation passed 72 bounded host checks; active dual-GPU transaction remains blocked
 
 ## Implementation evidence and scope
