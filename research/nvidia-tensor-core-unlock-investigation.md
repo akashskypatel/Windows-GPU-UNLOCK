@@ -1,3 +1,19 @@
+# 2026-11-07 — Universal fork shared PCI inventory implementation passed 72 bounded host checks; active dual-GPU transaction remains blocked
+
+## Implementation evidence and scope
+
+Commit [`2f0043d4e9880be6273edd996e279343ed652ddb`](https://github.com/akashskypatel/universal-gpu-unlock/commit/2f0043d4e9880be6273edd996e279343ed652ddb) was written to `akashskypatel/universal-gpu-unlock` `main` from original baseline `051afe4dcfa06c8407c805f4875732227d54ac90`. GitHub readback verified branch head, exactly 13 intended changed paths and exact expected blob hashes. New `src/gpu_inventory.[ch]` implements bounded CPU-only callback-driven NVIDIA display enumeration (1,024 UEFI handles maximum, 16 NVIDIA display records maximum), rejection on failed reads, duplicate BDF/handle/protocol, malformed BDF and count overflow, plus deterministic exact-card selectors for this ASUS AD102 `10de:2684/1043:88e6/01:00.0` and ZOTAC GA102 `10de:220a/19da:b612/04:00.0` host. New `src/gpu_discovery.[ch]` reads EFI PCI config `0x00/0x08/0x2c` and `GetLocation` through read-only UEFI services, logs all NVIDIA display devices and exact-pair selection, frees the enumeration buffer, and binds the original singleton `Gu` only if exactly one NVIDIA display GPU is present and a refreshed full 64-DWORD PCI identity/config check passes. With two NVIDIA cards, it always returns `EFI_UNSUPPORTED` **before `GuInit`, any `GuMsiRelease`, secure firmware transaction, MMIO write, DMA or FLR**. Both original duplicated Discover routines are replaced with the shared call, and both MSVC build-script source lists include the new files. Existing precompiled EFI binaries were **not** rebuilt.
+
+## Independent host evidence and limitations
+
+Local host check commands compiled and executed `tests/test_gpu_inventory.c` (**57 assertions**) and `tests/test_gpu_discovery.c` (**15 assertions**) using **GCC 14.2** with `-fsanitize=undefined` and **Clang 17** with strict `-Wall -Wextra -Werror -pedantic`. Each emitted an explicit PASS and the final local check emitted `HOST_TEST_STATUS=COMPLETE`. Tests exercise reversed enumeration, exact versus wrong BDF/subsystem/PCI device ID, duplicate identities, incomplete reads, extra NVIDIA devices, ignored AMD iGPU and NVIDIA audio, handle re-resolution drift, failed `FreePool`, mock single-card preservation and refusal **before `GuInit`**. Mock UEFI and pure C callbacks do **not** execute firmware, perform MMIO, validate an actual PCI ancestor/owner/GOP graph or establish physical driver 617.42 compatibility. The shipped MSVC firmware toolchains/actual UEFI link were **not** run in this environment. Static source mock pass must not be described as real EFI boot success.
+
+**Remaining implementation proof gaps:** read-only controller ancestry/parent ports, GOP/driver ownership graph, AMD independent-console survivor during vendor `Stop`, validated per-device live transaction contexts and recovery, original signed Windows 617.42 Booter source, actual loader path/signature acceptance, per-card runtime testing and matched HMMA controls. This implementation does not yet permit manual selection of one target for **active** work while both NVIDIA cards are present. Do **not** remove the fail-closed multi-device branch to rush that milestone.
+
+**Original Windows investigation remains authoritative for physical gates:** `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. The last 617.42 Ghidra `FUN_140179070`/`FUN_140178460`/indirect `FUN_140178F50` follow-up task is still open. Recovery audit unchanged.
+
+---
+
 # 2026-11-07 — Cross-fork source audit: Universal GPU Unlock v1.7.5 blocks the installed RTX 4090 + RTX 3080 pair; compatibility remediation specified
 
 ## Cross-fork source evidence (not a new GPU run)
