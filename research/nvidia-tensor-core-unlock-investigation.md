@@ -1,3 +1,62 @@
+# 2026-11-06 18:08 PST — Embedded-parent record callbacks resolved to two code pointers; nested Falcon registration cap and parent-vtable call sources proved
+
+## Original user-run report identity and scoped verification
+
+Original mounted `nvlddmkm-61742-booter-discovery-20261106-180848-544980.txt`: **25,418 bytes**, **555 physical lines** (`splitlines()`), SHA-256 **`e7491d31b1b66b851e15fbcaa917d9c791da7e230ad75fe6746b4adaaa637507`**, independently measured directly from the uploaded file. Pinned original Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. Ghidra script recorded `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`, **`STATUS=COMPLETE`** in **0.291s**. This run completed two 64-byte `.rdata` static reads, two defined DATA-site inspections, 28 bounded existing CALL sites of `FUN_1406B2F10` (not capped; limit 32), and an unclipped 492-character complete decompilation of `FUN_140118320` (limit 131072). The method slots and static C are proven only on the imported driver; no physical dual-GPU runtime test occurred.
+
+## Record handler candidates at embedded-parent vtable `+0xE0/+0xE8`
+
+The preceding 18:00 machine CALL trace found `FUN_1406BB9A0` reading `RDX=[nested_state+0x4B0]`, `RAX=[RDX]` and then `RAX=[RAX+0xE0]` for the per-record getter and `RAX=[RAX+0xE8]` for the subsequent record callback, both dispatched through the CFG helper at `0x140E02AA8`. This original 18:08 report verified both exact candidate `.rdata` entries under the constructor-installed **embedded parent vptr `0x140E764A8`**:
+
+| Parent method offset | Exact `.rdata` address | `STATIC_QWORD0_LE` / defined DATA outbound | Role in the observed instruction caller |
+|---|---|---|---|
+| `+0xE0` | `0x140E76588` | `0x0000000140178F50` → `FUN_140178F50` | first guarded call returns a pointer used for record initialization |
+| `+0xE8` | `0x140E76590` | `0x00000001400061B0` → `FUN_1400061B0` | second guarded call after record fields are set |
+
+Both sites have `defined=True` with outgoing `DATA` references to those functions; `INBOUND_ROOT count=0`, which does not negate virtual table traversal. **Only the static table slot contents are verified**: the actual `nested_state+0x4B0` receiver at runtime must be the constructed embedded parent with an unchanged vptr, and an AD102/GA102 path must reach the call; these conditions remain unproven. The full function bodies of `FUN_140178F50` and `FUN_1400061B0` were **not** requested in this report and must not be assigned specific record/DMA/firmware semantics based on the pointer locations alone. Prior cumulative notes have described `FUN_1400061B0` as a no-op/fallback in some unrelated callback tables, but a fresh full-body review is appropriate before treating this call as inert.
+
+## `FUN_140118320` — nested Falcon-state registration, **not** image/descriptor construction
+
+The final direct status call of `FUN_1406B2F10` has now been completely decompiled:
+
+```c
+if (nested_state == NULL) {
+    /* logging/reporting calls */
+    return 0x1F;
+}
+uint32_t count = *(uint32_t *)(context + 0x40F8);
+if (count < 0x47) {
+    *(uint64_t *)(context + 0x3EC0 + (uint64_t)count * 8) = nested_state;
+    *(uint32_t *)(context + 0x40F8) = count + 1;
+    return 0;
+}
+/* logging/reporting calls */
+return 2;
+```
+
+The 0x47 entries have indices 0..70; `context+0x3EC0` through `context+0x40F7` is a contiguous 71×8-byte registration array, followed by its 32-bit count at `context+0x40F8`. This **closes the final direct status callee as a registration/limit mechanism**, not a signed Windows Booter descriptor builder. The register array offset **`context+0x3EC0`** must not be confused with the unrelated conditional outer-object getter **`outer+0x3E8`**. `0x1F` means a null input in this body; overflow status literal is `2`, not proven to map to a named error enum. No direct byte producer for `outer+0x3E8` is identified.
+
+## `FUN_1406B2F10` parent callbacks — exact instructions and conditional table slots
+
+The 28-CALL instruction listing includes **two CFG guarded virtual-method invocations of the nested state's parent `RDI = [nested+0x4B0]`**, different from record methods `+0xE0/+0xE8`:
+
+- At `0x1406B313D`, `RAX=[RDI]`, `RAX=[RAX+0x60]` (`0x1406B3139`) then a CFG call with `RCX=context`, `RDX=RDI`, `R8=&nested_state[0x41C]`. This method is conditional on parent flags at `+0x10/+0x11`; the caller checks nested `+0x420` afterward and can log if zero.
+- At `0x1406B319F`, `RAX=[RDI]`, `RAX=[RAX+0x50]` (`0x1406B319B`) then CFG call with `RCX=context`, `RDX=RDI`, immediately before `FUN_140118320(context,nested_state)`.
+
+Under the **same conditional installed embedded table `0x140E764A8`**, these source slots calculate to **`+0x60 → 0x140E76508`** and **`+0x50 → 0x140E764F8`**. Unlike `+0xE0/+0xE8`, the target bytes at `+0x50/+0x60` were **not inspected in this report**; no function address is yet proven for either. The CFG helper is not the effective code target.
+
+## Next actionable static investigation and unchanged blocking gates
+
+Priorities: (1) decompile **`FUN_140178F50`** (verified record-return callback) and **`FUN_1400061B0`** (verified second record callback / formerly seen fallback) to classify their actual behavior; (2) read the two exact parent vtable entries `0x140E764F8/+0x50` and `0x140E76508/+0x60`, with existing Ghidra reference metadata, without asserting their targets until inspected; (3) follow only actual descriptor/data producer/consumer chains thus grounded. This is narrower than further global scans and avoids repeating `FUN_140118320` or `FUN_1406B2F10` decompilation.
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140178f50", "0x1400061b0"], "FULL_DECOMP_MAX_CHARS": 65536, "TRACE_STATIC_BYTES": ["0x140e764f8", "0x140e76508"], "TRACE_DATA_SITES": ["0x140e764f8", "0x140e76508"], "__name__": "__main__"})
+```
+
+All static analysis is read-only on the original MD5-pinned Windows 617.42 driver; the Ghidra script has explicit report path, status and scope bounds. An unavailable slot or clipped target needs a targeted follow-up, not negative proof. `CAN_DETACH=false`, `CAN_UNLOCK=false`, `CAN_FLASH=false`, `RECOVERY_VERIFIED=false`. Windows signed Booter source/image/wrapper/signature, actual HS loader invocation, physical AD102/GA102 runtime selection, cryptographic acceptance and recovery remain OPEN. The immutable recovery audit is untouched.
+
+---
+
 # 2026-11-06 18:00 PST — Falcon state allocation and CFG-indirect record handlers resolved to concrete pointer-source slots, not yet code targets
 
 ## Source and completion
