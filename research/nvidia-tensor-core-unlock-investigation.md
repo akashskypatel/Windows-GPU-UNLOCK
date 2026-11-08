@@ -1,3 +1,17 @@
+# 2026-11-07 — Passive B850 EFI 0003: single AMD root-complex PCI DWORD drift; AMD and both NVIDIA console paths coexist
+
+## Input and exact evidence
+
+User-supplied `GPU-TOPOLOGY-DIAGNOSTIC-0003.TXT` (SHA-256 `33eee83dcc74f808af92febe831cbc70d6bea17f8f96c24164d73c80ec9a9235`, 141 text lines) captures 50 PCI handles with successful enumeration, but the first handle `0x7edf5a18` (`0000:00:00.0 1022:14d8`, `CLASS=0600`, AMD Raphael/Granite Ridge root complex) fails a strict 256-byte PCI config re-read because **one DWORD at offset `0xBC`** changed: `FIRST=B000A851`, `SECOND=18571ECB`, `XOR=A857B69A`; the other 63 DWORDs matched. Exact register semantics on device `1022:14d8` are unknown; being outside the standard PCI header does not prove harmlessness. No bypass or changed stable-read rule has been implemented. `PCI_CAPTURE=0`, `PCI_NODES=0`, `EXACT_PAIR=0`, `STATUS=ERROR` remain expected. The separate passive `AllHandles` reporter completes with 579 handles, 50 PCI protocols, 19 display/bridge records, zero errors and no truncation, identifying AD102 RTX 4090 `01:00.0 10de:2684 1043:88e6`, GA102 RTX 3080 `04:00.0 10de:220a 19da:b612`, AMD iGPU `0f:00.0 1002:13c0 1462:7e56`.
+
+The user confirmed that BIOS setup displayed through the AMD motherboard-connected monitor. The uploaded EFI `0003` log now has **three GOP paths and three `ConOut` variable paths**; their paired paths match each other and can be assigned by PCI path prefix to RTX 4090, RTX 3080 and AMD iGPU. This supports a usable AMD firmware GOP/console-variable association but **NOT** AMD-only console routing: the NVIDIA entries remain in `ConOut`. The strict topology model `GuTopoAssess` marks any NVIDIA `ConOut` association a conflict. Actual `EFI_SYSTEM_TABLE.ConsoleOutHandle` identity, the `ConOutDev` variable, proprietary NVIDIA GOP driver identity, safe Stop and recovery were not observed by this log. The `WINDOWS_HANDOFF=REQUESTED` line is not a stored `StartImage` success result. Comparing `0002` with `0003`: all captured records/paths match; only three new drift lines and the filename differ. These uploads do not establish independent cold boots.
+
+## Current code and planned validation
+
+Current universal fork [`ec0cecf`](https://github.com/akashskypatel/universal-gpu-unlock/commit/ec0cecf034984c7e2b6918695493074f187f8a18) contains precise drift telemetry and [CI run `42426660363`](https://github.com/akashskypatel/universal-gpu-unlock/actions/runs/42426660363) passed host checks and Windows MSVC diagnostic EFI builds. No active GPU mutations were added; the hardware unlock remains blocked. Next: vendor-source interpretation of `1022:14d8` config `0xBC` or an independently validated topology-specific stable-read contract; add passive readout of live ConsoleOutHandle and ConOutDev associations, inspect AMD-primary firmware routing, and obtain another distinct passive cold-boot report before considering any NVIDIA GOP detachment. The authority plan is `research/nvidia_unlock_evidence_to_execution_map.md`; this section preserves the concrete capture observations. Signed driver 617.42 Booter provenance, SEC2 acceptance, GPU selector context and real recovery remain OPEN.
+
+---
+
 # 2026-11-07 — Universal fork passive B850 PCI drift localized; AMD display was not connected
 
 ## Physical-style user-supplied capture, not an unlock result
