@@ -1,3 +1,17 @@
+# 2026-11-07 — B850 passive EFI 0004: recurrent AMD 1022:14d8 0xBC drift and console handle capture implemented
+
+## Exact user-supplied capture evidence
+
+`GPU-TOPOLOGY-DIAGNOSTIC-0004.TXT` is 11,607 bytes (141 physical lines), SHA-256 `7431bccd33d3ead0f064cacc91044f1bb73d32d99a91d83e631704a73fbf147f`. Compared against uploaded `0003`, only two lines differ: the PCI reread difference and `LOG_FILE` filename. The AMD host bridge `0000:00:00.0 1022:14d8 CLASS=0600` again changes one 32-bit config field at offset `0xBC` between two full 256-byte config reads; `0004` gives `FIRST=ef020000 SECOND=17cbd4cb XOR=f8c9d4cb`, while `0003` gave `FIRST=b000a851 SECOND=18571ecb XOR=a857b69a`. All other 63 DWORDs are identical within each capture. This proves instability of the read *under the collector's conditions*, not the meaning or safety of the vendor-specific register. Strict PCI capture is correctly rejected at index zero: `PCI_CAPTURE=0 PCI_NODES=0 EXACT_PAIR=0 STATUS=ERROR`. Do not silently mask, skip or accept an unrelated vendor field in the absence of a reviewed, topology-specific validation contract.
+
+The independent read-only collector completes (`ALL_HANDLES=579 PCI_PROTOCOLS=50 RELEVANT=19 RECORDS=19 ERRORS=0 TRUNCATED=0`). NVIDIA RTX 4090 `01:00.0 10de:2684 1043:88e6`, RTX 3080 `04:00.0 10de:220a 19da:b612`, AMD iGPU `0f:00.0 1002:13c0 1462:7e56` and their PCI path prefixes are unchanged. Three GOPs match three UEFI `ConOut` configured output paths: AMD plus **both** NVIDIA. BIOS display through the motherboard monitor is user-confirmed, but active `ConsoleOutHandle` device and proprietary NVIDIA GOP release/recovery remain UNKNOWN. A saved `WINDOWS_HANDOFF=REQUESTED` line does not prove `StartImage` succeeded. Separate numbered logs alone do not prove separate cold-boot replication.
+
+## Current supplementary implementation
+
+Universal fork commit [`35f97fa`](https://github.com/akashskypatel/universal-gpu-unlock/commit/35f97fa9696cdbb28784d686ef6aa538f4015022) adds bounded read-only logging of `EFI_SYSTEM_TABLE.ConsoleOutHandle`, its SimpleTextOut protocol identity and possible DevicePath, as well as `ConOutDev` firmware-variable paths. UEFI specification distinguishes the active SimpleTextOut console handle from the configured `ConOut` paths and all *possible* `ConOutDev` paths; a virtual console handle need not identify a single physical GPU. No GPU, PCI, NVRAM, EFI console variable, proprietary NVIDIA driver or boot-order write is introduced. GitHub Actions run [`42431717899`](https://github.com/akashskypatel/universal-gpu-unlock/actions/runs/42431717899) **PASS** for EFI build plus existing host checks. New ConOutDev parsing is not host-tested and physical B850 execution still requires the next diagnostic boot. Strict PCI validation and active refusal unchanged. Actual NVIDIA GOP Stop, 617.42 signed Booter, SEC2, write-enable proof, and recovery remain blocked. Authoritative status and next gates are in `research/nvidia_unlock_evidence_to_execution_map.md`.
+
+---
+
 # 2026-11-07 — Passive B850 EFI 0003: single AMD root-complex PCI DWORD drift; AMD and both NVIDIA console paths coexist
 
 ## Input and exact evidence
