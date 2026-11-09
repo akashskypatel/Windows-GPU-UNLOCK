@@ -1,3 +1,16 @@
+# 2026-11-09 10:21 PST — Parent +0x60 candidate FUN_140579C20 is a nested configuration initializer; direct Booter producer lead closed
+
+**Verified report:** `nvlddmkm-61742-booter-discovery-20261109-102152-704825.txt`, **2,638 original bytes / 98 physical lines**, SHA-256 `205317327f43b00a35c3e1836adcf4b01a6af667397df2d968ca4f15eb09b535`, 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, `clipped=False total_chars=956`, `STATUS=COMPLETE`, elapsed 0.249s, no Ghidra or GPU mutation.
+
+- `FUN_140579C20` traverses `param_2+0x190 -> +0x18 -> +0x4E8` for a nested writable block. If nonnull, output `param_3` gets `+0=0` (byte), dwords `+4=0x110000`, `+8=0x111000`, `+0xC=0x110600`. Nested block gets dword `+2=0x08080808`, `+8=0`, and pairs `+0x10/14=0x110C00,8`, `+0x18/1C=0x110C04,8`, `+0x20/24=0x110C80,8`, `+0x28/2C=0x110C84,8`. These are static configuration data; GPU MMIO meaning and downstream effects unknown; no signed image/header/signature construction or direct HS loader call in complete body.
+- `FUN_1406B2F10:0x1406B313D` previously passed `R8=RBX+0x41C` into parent `+0x60` and then `CMP [RBX+0x420],0`. The proposed candidate sets output `+4=0x110000` exactly at the compared field **under conditional root/receiver alias**. Previous “status” interpretation is not established. Error-path helper side effects and null preconditions remain unresolved.
+- `TARGET_CALLER from=0x14140FA64`, `0x140E0BEA4`, `0x140E76760` are **DATA references**. `0x140E0BEA4` is 32-bit `0x00579C20` in probable PE CFG valid-target table; `0x140E76760` holds a 64-bit function pointer under conditional root-vptr `+0x370` hypothesis, not proven runtime dispatch.
+- **CLASSIFICATION:** this specific +0x60 function and earlier +0xE0 record getter are **direct signed Booter producer leads CLOSED (STATIC)**. Still not proven: true 0x3550 root object identity on a physical card, original stock signed Windows GA102/AD102 Booter IMAGE/header/signature, `outer+0x3E8` region producer, actual 0x9B0 Falcon HS invoker and `FUN_140BF3880` arg-3 descriptor producer or hardware recovery.
+
+**Next (owner/agent in execution map):** AGENT first identify an *unreviewed concrete* original-driver source site linking a published nested Falcon loader callback with its exact receiving instance/third-argument provenance; only then supply a bounded read-only Ghidra command to the OWNER. No additional owner run of known +0xE0/+0x60 bodies, firmware/MIMO/MMIO experiments or active stage. `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-09 10:12 PST — Parent +0x60 conditional pointer = FUN_140579C20; alternate entry is likely PE Guard CF Function Table
 
 **Uploaded report:** `nvlddmkm-61742-booter-discovery-20261109-101251-279764.txt` 3,558 bytes / 60 physical lines / SHA-256 `5d8b0e972dda0097f8363543c7aac0a2c4e527593d25d793139fcba48fccfc45`; MD5-pinned Windows 617.42 driver; `STATUS=COMPLETE`, 0.015s, no Ghidra or GPU mutation.
