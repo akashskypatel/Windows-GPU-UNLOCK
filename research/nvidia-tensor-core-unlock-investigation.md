@@ -1,3 +1,27 @@
+# 2026-11-09 — Original Windows 617.42 FSP/GFW exact string XREF owners resolved; three bounded decompilations next (STATIC COMPLETE XREF / SOURCE BODY NOT RUN)
+
+**Owner report:** `nvlddmkm-61742-booter-discovery-20261109-144316-076973.txt` (2,601 bytes / 31 physical lines, SHA-256 `1880d1d5fd777fc0b2c5a12319f3e2ff6e97f11854008b8c700ee3618908e5d4`), original `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`. `SCAN_STRINGS=SKIPPED_BY_CALLER`, `CSV_LEAD_COUNT=3` with all three exact ASCII bytes validated at supplied VAs; `STATUS=COMPLETE`, elapsed 0.012s, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. **Completion covers only the three selected literal validations and existing Ghidra XREF enumeration: no decompilations were requested (`DECOMPILATION=SKIPPED`).**
+
+| Exact anchor | Original existing references | Function ownership / limits |
+|---|---|---|
+| `0x140D2F950` FSP boot-poll error | `0x140C8C749` DATA in `FUN_140C8C740`; `0x140C8C8D4` DATA in `FUN_140C8C830`; `XREFS=2 capped=False` | **Two previously unreviewed owning functions identified**, but message-use paths, architecture specificity, relationship between functions and actual FSP polling unclassified. |
+| `0x141806480` "FSP boot completion" | `0x1418032FC` and `0x141803303` DATA both in `FUN_141803140`; `XREFS=2 capped=False` | **Third previously unreviewed owner identified**; may reference a label/event or timer; no demonstrated secure Booter relation. |
+| `0x140EFB958` "GFW secure boot failed [NV_ERR_SECURE_BOOT_FAILED]" | `XREFS=0 capped=False` in original Ghidra *existing reference map* | **No defined reference in this bounded map**; does not establish absence of runtime reference, table lookup, firmware source or error use. Do not create a new lead without independently grounded consuming code. |
+
+**Cross-reference against existing investigation:** Both Windows cumulative and dedicated ledgers had no prior classification or exact-address references to the three function owners `FUN_140C8C740`, `FUN_140C8C830` or `FUN_141803140`. The earlier GA10x Falcon loader `FUN_140BF3880`, signature callback `FUN_140BF2740`, and host GSP/UCODES file-staging chain remain separate. FSP in generic 617.42 Windows driver must **not** be asserted as the path used by AD102 RTX 4090 or GA102 RTX 3080. Numeric/literal matches alone are not object identity or invoker proof.
+
+**Next single original-driver Ghidra command (read-only, three complete bodies plus four source-rooted instruction windows; NOT RUN in agent environment):**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140c8c740", "0x140c8c830", "0x141803140"], "TRACE_INSTRUCTION_SITES": ["0x140c8c749", "0x140c8c8d4", "0x1418032fc", "0x141803303"], "FULL_DECOMP_MAX_CHARS": 131072, "__name__": "__main__"})
+```
+
+**Accept:** original MD5/base matches, `STATUS=COMPLETE REPORT=...`, each requested `DECOMPILER_BEGIN` exists with `clipped=False`, no `DECOMPILE_UNAVAILABLE`, all four `INSTRUCTION_SITE` windows resolved, and no Ghidra/hardware mutation. If any body times out/clips, report `PARTIAL` and narrow only that body; an incoming-ref cap alone does not prove exhaustive callers. Classify actual control flow, user of formatted arguments, source and invocation, and architecture discriminator. Close FSP branch if generic status-only or unsupported for GA102/AD102; do not infer Booter source from a diagnostic string. `GFW` zero-XREF string is **DEFERRED** pending a real separately grounded owner.
+
+**Independent P0 still OPEN:** original Windows 617.42 signed production Booter IMAGE/HEADER/SIG/PATCH data/producer; actual same-instance call of published nested `+0x170` loader `FUN_140BF3880` and arg3 descriptor; `outer+0x3E8` producer; per-card class and secure signature acceptance. No EFI source/hardware changes; Stage 3 `CONFLICT`, Stage 4 `PARTIAL`, `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-09 — Original Windows 617.42 defined-string triage: FSP/GFW probes isolated (SOURCE CROSS-REFERENCE; NO NEW GHIDRA RUN)
 
 **Input and scope:** Owner supplied 35+ exact existing Ghidra string VAs. Compared each label against the current cumulative Windows 617.42 ledger, the dedicated Booter ledger, the execution plan, and previously completed original-driver reports before selecting any further probe. A string's presence is not function ownership, source-to-sink flow, runtime selection, verified firmware bytes, or secure authorization.
