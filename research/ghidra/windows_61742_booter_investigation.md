@@ -1,3 +1,23 @@
+# 2026-11-09 09:52 PST — Conditional +0x328 candidate resolves to FUN_140578C60; table/receiver ownership still OPEN
+
+**Read-only original Ghidra evidence:** `nvlddmkm-61742-booter-discovery-20261109-095203-574467.txt`, 4,245 original bytes / 72 physical lines, SHA-256 `4efda188613c7c9f2b8ce4864619b9a3d5d200db604cce626ce60a2332799d0d`. Driver MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. `STATUS=COMPLETE`, 0.018 sec, `DECOMPILATION=SKIPPED`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`; this is not a physical result.
+
+- At `0x140E76718`, `.rdata` QWORD `0x140578C60`, verified `OUTBOUND kind=DATA function=FUN_140578C60`; zero recorded inbound XREFs to the slot (virtual dispatch can still access it indirectly). The next function-pointer QWORDs are `0x140578C10`, `0x140578CA0`, `0x140578D40`; meaning and table boundary are unknown.
+- Previously known `FUN_140178F50` implements `RDX-0xF0 → [root_vptr+0x328] → CFG JMP`, and caller `FUN_1406BB9A0` uses the nested state pointer from `[RDI+0x4B0]` for the parent `+0xE0` dispatch. The constructor-observed embedded-parent table head `0x140E764A8` is just `0xB8` beyond root `0x140E763F0`; the candidate offset does not prove contiguous root-table membership or effective runtime vptr identity.
+- **Resolved (STATIC):** candidate QWORD and named executable target exist. **Unresolved:** method role, object/table attribution, real receiver and invocation, any link to Falcon +0x170/+0x250 or signed Windows Booter image+descriptor, cryptographic acceptance and GPU architecture selection.
+
+**Next one bounded owner-local PyGhidra command** (existing script, no new source required):
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140578c60"], "FULL_DECOMP_MAX_CHARS": 131072, "TRACE_INSTRUCTION_SITES": ["0x140578c60"], "__name__": "__main__"})
+```
+
+Analyze `FUN_140578C60` once and test the object-identity hypothesis using existing constructor/caller evidence. Do not repeat `FUN_1406BB9A0` or earlier Falcon string-owner decompilations. If the candidate target is unrelated, close **that** hypothesis rather than claiming there is no Booter loader.
+
+Physical `0016` passive opener graph and original 1A70 MSI static Stop analysis remain PASS; active Stage 3 CONFLICT / Stage 4 PARTIAL, `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`. No live STOP, DMA, FLR, MMIO, firmware or Windows driver modification.
+
+---
+
 # 2026-11-09 09:43 PST — Parent +0xE0 CFG wrapper resolves root-object virtual dispatch +0x328 (source pointer still unverified)
 
 **New uploaded original read-only Ghidra report:** `nvlddmkm-61742-booter-discovery-20261109-094336-040400.txt`, **2,427 bytes / 68 physical lines**, SHA-256 **`7d2677698492e00d20a87981eed7a5e5a0bfdbb597632b4f3b6ecb6287f499c0`** (computed from original upload bytes). `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`, `STATUS=COMPLETE`, 0.795 seconds, output `D:\Projects\gpu-unlock\ghidra\nvlddmkm-61742-booter-discovery-20261109-094336-040400.txt`. Report has **two complete unclipped decompiler bodies** (156/102 chars), a bounded instruction window and one exhaustive function CALL-site enumeration. It does **not** attest runtime class, original signed Booter image/header/signatures or cryptographic acceptance.
