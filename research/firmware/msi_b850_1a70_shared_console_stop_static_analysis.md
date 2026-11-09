@@ -48,6 +48,17 @@ Three ConSplitter table references are registered by the PE initializer (at `0xF
 - `0xEF4`, `0xF05`, `0xF13`, `0xF20`: success path closes GOP and frees three private allocations, ignoring cleanup return codes, then returns EFI_SUCCESS.
 - This compiled Stop body does not inspect NumberOfChildren or ChildHandleBuffer. **No live callback/Stop sequence has been tested.**
 
+## Additional bounded static trace: shared mode helper `0x4664`
+
+The original ConSplitter PE `Stop(0x1480)` calls helper `0x4664` **after** unlinking the matching TextOut member from shared list `0x6508` and **before** freeing its node and attempting to uninstall the ConsoleOutDevice marker. Direct disassembly bounds `0x4664–0x4762` and its allocation helper `0x4E54–0x4E84` show:
+
+- At `0x467C–0x4693`, obtain GOP using `BootServices.HandleProtocol(+0x98)` and **check its return**; on failure return early. Thus there is a branch where member unlink has already happened but mode recalculation never completes.
+- At `0x4699–0x46B8`, compute a size from shared state `0x63D8` minus `0x63E8`, call helper `0x4E54` (a wrapper around `BootServices.AllocatePool(+0x40)`, memory type `4`) and assign result to global buffer `0x6418`. On failure it exits with no status returned to the caller.
+- At `0x46BE–0x46EF`, request a second, double-sized allocation and assign global `0x6410`. If it fails, it invokes `BootServices.FreePool(+0x48)` on the first allocation and clears global `0x6418`, then exits.
+- At `0x46F1–0x474E`, the success path calls boot-service helpers, copies portions of prior shared output-mode buffers into the newly allocated state and calls `0x4410` to update a mode/console structure. This helper is not returning a UEFI EFI_STATUS to its Stop caller; no successful mode reconstruction has been observed on hardware.
+
+**Additional static partial-failure risk, not a measured fault:** `Stop` has already modified the shared member list when `0x4664` encounters GOP lookup or allocation failure. No direct failure status is propagated back through the `Stop` call, which later bases its return on other cleanup results. The exact downstream buffer validity, physical display continuity and caller unwind remain UNKNOWN. Do not assume this code path is a successful or failed hardware transaction.
+
 ## Original-vs-running `.text` hashes (correction to earlier raw digest)
 
 | Module | `.text` RVA | VirtualSize used by loaded PE parser | SizeOfRawData | **Comparable original SHA-256** | PE relocations into `.text` |
