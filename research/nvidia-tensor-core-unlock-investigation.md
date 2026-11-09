@@ -1,3 +1,19 @@
+# 2026-11-09 — Existing exact Windows 617.42 initializer report resolves new outer+0x1D0 callback producer; one unreviewed callee remains
+
+**Original historical evidence reused, no new Ghidra run:** owner report `nvlddmkm-61742-booter-discovery-20261106-173012-731422.txt` previously recorded SHA-256 `923aebb90264f128ce0ae847635feab8aefaccbe5b608f4e4ce6cc7c093aa795`, source MD5 `3fb9afac9d0e394723e830aa14e60512`, `STATUS=COMPLETE`, `FUN_140179580` unclipped `total_chars=28191`. Agent re-read its indexed original Ghidra C in this turn; the raw source was not independently re-hashed (Project source raw materialization unavailable). The full C has **exactly two direct `(param_1+0x1D0)` callback assignments**: at shared `LAB_140179661`, `FUN_1405798E0`; on a branch gated by `uVar3 == 2` and `(uVar8 & 0x30FE) != 0`, `FUN_140006190` (previously proven constant-zero stub). The control flow routes other selector conditions into the shared real-callback label; this is *static selector possibility*, not physical GA102/AD102 branch resolution.
+
+**Independently already captured actual consumer:** original report `nvlddmkm-61742-booter-discovery-20261106-180030-581593.txt` (historically SHA `b79eec6788139e804ca846b4a61e0e50dbc5515fe9c6e3c893b81c8fc1531dea`, 617.42 original MD5) has `FUN_140579FF0:0x14057A0BF` machine `MOV RAX,[RDX+0x1D0]`, followed by CFG `CALL` at `0x14057A0C6`, and nested-state setup immediately preceding. **This is an actual indirect callback slot read**, but the supplied data do not prove that RDX is always the same constructed outer instance, the real branch is chosen for physical AD102/GA102, nor that `FUN_1405798E0` returns signed image data. Crucially `outer+0x1D0` is not `nested+0x170`. The outer `+0x3E8` content writer and `FUN_140BF3880` third argument are still untraced.
+
+**Next single bounded original-driver experiment (owner-local, read-only, no redundant initializer decomp):**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1405798e0"], "FULL_DECOMP_MAX_CHARS": 131072, "__name__": "__main__"})
+```
+
+Accept `STATUS=COMPLETE` and `DECOMPILER_BEGIN clipped=False` only for the requested `FUN_1405798E0` body, or record `PARTIAL`; classify direct writes/callees and whether any actual signed resource is produced. If it merely reads/writes Falcon state/register configuration, close this *direct* producer lead while preserving higher-level original Booter provenance as OPEN. Do not re-run `FUN_140179580`, `FUN_140579FF0`, `FUN_140006190`, the known cleanup wrappers, broad `+0x170` displacement scans or the finished three-file wrapper probe. No hardware, driver, Ghidra database or UEFI mutations; `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-09 11:31 PST — Original Windows 617.42 pinned reference-wrapper scan COMPLETE, zero matching assembled wrappers
 
 **User original report:** `nvfw-hs-wrapper-61742-20261109-113101.json`, 2,187 bytes / 55 physical lines, SHA-256 `8918f4208e1b9cdc78ef57a847a190d1409912a5df54f2ffe63f9975b9ae218f`, independently read/hashed in the agent environment. It records `mode=read_only_pinned_linux_reference_wrapper_candidate_scan`, `status=COMPLETE`, `total_candidates=0`, `hardware_action=NONE`, `falcon_argument_three_or_receiver_proven=false`, `signature_authenticated=false`, `windows_signed_booter_producer_proven=false`.
