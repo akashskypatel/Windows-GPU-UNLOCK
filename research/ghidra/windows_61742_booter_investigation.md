@@ -1,3 +1,29 @@
+# 2026-11-09 09:24 PST — Three Windows HS string owners independently reconfirmed; earlier full decompilation and callback registration must not be repeated
+
+**New original user-run read-only report:** `nvlddmkm-61742-booter-discovery-20261109-092446-213315.txt`, **2,510 bytes**, **36 physical lines**, SHA-256 **`fced743031b238a7fe22859de4f5ff5a541961824375d95e62084573ef410bd9`**. Actual pinned Windows NVIDIA `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; `SCAN_STRINGS=SKIPPED_BY_CALLER`; `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`; final `STATUS=COMPLETE REPORT=D:\Projects\gpu-unlock\ghidra\nvlddmkm-61742-booter-discovery-20261109-092446-213315.txt`; elapsed 0.100 s. **DECOMPILATION=SKIPPED**; `COMPLETE` means only that requested static data-ref inspection finished.
+
+| Data anchor | Reported exact referring function(s) and instructions | Status vs cumulative 2026-11-06 research |
+|---|---|---|
+| `flcnCreateHsOvlSigBlob_GA10X` at `0x140D2EB10` | **8/8 uncapped DATA XREFs**, all in `FUN_140BF2740`: `0x140BF2887`, `0x140BF2894`, `0x140BF2968`, `0x140BF297C`, `0x140BF2AAF`, `0x140BF2AB9`, `0x140BF2ADD`, `0x140BF2AE7` | **CONFIRMS PRIOR OWNER**. This function was fully and unclipped decompiled on 2026-11-06 14:01 as an HS overlay-signature word-rearrangement routine. Separate 14:09 physical instruction records show conditional `FUN_1417E8550` assignment to nested dispatch slot **`+0x250`**. Neither transform nor callback registration is proof of actual invocation, cryptographic signing or signed Booter provenance. |
+| `flcnLoadAndExecuteHsBinaryViaDma_GA10X` at `0x140D2EAE0` | **6/6 uncapped DATA XREFs** `0x140BF396F`, `0x140BF397C`, `0x140BF3A44`, `0x140BF3A4F`, `0x140BF3A99`, `0x140BF3AA6`, all inside `FUN_140BF3880` | **CONFIRMS PRIOR OWNER**. This loader and nested `+0x170` registration had already been decompiled and established, but effective runtime caller and signed production byte descriptor remain unknown. |
+| `RmAllocIsoSysMemFromCarveout` at `0x140D0AD10` | **1/1 uncapped DATA XREF** `0x1402B2DAE` in `FUN_1402B2980` | **CONFIRMS PRIOR OWNER**. Complete 2026-11-06 14:01 decompilation shows RM option read and `param_1+0xA10` bool assignment; this function is **not** a direct HS signed-Booter image/descriptor producer. |
+
+**Evidence classification:** all 15 inbound references are **DATA**, not actual code CALL invocations, and each `INBOUND_ROOT` is uncapped. Report labels each data anchor as `.text` defined, which is Ghidra's mapped-block label; do not assume the bytes are instructions. The report does **not** newly decompile these functions or establish invocation of either Falcon HS loader `+0x170` or overlay signature transform `+0x250`. This resolves an **outdated subtask in the separate Booter ledger**, not the signed production Booter gate.
+
+**Reconciliation with authoritative cumulative notes:** 2026-11-06 **14:01** already completed `FUN_140BF2740` and `FUN_1402B2980`; **14:09** proved `FUN_140BF2740` installed in conditional `+0x250`; **14:16** completed its paired `+0x258` helper and found the `+0x250` transfer scan capped; **16:25** completed `FUN_140BF1390` (preparation `+0xB0`); **18:15** pinned embedded parent `+0x50/+0x60` to `FUN_140179070/FUN_140178460`, proved `+0xE8` no-op and found `+0xE0` `FUN_140178F50` is a CFG forwarding wrapper with **unknown actual target**. Do **not** re-run the now-known string owner decompilations or claim those raw sites supply signed Booter bytes.
+
+**One next bounded, owner-machine PyGhidra read-only command, requiring the pinned original program:**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140179070", "0x140178460"], "FULL_DECOMP_MAX_CHARS": 131072, "TRACE_FUNCTION_CALLS": ["0x140178f50"], "TRACE_INSTRUCTION_SITES": ["0x140178f50"], "__name__": "__main__"})
+```
+
+The existing script validates driver MD5, image base and name, uses Ghidra's existing function/Listing data without modifying the program, and prints **`STATUS=COMPLETE|PARTIAL|ERROR` and `REPORT=...`** at completion. Decompile the parent slot targets, inspect effective CFG forwarding machine registers and the `outer+0x3E8` descriptor chain. Do not infer a producer from the CFG helper or registration alone. The original driver/Ghidra program is absent from the agent runtime; this new decompilation **has not been run**.
+
+**All active gates unchanged:** `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`, signed Windows production Booter producer, real HS invocation, AD102/GA102 selector, cryptographic acceptance and cold-boot recovery **OPEN**.
+
+---
+
 # 2026-11-06 13:44 PST — HS overlay signature blob string untraced; vtable-head DATA refs and constructor call checked
 
 User-supplied Ghidra strings (two batches) compared against existing investigation and Ghidra ledger, not simply string names. Critical **new UNTRACED string** `flcnCreateHsOvlSigBlob_GA10X` at VA `0x140D2EB10` (no retained exact previous analysis). Secondary untraced `RmAllocIsoSysMemFromCarveout` at `0x140D0AD10`. Other new `HOST9`, `_ORI_ORI compile type=2`, `VESA DMT` and two NOT_DEFINED six-byte candidates have no established Falcon/Booter dataflow. Previously investigated: display GA102/AD102 diagnostic strings through partially clipped `FUN_1415A8FB0`; `flcnLoadAndExecuteHsBinaryViaDma_GA10X` fully decompiled in `FUN_140BF3880`; `flcnWaitForResetToFinish_GA102` fully decompiled `FUN_140BF4F00`; ga100/ga10x/ad10x suffix selection in `FUN_1401AA0E0`; GSP/UCODES/GSP log filenames in `FUN_1400F35F0` selector and `FUN_1400F3350` reader, plus GSP staging; `fwlogging_kernel_*` resource family in complete `FUN_1401AA580` logging initializer. Being investigated != runtime authenticated/used.
