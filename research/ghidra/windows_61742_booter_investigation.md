@@ -1,6 +1,25 @@
+# 2026-11-09 10:12 PST — Parent +0x60 conditional pointer = FUN_140579C20; alternate entry is likely PE Guard CF Function Table
+
+**Uploaded report:** `nvlddmkm-61742-booter-discovery-20261109-101251-279764.txt` 3,558 bytes / 60 physical lines / SHA-256 `5d8b0e972dda0097f8363543c7aac0a2c4e527593d25d793139fcba48fccfc45`; MD5-pinned Windows 617.42 driver; `STATUS=COMPLETE`, 0.015s, no Ghidra or GPU mutation.
+
+- `FUN_140178460` (embedded parent +0x60) adjusts receiver `RDX-=0xF0` and tail CFG-dispatches root `vptr+0x370`. Under the previously observed root `0x140E763F0` **conditional, unproven runtime alias**, `0x140E76760` contains executable function pointer `FUN_140579C20`. Zero direct inbound refs to the slot do not disprove dynamic virtual use; body not yet decompiled.
+- `FUN_1406B2F10:0x1406B313D` branches on parent bytes `+0x10!=0`, `+0x11==0`, CFG-calls parent +0x60 with `R8=RBX+0x41C`, then tests `[RBX+0x420]`; callback role and runtime receiver open.
+- Prior `DATA` reference `0x140E0BE84` to record getter `FUN_140578C60` is a **32-bit RVA `0x00578C60`**, not a 64-bit vptr. The surrounding 16 entries are increasing 32-bit RVAs, including `0x00579C20` for current function. Defined data root `0x140E02C20` and inbound from PE load-config `0x141002A80` match an **existing 2026-11-05 GuardCFFunctionTable hypothesis**, not proof of a second virtual class table. Formal structure decode still pending.
+- **Correction:** earlier `nvlddmkm-61742-booter-discovery-20261109-100251-168740.txt` is **63 physical lines**, not 45, while the recorded 1,977-byte count and SHA-256 were correct. Current source docs corrected.
+
+**Next one bounded owner-local decompilation** of `FUN_140579C20`:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140579c20"], "FULL_DECOMP_MAX_CHARS": 131072, "TRACE_INSTRUCTION_SITES": ["0x140579c20"], "__name__": "__main__"})
+```
+
+Agent: classify and close this record/management path if unrelated; proceed to actual signed Windows production Booter producer/descriptor, `outer+0x3E8` content source and nested Falcon +0x170 invoker. Maintain `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`; no active hardware test.
+
+---
+
 # 2026-11-09 10:02 PST — FUN_140578C60 is a conditional indexed record getter; owner/producer still unresolved
 
-**Read-only original 617.42 report:** `nvlddmkm-61742-booter-discovery-20261109-100251-168740.txt`, 1,977 bytes / 45 physical lines, SHA-256 `acdf0d107225b9646e3d80b6444d0b67b7db6bc79528baa7b04cecb36d3cb36d`; `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, `STATUS=COMPLETE`, `clipped=False total_chars=355`, 0.249s, no Ghidra database or GPU mutation.
+**Read-only original 617.42 report:** `nvlddmkm-61742-booter-discovery-20261109-100251-168740.txt`, 1,977 bytes / 63 physical lines, SHA-256 `acdf0d107225b9646e3d80b6444d0b67b7db6bc79528baa7b04cecb36d3cb36d`; `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, `STATUS=COMPLETE`, `clipped=False total_chars=355`, 0.249s, no Ghidra database or GPU mutation.
 
 - `FUN_140578C60` reads `param_2+0x190` metadata and indirect record count `[ [ [param_2+0x190] +0x18 ] +0x460]`; on `index<count`, returns `param_2+0x480+0x28*index`, otherwise 0. Caller requirement is non-null/valid metadata despite visible `param_2==0` branch. No signed image/header/signature production, HS loader call, cryptographic acceptance or per-GPU runtime selector in its entire body.
 - Earlier `FUN_140579FF0` zeroed `outer+0x480` for `0x2800` bytes and initialized nested count `+0x460=0x100`; `0x2800/0x28=256` records. `FUN_1406BB9A0` uses parent `+0xE0` returned pointer for fields `+0,+4,+8,+0x10,+0x18`. Combined, this is a strong **static** record layout/consumer match, **conditional on matching object identities**.
