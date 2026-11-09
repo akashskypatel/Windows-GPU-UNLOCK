@@ -877,7 +877,7 @@ def main():
             output('SCAN_STRINGS=SKIPPED_BY_CALLER')
             status = 'COMPLETE'
         if bool(globals().get('SCAN_CSV_LEADS', False)):
-            scan_known_string_references(program, output)
+            scan_known_string_references(program, output, leads=globals().get('CSV_LEADS', FIRMWARE_STRING_LEADS))
         slot_displacement = globals().get('SCAN_SLOT_DISPLACEMENT', None)
         if slot_displacement is not None and not scan_existing_slot_displacements(
                 program, slot_displacement, output, time.monotonic() + MAX_SCAN_SECONDS,

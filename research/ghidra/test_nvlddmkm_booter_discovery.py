@@ -101,6 +101,57 @@ class DiscoveryPatternTests(unittest.TestCase):
         self.assertTrue(probe.targeted_decompile(None, [], logs.append))
         self.assertIn('DECOMPILATION=SKIPPED no explicit TARGET_FUNCTIONS provided', logs)
 
+    def test_explicit_csv_leads_override_default_without_string_scan(self):
+        import tempfile
+
+        class CorrectProgram:
+            def getExecutableMD5(self):
+                return probe.EXPECTED_MD5
+
+            def getImageBase(self):
+                return type('Base', (), {'getOffset': lambda self: probe.EXPECTED_IMAGE_BASE})()
+
+            def getName(self):
+                return 'nvlddmkm.sys'
+
+        selected = (
+            ('FSP boot completion', 0x141806480),
+            ('GFW secure boot failed [NV_ERR_SECURE_BOOT_FAILED]', 0x140efb958),
+        )
+        seen = []
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.dict(probe.__dict__, {
+                'currentProgram': CorrectProgram(),
+                'SCAN_STRINGS': False,
+                'SCAN_CSV_LEADS': True,
+                'CSV_LEADS': selected,
+                'TARGET_FUNCTIONS': [],
+                'REPORT_DIR': temporary,
+            }), patch.object(probe, 'scan_known_string_references',
+                             side_effect=lambda _program, _log, leads: seen.append(leads)):
+                status = probe.main()
+            report_files = list(Path(temporary).glob('nvlddmkm-61742-booter-discovery-*.txt'))
+            self.assertEqual(len(report_files), 1)
+            self.assertIn('STATUS=COMPLETE REPORT=', report_files[0].read_text())
+        self.assertEqual(status, 'COMPLETE')
+        self.assertEqual(seen, [selected])
+
+    def test_selected_csv_lead_rejects_wrong_literal_bytes(self):
+        class Memory:
+            def getBlock(self, address):
+                return type('Block', (), {'isInitialized': lambda self: True})()
+
+        class Program:
+            def getMemory(self):
+                return Memory()
+
+        with patch.object(probe, '_address', side_effect=lambda _program, value: value), \
+             patch.object(probe, '_memory_bytes', return_value=b'not the anchored string'):
+            with self.assertRaisesRegex(ValueError, 'CSV lead bytes differ'):
+                probe.scan_known_string_references(
+                    Program(), lambda _line: None,
+                    leads=[('FSP boot completion', 0x141806480)])
+
     def test_no_assertion_from_missing_raw_strings(self):
         self.assertEqual(list(probe.marker_hits(b'not an Nvidia archive path')), [])
 
