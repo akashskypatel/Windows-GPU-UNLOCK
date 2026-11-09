@@ -1,3 +1,21 @@
+# 2026-11-09 10:02 PST — FUN_140578C60 is a conditional indexed record getter; owner/producer still unresolved
+
+**Read-only original 617.42 report:** `nvlddmkm-61742-booter-discovery-20261109-100251-168740.txt`, 1,977 bytes / 45 physical lines, SHA-256 `acdf0d107225b9646e3d80b6444d0b67b7db6bc79528baa7b04cecb36d3cb36d`; `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, `STATUS=COMPLETE`, `clipped=False total_chars=355`, 0.249s, no Ghidra database or GPU mutation.
+
+- `FUN_140578C60` reads `param_2+0x190` metadata and indirect record count `[ [ [param_2+0x190] +0x18 ] +0x460]`; on `index<count`, returns `param_2+0x480+0x28*index`, otherwise 0. Caller requirement is non-null/valid metadata despite visible `param_2==0` branch. No signed image/header/signature production, HS loader call, cryptographic acceptance or per-GPU runtime selector in its entire body.
+- Earlier `FUN_140579FF0` zeroed `outer+0x480` for `0x2800` bytes and initialized nested count `+0x460=0x100`; `0x2800/0x28=256` records. `FUN_1406BB9A0` uses parent `+0xE0` returned pointer for fields `+0,+4,+8,+0x10,+0x18`. Combined, this is a strong **static** record layout/consumer match, **conditional on matching object identities**.
+- Inbound DATA references to getter entry: `0x140E0BE84`, `0x140E76718`. The latter is the hypothetical root `+0x328` slot, not yet an authenticated root-vtable span; embedded parent at `0x140E764A8` intervenes. Getter semantics are now **CLASSIFIED STATIC**; actual root dispatch, vptr provenance, and original Windows Booter producer/descriptor remain OPEN.
+
+**One bounded next owner-local read-only Ghidra command** for conditional parent `+0x60` method `root+0x370=0x140E76760`, alternative table `0x140E0BE84` and original +0x60 caller:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_STATIC_BYTES": ["0x140e76760", "0x140e0be70"], "TRACE_DATA_SITES": ["0x140e76760", "0x140e0be84"], "TRACE_INSTRUCTION_SITES": ["0x140178460", "0x1406b313d"], "__name__": "__main__"})
+```
+
+The agent should review and stop this side branch if it only leads to record/management access; prioritize `outer+0x3E8` source and nested Falcon `+0x170` invocation plus signed production image provenance. Hardware Stage 3 CONFLICT/Stage 4 PARTIAL and all no-mutation safeguards remain unchanged.
+
+---
+
 # 2026-11-09 09:52 PST — Conditional +0x328 candidate resolves to FUN_140578C60; table/receiver ownership still OPEN
 
 **Read-only original Ghidra evidence:** `nvlddmkm-61742-booter-discovery-20261109-095203-574467.txt`, 4,245 original bytes / 72 physical lines, SHA-256 `4efda188613c7c9f2b8ce4864619b9a3d5d200db604cce626ce60a2332799d0d`. Driver MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`. `STATUS=COMPLETE`, 0.018 sec, `DECOMPILATION=SKIPPED`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`; this is not a physical result.
