@@ -1,3 +1,17 @@
+# 2026-11-09 10:56 PST — Exact two Ghidra CALL-site function owners CORRECTED: separate cleanup wrappers, NOT outer constructor
+
+**Original read-only report:** `nvlddmkm-61742-booter-discovery-20261109-105642-560073.txt` 2,043 bytes / 36 physical lines, SHA-256 `0cf605fdd0a1b19ac42e2014432f2f15898bbe80c4d1feeb40dc1b175ae79183`, loaded Windows 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`; final `STATUS=COMPLETE` for two instruction sites, `DECOMPILATION=SKIPPED`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`, elapsed 0.082s.
+
+**Factual correction:** Earlier notes misidentified two `FUN_14059B580` direct-call XREF sites as within `FUN_14017AF30`. Ghidra's defined owner at `0x14017BA49` is **`FUN_14017BA40`**; at `0x14017BA7D` is **`FUN_14017BA70`**. These are not automatically the previously proven 0x3550-byte outer constructor despite numeric proximity. Earlier caller-owner claim was false; it is superseded here, not quietly erased from chronological history.
+
+- `FUN_14017BA40`: saves `RBX=incoming RCX`, calls `FUN_14059B580(incoming RCX)`, then `FUN_1403FCDE0(incoming RCX+8)), and prepares `RCX=incoming+0x110`. Remainder after bounded window unknown.
+- `FUN_14017BA70`: sets `RBX=incoming RCX+8`, passes that to `FUN_14059B580`; then calls `FUN_1403FCDE0(incoming RCX+0x10)`, prepares `RCX=incoming+0x118`; remainder after window unknown.
+- With previously completed `FUN_14059B580` and display-channel unbind `FUN_14059C510`, both site sequences support **cleanup-style wrapper** classification, **NOT** actual signed Booter image source, Falcon +0x170 runtime receiver equivalence or loader argument-three descriptor producer. Do not assert an actual destructor role, caller instance type, hidden tail target or negative whole-driver execution from these bounded windows.
+
+**No further work on this cleanup branch needed absent a new exact object-alias or source-specific lead.** Current action queue resides only in `research/nvidia_unlock_evidence_to_execution_map.md`: agent seeks a real signed Windows Booter producer/asset and published Falcon 0x9B0 instance invoker and `outer+0x3E8` writer; owner preserves original Ghidra/DriverStore and does no active tests. `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-09 10:44 PST — New full guarded +0x170 caller bodies classify display-channel cleanup and scalar operation dispatch; no signed Booter invoker
 
 **Original owner report:** `nvlddmkm-61742-booter-discovery-20261109-104424-635607.txt` 23,169 bytes / 1,211 lines; SHA-256 `58ab8c33fb06d8e5b9ebbdd2e3d3855e9b4f88a2d0c18befd676030df4c90054`, 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`; `STATUS=COMPLETE`, three full unclipped C bodies, elapsed `0.461s`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`.
