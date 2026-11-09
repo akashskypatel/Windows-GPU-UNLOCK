@@ -1,3 +1,41 @@
+# 2026-11-09 09:43 PST — Parent +0xE0 CFG wrapper resolves root-object virtual dispatch +0x328 (source pointer still unverified)
+
+**New uploaded original read-only Ghidra report:** `nvlddmkm-61742-booter-discovery-20261109-094336-040400.txt`, **2,427 bytes / 68 physical lines**, SHA-256 **`7d2677698492e00d20a87981eed7a5e5a0bfdbb597632b4f3b6ecb6287f499c0`** (computed from original upload bytes). `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; `MODE=PASSIVE READ_ONLY EXISTING_REFERENCE_MAP NO_DATABASE_WRITES`, `SCAN_STRINGS=SKIPPED_BY_CALLER`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`, `STATUS=COMPLETE`, 0.795 seconds, output `D:\Projects\gpu-unlock\ghidra\nvlddmkm-61742-booter-discovery-20261109-094336-040400.txt`. Report has **two complete unclipped decompiler bodies** (156/102 chars), a bounded instruction window and one exhaustive function CALL-site enumeration. It does **not** attest runtime class, original signed Booter image/header/signatures or cryptographic acceptance.
+
+## Exact new machine evidence
+
+```asm
+140178f50 ADD RDX,-0xf0
+140178f57 MOV RAX,qword ptr [RDX]
+140178f5a MOV RAX,qword ptr [RAX + 0x328]
+140178f61 JMP qword ptr [0x140e02aa8]
+```
+
+`FUN_140178F50` is the **verified static embedded-parent +0xE0 callback** (table `0x140E764A8+0xE0=0x140E76588`, proven in the prior 18:08 report). The new instructions establish **receiver adjustment by -0xF0**, loading the adjusted receiver's vptr, fetching its virtual **+0x328** method target, and **tail-jumping through a CFG dispatcher**. `FUNCTION_CALLS_END entry=140178f50 recorded=0 capped=False` is fully compatible with the actual `JMP` and **does not** mean the callback is inert. The target stored at `[vptr+0x328]` is **not yet read**; effective code target and runtime receiver identity are **OPEN**.
+
+Previous constructor evidence (2026-11-06, verified machine stores in `FUN_14017AF30`) established `[outer+0x0] = 0x140E763F0` at `0x14017B23B` and `[outer+0xF0] = 0x140E764A8` at `0x14017B22B`. **Conditional alias hypothesis only:** if the callback's incoming RDX is precisely that embedded parent, `RDX-0xF0=outer`; if the outer root vptr remains `0x140E763F0`, the **candidate static pointer site** is `0x140E763F0+0x328=0x140E76718`. However the independently known embedded-parent table starts at **`0x140E764A8`**, just `0xB8` after root's known vptr, and calculated `0x140E76718` lies **`0x270` past that second table head**. **No verified root vtable extent or continuous method-array membership** exists: do not promote `0x140E76718` to a proven callback entry, or assume the dynamically selected vptr is this candidate without checking exact pointer bytes and per-instance constructor/dispatch context.
+
+## Parent +0x50 and +0x60 callback classification
+
+- `FUN_140179070`, static embedded-parent `+0x50` table target, was **completely decompiled**, `clipped=False total_chars=156`; its lifted C makes one CFG-guarded forwarding call with `param_1` and `param_2-0xF0`, then returns. Two inbound references are both `DATA` (`0x140E06588`, `0x140E764F8`). This is **not** a direct signed Booter byte producer, and the actual dispatched method/ABI remains unresolved without machine instructions.
+- `FUN_140178460`, static embedded-parent `+0x60` table target, was **completely decompiled**, `clipped=False total_chars=102`; it is a CFG-forwarding stub with no resolved receiver or target in lifted C. Three inbound `DATA` refs (`0x140E06420`, `0x140E75CC8`, `0x140E76508`) are function-pointer/table refs, **not runtime CALL proof**. Avoid attributing signed HS loader execution or the correct AD102/GA102 class to these wrappers.
+
+**Closed this turn:** the previously unknown machine-level forwarding mechanism for embedded-parent `+0xE0` is now a verified **outerward receiver adjustment and virtual +0x328 CFG tail jump**. The two `+0x50/+0x60` bodies are wrappers rather than concrete Booter descriptor implementations. **Not closed:** identity and value of real vptr +0x328, outer-table extent, parent receiver instance at invocation, method-target semantics and any producer/consumer link to `outer+0x3E8` or the Falcon nested `+0x170/+0x250` callbacks.
+
+## Next bounded passive PyGhidra discriminator (no new script implementation required)
+
+In the **owner-local imported MD5-pinned original 617.42 program**, inspect candidate original root-vptr +0x328 and actual machine instructions before decompiling another function. Existing script bounds `TRACE_STATIC_BYTES` to four 64-byte nonexecutable reads, `TRACE_DATA_SITES` to eight addresses and `TRACE_INSTRUCTION_SITES` to four; all diagnostics are read-only and terminal status/report are explicit.
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_STATIC_BYTES": ["0x140e76718", "0x140e763f0", "0x140e764a8"], "TRACE_DATA_SITES": ["0x140e76718"], "TRACE_INSTRUCTION_SITES": ["0x140179070", "0x140178460", "0x140178f50", "0x1406bba27"], "__name__": "__main__"})
+```
+
+Only if `STATIC_QWORD0_LE` at candidate `0x140E76718` is a valid executable address with a verifiable existing Ghidra function and the wrapper receiver/vptr provenance survives comparison may a follow-up targeted `TARGET_FUNCTIONS` decompilation name a potential producer. If the candidate slot is noncode, unresolved or belongs to an adjacent table, record that contradiction and investigate actual runtime vptr assignment rather than treating it as no HS call. The `+0x328` slot and wrapper `+0x50/+0x60` may be separate owners; do not conflate them.
+
+**Absolute hold:** physical Stage 3 `CONFLICT`, Stage 4 `PARTIAL`; `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`. No `Stop`, DMA, MMIO, firmware execution, FLR, flashing, NVRAM changes or signed-image acceptance test.
+
+---
+
 # 2026-11-09 09:24 PST — Three Windows HS string owners independently reconfirmed; earlier full decompilation and callback registration must not be repeated
 
 **New original user-run read-only report:** `nvlddmkm-61742-booter-discovery-20261109-092446-213315.txt`, **2,510 bytes**, **36 physical lines**, SHA-256 **`fced743031b238a7fe22859de4f5ff5a541961824375d95e62084573ef410bd9`**. Actual pinned Windows NVIDIA `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, image base `0x140000000`; `SCAN_STRINGS=SKIPPED_BY_CALLER`; `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`; final `STATUS=COMPLETE REPORT=D:\Projects\gpu-unlock\ghidra\nvlddmkm-61742-booter-discovery-20261109-092446-213315.txt`; elapsed 0.100 s. **DECOMPILATION=SKIPPED**; `COMPLETE` means only that requested static data-ref inspection finished.
