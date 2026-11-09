@@ -1,3 +1,29 @@
+# 2026-11-09 — Agent-side stock 617.42 Booter proof queue: +0x170 invoker/arg3 source still OPEN; two exact unclassified caller families selected
+
+**Evidence provenance:** Four supplied original Nov 9 reports independently byte/hash/line/status verified (MD5-pinned 617.42). Latest `FUN_140579C20` and preceding `FUN_140578C60` complete bodies close only **direct** signed Booter producer hypothesis for those conditional *root* vtable methods. None proves the real nested Falcon dispatch instance executes.
+
+**Rooted nested object** (already established in previous owner-run reports): outer embedded owner `+0xF0`; published nested 0x9B0 object at outer `+0x108` (owner `+0x18`); nested `+0x4B0` points back; nested `+0x170` conditionally `FUN_140BF3880` (HS DMA loader) or `FUN_140092D80` fallback, nested `+0x250` conditionally `FUN_140BF2740` signature word-layout transform. Registration/data XREFs do not establish execution. The full HS loader reads argument-3 binary source/size and +0x40 optional memory descriptor; actual argument producer not linked to a production Windows signed Booter archive.
+
+**Candidate order from existing prior capped +0x170 transfer evidence, not a new scan:**
+- `FUN_14059B580:0x14059B970` reads `[R13+0x170]` and CFG CALLs after direct `FUN_14059C510(R13,R12)`; examine full caller and precursor, focusing on R13 instance producer and R8 descriptor pointer. These have no recorded full C decompilation in current cumulative notes.
+- `FUN_140588AD0:0x140588DD2/0x1405890AC` reads `[RDX+0x170]`, CFG CALLs and zero extends `AL`, with alternative `+0x180` callbacks on adjacent branches; possible unrelated interface, same-instance alias UNKNOWN. Unclassified full body in current notes.
+- Prior `FUN_140124A90` (large GPU context `+0x2160`), `FUN_140175B60`, `FUN_1403235F0` and `FUN_140532110` already inspected without successful 0x9B0 alias; direct recognized `+0x2710` writer sets zero. Do not repeat them or the partial broad scan (246 candidate transfers / 80 reported).
+
+**Single owner-local read-only action:**
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x14059b580", "0x14059c510", "0x140588ad0"], "FULL_DECOMP_MAX_CHARS": 131072, "TRACE_INSTRUCTION_SITES": ["0x14059b970", "0x140588dd2", "0x1405890ac", "0x14059c510"], "__name__": "__main__"})
+```
+
+**Agent acceptance after returned report:** (1) exact pointer value/alias `outer+0x108 = nested` or fail; (2) actual callback `[nested+0x170]` selected as real `FUN_140BF3880` not fallback, *on the same class instance*; (3) original callsite R8 addresses the real arg3 descriptor with image source `+0`, size `+8`, optional memory descriptor `+0x40`; (4) its producer retrieves authenticated Windows 617.42 GA102/AD102 production image/header/signature and patch metadata. If any missing, record `PARTIAL/OPEN`, not hardware success. Do not assume Linux source equivalence.
+
+**Independent Linux 615.78.08 source checked through connected GitHub:** `src/nvidia/src/kernel/gpu/gsp/kernel_gsp_booter.c` blob SHA `db329104eb98aa5abbd18188fc4b00a7f2771bed` supplies distinct `IMAGE_PROD/HEADER_PROD/SIG_PROD/PATCH_SIG/PATCH_LOC/PATCH_META/NUM_SIGS` bindata archive records. It does **not** prove Windows source/byte/crypto acceptance.
+
+**Universal fork source plan reconciled separately:** original MSI Stop and shared physical 0016 graph unchanged; passive `SHARED_CONSOLE_TEXT` capture remains owner-optional and not run; no active owner firmware action.
+
+**Safety:** CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false, physical Stage 3 CONFLICT / Stage 4 PARTIAL, immutable process/recovery audit unchanged.
+
+---
+
 # 2026-11-09 10:21 PST — Parent +0x60 candidate FUN_140579C20 is a nested configuration initializer; direct Booter producer lead closed
 
 **Verified report:** `nvlddmkm-61742-booter-discovery-20261109-102152-704825.txt`, **2,638 original bytes / 98 physical lines**, SHA-256 `205317327f43b00a35c3e1836adcf4b01a6af667397df2d968ca4f15eb09b535`, 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, `clipped=False total_chars=956`, `STATUS=COMPLETE`, elapsed 0.249s, no Ghidra or GPU mutation.
