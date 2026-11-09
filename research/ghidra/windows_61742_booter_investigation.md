@@ -4,7 +4,7 @@
 
 **Factual correction:** Earlier notes misidentified two `FUN_14059B580` direct-call XREF sites as within `FUN_14017AF30`. Ghidra's defined owner at `0x14017BA49` is **`FUN_14017BA40`**; at `0x14017BA7D` is **`FUN_14017BA70`**. These are not automatically the previously proven 0x3550-byte outer constructor despite numeric proximity. Earlier caller-owner claim was false; it is superseded here, not quietly erased from chronological history.
 
-- `FUN_14017BA40`: saves `RBX=incoming RCX`, calls `FUN_14059B580(incoming RCX)`, then `FUN_1403FCDE0(incoming RCX+8)), and prepares `RCX=incoming+0x110`. Remainder after bounded window unknown.
+- `FUN_14017BA40`: saves `RBX=incoming RCX`, calls `FUN_14059B580(incoming RCX)`, then `FUN_1403FCDE0(incoming RCX+8)`, and prepares `RCX=incoming+0x110`. Remainder after bounded window unknown.
 - `FUN_14017BA70`: sets `RBX=incoming RCX+8`, passes that to `FUN_14059B580`; then calls `FUN_1403FCDE0(incoming RCX+0x10)`, prepares `RCX=incoming+0x118`; remainder after window unknown.
 - With previously completed `FUN_14059B580` and display-channel unbind `FUN_14059C510`, both site sequences support **cleanup-style wrapper** classification, **NOT** actual signed Booter image source, Falcon +0x170 runtime receiver equivalence or loader argument-three descriptor producer. Do not assert an actual destructor role, caller instance type, hidden tail target or negative whole-driver execution from these bounded windows.
 
