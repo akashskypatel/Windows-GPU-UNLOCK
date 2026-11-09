@@ -1,3 +1,21 @@
+# 2026-11-09 10:44 PST — New full guarded +0x170 caller bodies classify display-channel cleanup and scalar operation dispatch; no signed Booter invoker
+
+**Original owner report:** `nvlddmkm-61742-booter-discovery-20261109-104424-635607.txt` 23,169 bytes / 1,211 lines; SHA-256 `58ab8c33fb06d8e5b9ebbdd2e3d3855e9b4f88a2d0c18befd676030df4c90054`, 617.42 `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`; `STATUS=COMPLETE`, three full unclipped C bodies, elapsed `0.461s`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`.
+
+- `FUN_14059B580` follows `param_1+0x160→+0xE8→+0x21F0`, obtains receiver `lVar2`, calls `FUN_14059C510(lVar2,param_1)` and then CFG-calls `[lVar2+0x170]`, checks nonzero result. Precursor `FUN_14059C510` uses literal `dispchnUnbindAllCtx_IMPL`, multiple display-channel unbind/context helpers and resource fields. **Strong static display teardown/unbind interpretation**; NOT an identified `FUN_140BF3880` signed-descriptor producer. Two direct incoming call XREFs into `FUN_14059B580` from known outer `FUN_14017AF30` at `0x14017BA49`/`0x14017BA7D`; caller-object alias currently OPEN.
+- `FUN_140588AD0` follows `param_1+0x1C0→+0x128→+0x2208→+0x1CE8` and branches on `param_2+4/+0x10` operation selectors, `param_2+0x14` scalar result/writeback; call windows `0x140588DD2` and `0x1405890AC` load `[RDX+0x170]` with neighboring `+0x180` callbacks, returning byte/scalar outcomes. **Strong static operation/query dispatch interpretation**; no authentic production signed Booter asset or actual 0x9B0 nested instance alias established. Indirect callees themselves remain unproven.
+- Both prior proposed direct signed Booter invoker leads are **DEPRIORITIZED / NOT PROVEN** rather than declaring negative whole-driver code absence. Original nested Falcon constructor/published `outer+0x108`, real loader nested `+0x170` registration, actual `FUN_140BF3880` arg-3 contract still separately PASS STATIC; actual invocation/descriptor source and GA102/AD102 Windows acceptance remain OPEN.
+
+**Optional bounded owner Ghidra two-direct-call-site read (not another full body decomp):**
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x14017ba49", "0x14017ba7d"], "__name__": "__main__"})
+```
+
+**AGENT next:** assess those two caller-source/cleanup branches, stop if no same nested-instance link, then concentrate original signed Windows Booter source/descriptor and unrelated `outer+0x3E8` writer, not further generic +0x170 scans. No physical action, no crypto bypass or readiness gate promotion. `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-09 — Agent-side stock 617.42 Booter proof queue: +0x170 invoker/arg3 source still OPEN; two exact unclassified caller families selected
 
 **Evidence provenance:** Four supplied original Nov 9 reports independently byte/hash/line/status verified (MD5-pinned 617.42). Latest `FUN_140579C20` and preceding `FUN_140578C60` complete bodies close only **direct** signed Booter producer hypothesis for those conditional *root* vtable methods. None proves the real nested Falcon dispatch instance executes.
