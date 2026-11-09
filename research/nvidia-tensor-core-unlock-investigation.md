@@ -10,13 +10,7 @@
 
 **Closure / remaining proof:** both adjacent bodies are now reviewed; do not rerun their same decompilation or reopen unrelated `FUN_1402D4710` numeric-slot hypothesis. Still OPEN: genuine Windows 617.42 GA102/AD102 signed production Booter IMAGE, HEADER, SIG and PATCH source/producer; actual call through the published nested `+0x170` on the known `outer+0x108` instance; construction and provenance of `FUN_140BF3880` argument three; `outer+0x3E8` contents/producer; runtime class selection and signature acceptance. Linux 615.78.08 bindata organization and Windows 610.43.03 package remain comparators only.
 
-**Next bounded optional owner Ghidra read (NOT RUN):** If clarifying control-selector meaning is useful, use existing read-only MD5-pinned script against only the two *directly called* helpers, with no scan or Ghidra database change:
-
-```python
-exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x1406b63f0", "0x1406b6470"], "__name__": "__main__"})
-```
-
-Capture the original final `STATUS`/`REPORT` and complete unclipped output. The main agent investigation priority is still **independently grounded signed Windows Booter producer and loader arg3 receiver provenance**, not another address-only full-driver sweep. **Active holds unchanged:** Stage 3 `CONFLICT`, Stage 4 `PARTIAL`; `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`; no Stop, MMIO, DMA, SEC2, FLR, flashing or active EFI action.
+**Prior helper investigation reused — no repeated owner Ghidra run:** The existing historical ledger already contains complete `FUN_1406B63F0` read-wrapper C, its `FUN_140126650` lower-level accessor, and machine-verified `EAX` return forwarding (`0x1406B6451..6465`), as well as earlier investigation of `FUN_1406B6470` as a Falcon controller/register-operation backend. This callback now supplies *new ordered call values* through previously characterized helpers, not a reason to rerun those same bodies. An effective physical MMIO target, exact `0x200/0x208/0x220` controller meaning and runtime branch selection remain unproven. **AGENT NEXT:** seek independently grounded production Windows 617.42 signed Booter asset/descriptor producer and an actual same-instance nested `+0x170` invocation. **OWNER NEXT:** no Ghidra or hardware action required until a new source-rooted discriminator is identified. **Active holds unchanged:** Stage 3 `CONFLICT`, Stage 4 `PARTIAL`; `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`; no Stop, MMIO, DMA, SEC2, FLR, flashing or active EFI action.
 
 ---
 
