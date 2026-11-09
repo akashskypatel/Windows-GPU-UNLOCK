@@ -1,3 +1,38 @@
+# 2026-11-09 13:40 PST — Genuine Windows 617.42 two-slot candidate classified: mutually exclusive branches; parent +0x4B0 field strengthens interface-shape hypothesis (STATIC COMPLETE)
+
+Original owner-run pinned report `nvlddmkm-61742-booter-discovery-20261109-134036-729750.txt`, **39,789 bytes**, SHA-256 `0083198a603d427707b4fe5730564f62f13b2853adcb39a4fda6a58f71b4c99b`, original stock `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base VA `0x140000000`. Script `SCAN_STRINGS=False`, `TARGET_FUNCTIONS=["0x1402d4710"]`, `TRACE_INSTRUCTION_SITES=["0x1402d4e4f","0x1402d4e58"]`, `FULL_DECOMP_MAX_CHARS=131072`; **STATUS=COMPLETE**, `DECOMPILER_BEGIN clipped=False total_chars=34388`, elapsed `0.525s`, no driver/Ghidra/GPU mutations. `TARGET_INCOMING_REFS_TRUNCATED=true` is the 24-reference caller-list cap, **not** decompilation incompleteness. The candidate is a large `param_5`-keyed control/operation dispatch with many guarded indirect calls and scalar/buffer paths, not a demonstrated direct Booter IMAGE/HEADER/SIG/PATCH producer.
+
+**Exact machine-level branch correction (disproves sequential-execution premise of prior adjacency heuristic):**
+
+```asm
+0x1402D4E19 MOV RAX,qword ptr [RDI+0x4B0]
+0x1402D4E20 MOV R8,RBX
+0x1402D4E23 MOV RDX,RDI
+0x1402D4E26 MOV RCX,RSI
+0x1402D4E29 CALL qword ptr [0x140E02AA8] ; CFG guard
+0x1402D4E2F JMP 0x1402D65E0
+...
+0x1402D4E4C MOV RAX,qword ptr [RDI+0x170] ; CSV match VA 0x1402D4E4F was displacement bytes
+0x1402D4E53 JMP 0x1402D65C9         ; NO fallthrough into +0x250
+0x1402D4E58 MOV RAX,qword ptr [RDI+0x250]
+0x1402D4E5F MOV R8,RBX
+0x1402D4E62 MOV RDX,RDI
+0x1402D4E65 MOV RCX,RSI
+0x1402D4E68 CALL qword ptr [0x140E02AA8] ; separate guarded call
+```
+
+**New positive static discrimination:** Three distinct fields `RDI+0x4B0`, `RDI+0x170`, and `RDI+0x250` are read within the same defined `FUN_1402D4710` function, a stronger object-interface *shape match* than the previous two-field offset-only CSV pairing. Independently established Falcon 0x9B0 nested instance also uses back-pointer `+0x4B0`, HS loader callback `+0x170` and signature transformer callback `+0x250` (in conditional configurations). **This is a testable hypothesis, not proof of shared instance identity.** No instruction in this report establishes RDI's definition, object allocation provenance, `outer+0x108` equality, whether each guarded call reaches the registered Falcon callback, or the argument-three binary descriptor from the genuine loader branch. The unconditional `JMP` after `+0x170` **refutes two consecutive callback reads on one straight-line path**; the two branches remain alternative selector cases. Do not incorrectly mark the *entire* same-instance candidate negative because of the jump. Nor equate `R8=RBX` at the +0x250 branch to `FUN_140BF3880` argument-three without proving the loader target (the +0x250 slot is the distinct signature callback).
+
+**Next smallest read-only original-driver evidence:** Existing committed tool provides `TRACE_INSTRUCTION_SITES` (max four, preceding 12 / following four instructions), so use **only** entry, +0x4B0 branch, the shared +0x170 transfer tail, and the separate +0x250 CFG call; no repeat of 34,388-character full decompilation and no broad displacement scan:
+
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x1402d4710", "0x1402d4e19", "0x1402d65c9", "0x1402d4e68"], "__name__": "__main__"})
+```
+
+**Acceptance criteria:** (1) identify where RDI is assigned and whether object bases at these different selector cases are truly one class; (2) at `0x1402D65C9` determine whether `RAX=[RDI+0x170]` survives to the CFG-guarded call, and which `RCX/RDX/R8` values it receives; (3) only if the receiver can be independently linked to `outer+0x108` follow the live class-specific `FUN_140BF3880` third-argument descriptor and signed IMAGE/HEADER/SIG/PATCH producer. The 12+4 bounded windows might not capture an earlier RDI definition, so report that as **OPEN** rather than inferring identity. **OWNER NEXT:** preserve the MD5-pinned Ghidra/DriverStore; optional one bounded read-only four-site report, or new source-grounded Booter record evidence. **AGENT NEXT:** classify receiver lineage and shared guarded tail on received evidence, and continue the independent signed-source investigation without numerical offset broadening. **No hardware change:** Stage 3 `CONFLICT`, Stage 4 `PARTIAL`, `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-09 — Newly re-accessible original manual CSV bytes isolate one two-slot RDI candidate (STATIC EXPORT CORRELATION)
 
 **Correction to immediately preceding archival note:** The previous report truthfully said raw materialization was unavailable **in that session**. The three actual raw files are now present and readable in the active container at `/mnt/data/0x170.csv`, `/mnt/data/0x170(1).csv` and `/mnt/data/0x250-scalar`; byte-level SHA-256 was computed over the files, not inferred from metadata. `0x170.csv` (172,500 bytes; 2,586 CSV data rows) and `0x170(1).csv` (172,500 bytes; 2,586 rows) are **byte-for-byte identical**, both SHA-256 `70e6d8c2529071f169a80d588581732d32ad4ad4673227261a010b242159c50e`. `0x250-scalar` (96,900 bytes; 1,247 data rows), SHA-256 `8de92134a1cfed954e6e2f838c4d7454648dae6adc583904c82dbf08ef56e071`. This resolves the earlier **unverified file-equality** question. The original driver MD5 was pinned in the accompanying Ghidra investigations; standalone CSVs do not themselves contain a driver MD5 header.
