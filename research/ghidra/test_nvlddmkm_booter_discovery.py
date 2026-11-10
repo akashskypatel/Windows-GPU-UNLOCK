@@ -578,3 +578,226 @@ class SlotDisplacementBudgetTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReferenceGraphWalkTests(unittest.TestCase):
+    """Graph edges must reflect original reference kinds, with no invented calls."""
+
+    def setUp(self):
+        import tempfile
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+
+    def _fixture(self):
+        class Address:
+            def __init__(self, value):
+                self.value = value
+
+            def getOffset(self):
+                return self.value
+
+            def __str__(self):
+                return '%x' % self.value
+
+            def __eq__(self, other):
+                return isinstance(other, Address) and self.value == other.value
+
+            def __hash__(self):
+                return hash(self.value)
+
+        class Type:
+            def __init__(self, kind):
+                self.kind = kind
+
+            def isCall(self):
+                return self.kind == 'CALL'
+
+            def isJump(self):
+                return self.kind == 'JUMP'
+
+            def isData(self):
+                return self.kind == 'DATA'
+
+        class Reference:
+            def __init__(self, src, dst, kind):
+                self.src, self.dst, self.kind = Address(src), Address(dst), Type(kind)
+
+            def getFromAddress(self):
+                return self.src
+
+            def getToAddress(self):
+                return self.dst
+
+            def getReferenceType(self):
+                return self.kind
+
+        class Instruction:
+            def __init__(self, address, mnemonic):
+                self.address, self.mnemonic = Address(address), mnemonic
+
+            def getAddress(self):
+                return self.address
+
+            def getMnemonicString(self):
+                return self.mnemonic
+
+        class Function:
+            def __init__(self, address, instructions):
+                self.entry = Address(address)
+                self.instructions = [Instruction(*item) for item in instructions]
+
+            def getEntryPoint(self):
+                return self.entry
+
+            def getName(self):
+                return 'FUN_%x' % self.entry.value
+
+            def getBody(self):
+                return self
+
+        class FunctionManager:
+            def __init__(self, functions):
+                self.functions = functions
+
+            def getFunctionContaining(self, address):
+                for fn in self.functions:
+                    if fn.entry.value <= address.value < fn.entry.value + 0x100:
+                        return fn
+                return None
+
+            def getFunctionAt(self, address):
+                return next((fn for fn in self.functions if fn.entry == address), None)
+
+        class Listing:
+            def getInstructions(self, function, forward):
+                return iter(function.instructions)
+
+        class RefManager:
+            def __init__(self, references):
+                self.refs = references
+
+            def getReferencesFrom(self, address):
+                return [ref for ref in self.refs if ref.src == address]
+
+            def getReferencesTo(self, address):
+                return [ref for ref in self.refs if ref.dst == address]
+
+        class Block:
+            def __init__(self, address):
+                self.address = address
+
+            def isExecute(self):
+                return self.address.value < 0x500
+
+            def getName(self):
+                return '.text' if self.isExecute() else '.rdata'
+
+        class Memory:
+            def getBlock(self, address):
+                return Block(address)
+
+        class Program:
+            def __init__(self, functions, references):
+                self.functions = FunctionManager(functions)
+                self.references = RefManager(references)
+                self.listing = Listing()
+                self.memory = Memory()
+
+            def getFunctionManager(self):
+                return self.functions
+
+            def getReferenceManager(self):
+                return self.references
+
+            def getListing(self):
+                return self.listing
+
+            def getMemory(self):
+                return self.memory
+
+        # A references C as a function pointer before it directly calls B.
+        # B directly calls C and A; a standalone data table references A.
+        a = Function(0x100, [(0x110, 'CALL'), (0x120, 'LEA'), (0x130, 'CALL')])
+        b = Function(0x200, [(0x210, 'CALL'), (0x220, 'CALL')])
+        c = Function(0x300, [(0x310, 'CALL')])
+        refs = [Reference(0x110, 0x200, 'CALL'),
+                Reference(0x120, 0x300, 'DATA'),
+                Reference(0x210, 0x300, 'CALL'),
+                Reference(0x220, 0x100, 'CALL'),
+                Reference(0x310, 0x200, 'CALL'),
+                Reference(0x500, 0x100, 'DATA')]
+        return Program([a, b, c], refs), Address
+
+    def _run(self, **overrides):
+        import json
+        from pathlib import Path
+        program, Address = self._fixture()
+        options = probe._graph_options({
+            'GRAPH_ROOTS': ['0x100'],
+            'GRAPH_DEPTH': 3,
+            **overrides,
+        })
+        report = Path(self.directory.name) / 'output.txt'
+        with patch.object(probe, '_address', side_effect=lambda _program, value: Address(value)):
+            completed = probe.graph_reference_walk(
+                program, ['0x100'], lambda _line: None, report, options)
+        graph = json.loads(report.with_name('output-reference-graph.json').read_text())
+        dot = report.with_name('output-reference-graph.dot').read_text()
+        return completed, graph, dot
+
+    def test_forward_backward_direct_calls_data_and_unknown_are_distinct(self):
+        complete, graph, dot = self._run()
+        self.assertTrue(complete)
+        self.assertEqual(graph['status'], 'COMPLETE')
+        edge_types = {(e['source'], e['target'], e['kind']) for e in graph['edges']}
+        self.assertIn(('f_100', 'f_200', 'CALL'), edge_types)
+        self.assertIn(('f_200', 'f_300', 'CALL'), edge_types)
+        self.assertIn(('f_300', 'f_200', 'CALL'), edge_types)
+        self.assertIn(('f_100', 'f_300', 'ADDRESS_TAKEN'), edge_types)
+        self.assertIn(('d_500', 'f_100', 'DATA_REF'), edge_types)
+        self.assertIn(('f_100', 'i_130', 'INDIRECT_UNKNOWN'), edge_types)
+        self.assertIn('style=dotted', dot)
+        self.assertIn('style=dashed', dot)
+        self.assertTrue(all(e['site'].startswith('0x') for e in graph['edges']))
+
+    def test_existing_data_pointer_target_is_not_lost_as_direct_callee(self):
+        complete, graph, _dot = self._run()
+        self.assertTrue(complete)
+        self.assertIn(('f_300', 'f_200', 'CALL'),
+                      {(e['source'], e['target'], e['kind']) for e in graph['edges']})
+
+    def test_node_budget_must_produce_partial_result_and_real_artifact(self):
+        complete, graph, _dot = self._run(GRAPH_MAX_NODES=2)
+        self.assertFalse(complete)
+        self.assertEqual(graph['status'], 'PARTIAL')
+        self.assertIn('NODE_LIMIT', graph['omissions'])
+
+    def test_reference_budget_must_produce_partial_not_false_complete(self):
+        complete, graph, _dot = self._run(GRAPH_REFS_PER_FUNCTION=1)
+        self.assertFalse(complete)
+        self.assertIn('REFERENCE_LIMIT', graph['omissions'])
+
+    def test_invalid_graph_settings_rejected(self):
+        for settings in (
+            {'GRAPH_ROOTS': '0x100'},
+            {'GRAPH_ROOTS': ['0x100'], 'GRAPH_DEPTH': -1},
+            {'GRAPH_ROOTS': ['0x100'], 'GRAPH_DECOMPILE_LIMIT': 13},
+            {'GRAPH_ROOTS': ['0x100'], 'GRAPH_MAX_NODES': True},
+            {'GRAPH_ROOTS': ['0x100'], 'GRAPH_DIRECTION': 'magic'},
+        ):
+            with self.subTest(settings=settings), self.assertRaises(ValueError):
+                probe._graph_options(settings)
+
+    def test_unavailable_root_is_partial_not_silent_success(self):
+        import json
+        from pathlib import Path
+        program, Address = self._fixture()
+        report = Path(self.directory.name) / 'unavailable.txt'
+        settings = probe._graph_options({'GRAPH_ROOTS': ['0x900']})
+        with patch.object(probe, '_address', side_effect=lambda _p, value: Address(value)):
+            complete = probe.graph_reference_walk(program, ['0x900'],
+                                                  lambda _line: None, report, settings)
+        graph = json.loads(report.with_name('unavailable-reference-graph.json').read_text())
+        self.assertFalse(complete)
+        self.assertEqual(graph['omissions'], ['INVALID_ROOT'])
+

@@ -833,6 +833,292 @@ def targeted_decompile(program, addresses, log):
     return all_targets_completed
 
 
+
+# Optional bounded function-reference graph.  All edges come from existing
+# Ghidra references; indirect target identities are deliberately not guessed.
+def _graph_options(config):
+    roots = config.get('GRAPH_ROOTS', ())
+    if isinstance(roots, (str, bytes)) or not isinstance(roots, (tuple, list)) or not 1 <= len(roots) <= 4:
+        raise ValueError('GRAPH_ROOTS requires a list of 1 to 4 explicit function addresses')
+    options = {
+        'depth': ('GRAPH_DEPTH', 2, 0, 4),
+        'nodes': ('GRAPH_MAX_NODES', 64, 1, 256),
+        'edges': ('GRAPH_MAX_EDGES', 256, 1, 2048),
+        'references': ('GRAPH_REFS_PER_FUNCTION', 128, 1, 512),
+        'instructions': ('GRAPH_INSTRUCTIONS_PER_FUNCTION', 6000, 1, 50000),
+        'seconds': ('GRAPH_TIMEOUT_SECONDS', 45, 1, 180),
+        'decompile': ('GRAPH_DECOMPILE_LIMIT', 0, 0, 12),
+        'code_chars': ('GRAPH_CODE_CHARS', 16000, 256, MAX_FULL_DECOMP_CHARS),
+    }
+    result = {}
+    for label, (name, default, minimum, maximum) in options.items():
+        value = config.get(name, default)
+        if type(value) is not int or value < minimum or value > maximum:
+            raise ValueError('%s must be an integer from %d to %d' % (name, minimum, maximum))
+        result[label] = value
+    direction = config.get('GRAPH_DIRECTION', 'both')
+    if direction not in ('both', 'forward', 'backward'):
+        raise ValueError('GRAPH_DIRECTION must be both, forward, or backward')
+    result['direction'] = direction
+    result['roots'] = roots
+    return result
+
+
+def _graph_dot(nodes, edges):
+    """Graphviz DOT: solid calls, dotted address references, dashed unresolved."""
+    lines = ['digraph static_function_references {',
+             '  graph [rankdir=LR];',
+             '  node [shape=box];']
+    for key, node in sorted(nodes.items()):
+        style = 'doubleoctagon' if node.get('root') else ('ellipse' if node['kind'] != 'FUNCTION' else 'box')
+        label = node['label'].replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+        lines.append('  "%s" [shape=%s,label="%s"];' % (key, style, label))
+    for edge in sorted(edges.values(), key=lambda x: (x['source'], x['site'], x['target'], x['kind'])):
+        dotted = edge['kind'] in ('DATA_REF', 'ADDRESS_TAKEN')
+        style = 'dotted' if dotted else ('dashed' if edge['kind'] == 'INDIRECT_UNKNOWN' else 'solid')
+        label = '%s @ %s' % (edge['kind'], edge['site'])
+        lines.append('  "%s" -> "%s" [style=%s,label="%s"];' % (
+            edge['source'], edge['target'], style, label))
+    lines.append('}')
+    return '\n'.join(lines) + '\n'
+
+
+def graph_reference_walk(program, roots, log, report_path, options=None):
+    """Walk defined functions only. Never create Ghidra functions or infer dynamic targets.
+
+    COMPLETE describes this bounded existing-XREF walk only, not a complete runtime
+    call graph, object identity, firmware signer verification, or device execution.
+    """
+    from collections import deque
+    import json
+
+    if options is None:
+        options = _graph_options({'GRAPH_ROOTS': roots})
+    functions = program.getFunctionManager()
+    listing = program.getListing()
+    references = program.getReferenceManager()
+    memory = program.getMemory()
+    deadline = time.monotonic() + options['seconds']
+    nodes, edges, omitted = {}, {}, set()
+    queue = deque()
+    queued = set()
+    processed = set()
+
+    def key_of(address):
+        return '%x' % int(address.getOffset())
+
+    def checked_time():
+        if time.monotonic() >= deadline:
+            omitted.add('TIME_BUDGET')
+            return False
+        return True
+
+    def register_function(fn, distance, root=False, expand=True):
+        key = 'f_' + key_of(fn.getEntryPoint())
+        if key not in nodes:
+            if len(nodes) >= options['nodes']:
+                omitted.add('NODE_LIMIT')
+                return None
+            nodes[key] = {'kind': 'FUNCTION', 'label': '%s\n0x%s' % (
+                str(fn.getName()), key_of(fn.getEntryPoint())),
+                'entry': '0x' + key_of(fn.getEntryPoint()),
+                'distance': distance, 'root': bool(root)}
+        else:
+            nodes[key]['distance'] = min(distance, nodes[key]['distance'])
+            if root:
+                nodes[key]['root'] = True
+        # An address-taken function can later become a real direct callee:
+        # it must then be enqueued rather than silently left as a data-only leaf.
+        if expand and distance <= options['depth'] and key not in processed and key not in queued:
+            queue.append((fn, distance))
+            queued.add(key)
+        return key
+
+    def register_site(kind, address, label):
+        key = ('i_' if kind == 'INDIRECT' else 'd_') + key_of(address)
+        if key not in nodes:
+            if len(nodes) >= options['nodes']:
+                omitted.add('NODE_LIMIT')
+                return None
+            nodes[key] = {'kind': kind, 'label': label, 'root': False}
+        return key
+
+    def edge_between(source, target, address, kind):
+        if source is None or target is None:
+            return
+        site = '0x' + key_of(address)
+        key = (source, target, site, kind)
+        if key not in edges:
+            if len(edges) >= options['edges']:
+                omitted.add('EDGE_LIMIT')
+                return
+            edges[key] = {'source': source, 'target': target,
+                          'site': site, 'kind': kind}
+
+    def bounded(items):
+        count = 0
+        for item in items:
+            if not checked_time():
+                break
+            if count >= options['references']:
+                omitted.add('REFERENCE_LIMIT')
+                break
+            count += 1
+            yield item
+
+    for raw in roots:
+        addr = _address(program, int(str(raw), 0))
+        block = memory.getBlock(addr)
+        if block is None or not block.isExecute():
+            log('GRAPH_ROOT_UNAVAILABLE VA=%s not executable' % addr)
+            omitted.add('INVALID_ROOT')
+            continue
+        fn = functions.getFunctionContaining(addr)
+        if fn is None:
+            log('GRAPH_ROOT_UNAVAILABLE VA=%s no defined function' % addr)
+            omitted.add('INVALID_ROOT')
+            continue
+        register_function(fn, 0, root=True)
+
+    while queue and checked_time():
+        fn, distance = queue.popleft()
+        owner = 'f_' + key_of(fn.getEntryPoint())
+        queued.discard(owner)
+        if owner in processed:
+            continue
+        processed.add(owner)
+        if options['direction'] in ('both', 'backward'):
+            for ref in bounded(references.getReferencesTo(fn.getEntryPoint())):
+                ref_type = ref.getReferenceType()
+                site = ref.getFromAddress()
+                if ref_type.isCall() or ref_type.isJump():
+                    caller = functions.getFunctionContaining(site)
+                    if caller is None:
+                        omitted.add('UNDEFINED_CALLER')
+                        continue
+                    if ref_type.isJump() and caller.getEntryPoint() == fn.getEntryPoint():
+                        continue  # intra-function branch to own entry, not a tail call
+                    source = register_function(caller, distance + 1,
+                                               expand=distance < options['depth'])
+                    edge_between(source, owner, site, 'CALL' if ref_type.isCall() else 'TAIL_JUMP')
+                elif ref_type.isData():
+                    block = memory.getBlock(site)
+                    label = 'DATA XREF\n0x%s\n%s' % (
+                        key_of(site), str(block.getName()) if block is not None else 'unmapped')
+                    data_node = register_site('DATA', site, label)
+                    edge_between(data_node, owner, site, 'DATA_REF')
+        if options['direction'] in ('both', 'forward'):
+            count = 0
+            for insn in listing.getInstructions(fn.getBody(), True):
+                if not checked_time():
+                    break
+                if count >= options['instructions']:
+                    omitted.add('INSTRUCTION_LIMIT')
+                    break
+                count += 1
+                mnemonic = str(insn.getMnemonicString()).upper()
+                if mnemonic not in ('CALL', 'JMP', 'LEA', 'MOV'):
+                    continue
+                source = insn.getAddress()
+                found_call = False
+                for ref in bounded(references.getReferencesFrom(source)):
+                    ref_type = ref.getReferenceType()
+                    if ref_type.isCall() or (mnemonic == 'JMP' and ref_type.isJump()):
+                        found_call = True
+                        target = functions.getFunctionContaining(ref.getToAddress())
+                        if target is None:
+                            unresolved = register_site('INDIRECT', source,
+                                                       'UNRESOLVED DESTINATION\n0x' + key_of(source))
+                            edge_between(owner, unresolved, source, 'INDIRECT_UNKNOWN')
+                            continue
+                        target_key = 'f_' + key_of(target.getEntryPoint())
+                        if target_key == owner and mnemonic == 'JMP':
+                            continue  # a branch inside the same function, not a call
+                        dest = register_function(target, distance + 1,
+                                                 expand=distance < options['depth'])
+                        edge_between(owner, dest, source,
+                                     'CALL' if ref_type.isCall() else 'TAIL_JUMP')
+                        if 'guard_dispatch' in str(target.getName()).lower():
+                            unresolved = register_site(
+                                'INDIRECT', source, 'GUARDED TARGET UNKNOWN\n0x' + key_of(source))
+                            edge_between(owner, unresolved, source, 'INDIRECT_UNKNOWN')
+                    elif ref_type.isData() and mnemonic in ('LEA', 'MOV'):
+                        target = functions.getFunctionContaining(ref.getToAddress())
+                        if target is not None:
+                            target_key = register_function(target, distance + 1, expand=False)
+                            edge_between(owner, target_key, source, 'ADDRESS_TAKEN')
+                if mnemonic == 'CALL' and not found_call:
+                    unresolved = register_site('INDIRECT', source,
+                                               'INDIRECT CALL UNKNOWN\n0x' + key_of(source))
+                    edge_between(owner, unresolved, source, 'INDIRECT_UNKNOWN')
+
+    # Decompile only explicitly budgeted graph nodes. Graphing does not require
+    # decompilation and zero is the safe default for large driver functions.
+    if options['decompile']:
+        from ghidra.app.decompiler import DecompInterface
+        from ghidra.util.task import TaskMonitor
+        decompiler = DecompInterface()
+        try:
+            if not decompiler.openProgram(program):
+                omitted.add('DECOMPILER_OPEN_FAILED')
+            else:
+                selected = sorted(
+                    ((key, node) for key, node in nodes.items() if node['kind'] == 'FUNCTION'),
+                    key=lambda pair: (pair[1]['distance'], pair[0]))[:options['decompile']]
+                for key, node in selected:
+                    if not checked_time():
+                        break
+                    fn = functions.getFunctionAt(_address(program, int(node['entry'], 0)))
+                    if fn is None:
+                        omitted.add('DECOMPILE_TARGET_UNDEFINED')
+                        log('GRAPH_DECOMPILE_UNAVAILABLE entry=%s' % node['entry'])
+                        continue
+                    result = decompiler.decompileFunction(fn, DECOMP_TIMEOUT_SECONDS, TaskMonitor.DUMMY)
+                    if result is None or not result.decompileCompleted():
+                        omitted.add('DECOMPILE_FAILED')
+                        log('GRAPH_DECOMPILE_UNAVAILABLE entry=%s' % node['entry'])
+                        continue
+                    decompiled = result.getDecompiledFunction()
+                    code = str(decompiled.getC()) if decompiled is not None else ''
+                    clipped = len(code) > options['code_chars']
+                    log('GRAPH_DECOMPILER_BEGIN entry=%s clipped=%s total_chars=%d' % (
+                        node['entry'], clipped, len(code)))
+                    log(code[:options['code_chars']])
+                    log('GRAPH_DECOMPILER_END entry=%s' % node['entry'])
+                    if clipped:
+                        omitted.add('DECOMPILER_OUTPUT_CLIPPED')
+        finally:
+            decompiler.dispose()
+
+    dot_path = report_path.with_name(report_path.stem + '-reference-graph.dot')
+    json_path = report_path.with_name(report_path.stem + '-reference-graph.json')
+    verdict = 'PARTIAL' if omitted else 'COMPLETE'
+    snapshot = {
+        'schema': 'ghidra-static-function-references-v1',
+        'scope': 'existing direct references only; no Ghidra DB writes or dynamic resolution',
+        'status': verdict,
+        'roots': ['0x%x' % int(str(x), 0) for x in roots],
+        'limits': {key: value for key, value in options.items() if key != 'roots'},
+        'omissions': sorted(omitted),
+        'nodes': [dict(id=key, **value) for key, value in sorted(nodes.items())],
+        'edges': sorted(edges.values(), key=lambda x: (x['source'], x['site'], x['target'], x['kind'])),
+    }
+    # Exclusive creation preserves an earlier investigation artifact if a name
+    # collides. These are report files, not Ghidra program/database changes.
+    with dot_path.open('x', encoding='utf-8') as stream:
+        stream.write(_graph_dot(nodes, edges))
+    with json_path.open('x', encoding='utf-8') as stream:
+        json.dump(snapshot, stream, indent=2, sort_keys=True)
+        stream.write('\n')
+    log('GRAPH_SCOPE=STATIC_DEFINED_REFERENCES_ONLY indirect-callees-unknown data-xrefs-not-calls')
+    log('GRAPH_NODES=%d GRAPH_EDGES=%d GRAPH_OMISSIONS=%s' % (
+        len(nodes), len(edges), ','.join(sorted(omitted)) or 'NONE'))
+    log('GRAPH_DOT=%s' % dot_path)
+    log('GRAPH_JSON=%s' % json_path)
+    log('GRAPH_STATUS=%s' % verdict)
+    return not omitted
+
+
 def main():
     started = time.monotonic()
     program = globals().get('currentProgram')
@@ -844,7 +1130,7 @@ def main():
         line = str(line)
         if stream is not None:
             stream.write(line + '\n')
-        if line.startswith(('STATUS=', 'PROGRESS', 'SCAN_', 'CANDIDATE_FUNCTION_COUNT=', 'DECOMPILATION=', 'IDENTITY=')):
+        if line.startswith(('STATUS=', 'PROGRESS', 'SCAN_', 'GRAPH_', 'CANDIDATE_FUNCTION_COUNT=', 'DECOMPILATION=', 'IDENTITY=')):
             print(line)
 
     try:
@@ -905,6 +1191,12 @@ def main():
         if sites and not inspect_data_reference_sites(program, sites, output):
             status = 'PARTIAL'
             output('DATA_SITES_COMPLETE=FALSE; unavailable or bounded references')
+        roots = globals().get('GRAPH_ROOTS', ())
+        if roots:
+            graph_options = _graph_options(globals())
+            if not graph_reference_walk(program, roots, output, report_path, graph_options):
+                status = 'PARTIAL'
+                output('GRAPH_COMPLETE=FALSE; some bounded static references or decompilations omitted')
         if not targeted_decompile(program, targets, output) and status == 'COMPLETE':
             status = 'PARTIAL'
             output('TARGETS_COMPLETE=FALSE; at least one requested function was undefined or could not be decompiled')
