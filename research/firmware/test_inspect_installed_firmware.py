@@ -49,6 +49,8 @@ class FirmwareInventoryTests(unittest.TestCase):
             make_ucodes(path)
             parsed = fw.inspect_ucodes(path)
             self.assertEqual(parsed['declared_bindata_entries'], 1293)
+            self.assertEqual(parsed['bindata_entry_count_semantics'],
+                             'possible_file_indices_not_parsed_records')
             self.assertEqual(parsed['filename_index_fingerprint'], '0x2d38befecdb703a6')
             self.assertFalse(parsed['records_parsed'])
 

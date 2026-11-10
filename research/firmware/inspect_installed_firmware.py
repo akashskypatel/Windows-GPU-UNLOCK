@@ -3,6 +3,7 @@
 
 Does not extract, modify, execute, load, patch, stage, or validate signatures.
 The NVIDIA R615 BINDATA_UCODES_BIN_HEADER is used for only the first 24 bytes.
+Its numEntries counts possible bindata file indices, not parsed on-disk records.
 """
 from __future__ import annotations
 
@@ -122,7 +123,11 @@ def inspect_ucodes(path: Path) -> dict:
         raise ValueError('invalid or unsupported NVUCODES header')
     return {'format': 'NVUCODES', 'bytes': size, 'sha256': _sha256(path),
             'header_bytes': UCODES_HEADER.size, 'format_version': version,
-            'declared_bindata_entries': count, 'filename_index_fingerprint': f'0x{fingerprint:016x}',
+            # Retain the historical key for compatibility with existing v3 reports.
+            # NVIDIA's numEntries is an index capacity, NOT a parsed record count.
+            'declared_bindata_entries': count,
+            'bindata_entry_count_semantics': 'possible_file_indices_not_parsed_records',
+            'filename_index_fingerprint': f'0x{fingerprint:016x}',
             'records_parsed': False}
 
 
