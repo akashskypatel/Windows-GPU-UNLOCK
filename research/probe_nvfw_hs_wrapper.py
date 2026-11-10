@@ -146,6 +146,11 @@ def scan_file(path, max_matches=MAX_MATCHES):
     with path.open("rb") as f:
         with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
             result = scan_bytes(mapped, max_matches)
+            # The earlier pinned digest covered a separate file-read pass.
+            # Check the actual bytes visible during the scan instead of
+            # trusting only size and mtime, which can be restored or spoofed.
+            if hashlib.sha256(mapped).hexdigest() != digest:
+                raise ValueError("input changed during analysis")
     after = path.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
         raise ValueError("input changed during analysis")
@@ -190,7 +195,10 @@ def main(argv=None):
         result = {"status": status, "error": str(exc), "hardware_action": "NONE"}
     try:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        # A prior exists/resolve check cannot prevent a raced overwrite.
+        # Exclusive creation protects previously saved evidence reports.
+        with args.output.open("x", encoding="utf-8") as report_file:
+            report_file.write(json.dumps(result, indent=2) + "\n")
     except OSError as exc:
         print("REPORT_WRITE_ERROR=%s" % exc, file=sys.stderr)
         print("STATUS=ERROR REPORT=%s" % args.output)

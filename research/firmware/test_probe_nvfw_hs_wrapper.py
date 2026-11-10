@@ -70,6 +70,52 @@ class ReferenceProbeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "SHA-256"):
                 probe.scan_file(p)
 
+    def test_mapped_scan_content_change_with_preserved_mtime_refused(self):
+        import hashlib
+        import os
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "nvlddmkm.sys"
+            path.write_bytes(reference_sample())
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            real_scan = probe.scan_bytes
+
+            def mutate_after_scan(mapped, max_matches=probe.MAX_MATCHES):
+                result = real_scan(mapped, max_matches)
+                before = path.stat()
+                # Simulate an in-place change with both size and mtime
+                # restored. Previously only stat() consistency was checked.
+                with path.open("r+b") as src:
+                    src.seek(-1, os.SEEK_END)
+                    old = src.read(1)
+                    src.seek(-1, os.SEEK_END)
+                    src.write(bytes([old[0] ^ 1]))
+                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+                return result
+
+            with patch.dict(probe.EXPECTED_SHA256, {"nvlddmkm.sys": digest}):
+                with patch.object(probe, "scan_bytes", side_effect=mutate_after_scan):
+                    with self.assertRaisesRegex(ValueError, "input changed during analysis"):
+                        probe.scan_file(path)
+
+    def test_raced_report_creation_never_overwrites(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            input_file = root / "nvlddmkm.sys"
+            output = root / "probe.json"
+            input_file.write_bytes(reference_sample())
+
+            def concurrent_create(_path, _max_matches):
+                output.write_text("owner evidence", encoding="utf-8")
+                return {"name": "nvlddmkm.sys", "status": "COMPLETE",
+                        "candidate_count": 0}
+
+            with patch.object(probe, "scan_file", side_effect=concurrent_create):
+                self.assertEqual(probe.main(["--input", str(input_file),
+                                             "--output", str(output)]), 1)
+            self.assertEqual(output.read_text(encoding="utf-8"), "owner evidence")
+
     def test_no_match_is_not_absence(self):
         report = probe.scan_bytes(b"\x00" * 2048)
         self.assertEqual(report["status"], "COMPLETE")

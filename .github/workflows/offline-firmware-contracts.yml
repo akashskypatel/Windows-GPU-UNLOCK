@@ -6,6 +6,8 @@ on:
       - 'research/gop/*.py'
       - 'research/firmware/inspect_installed_firmware.py'
       - 'research/firmware/test_inspect_installed_firmware.py'
+      - 'research/firmware/test_probe_nvfw_hs_wrapper.py'
+      - 'research/probe_nvfw_hs_wrapper.py'
       - '.github/workflows/offline-firmware-contracts.yml'
   workflow_dispatch:
 permissions:
@@ -36,6 +38,7 @@ jobs:
           {
             python3 -m unittest discover -s research/gop -p 'test_*.py' -v
             python3 -m unittest discover -s research/firmware -p 'test_inspect_installed_firmware.py' -v
+            python3 -m unittest discover -s research/firmware -p 'test_probe_nvfw_hs_wrapper.py' -v
             python3 research/gop/msi_shared_console_stop_model.py
           } 2>&1 | tee -a "$LOG"
       - name: Upload complete activity log
