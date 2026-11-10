@@ -42,3 +42,27 @@ References:
 
 The model does not enable an active GPU-unlock path. It should be reviewed
 against the pinned captured binaries when any firmware version changes.
+
+## Original MSI 1A70 shared-console consumer Stop model
+
+`msi_shared_console_stop_model.py` is separate from the NVIDIA parent model:
+its evidence comes from the exact original MSI `GraphicsConsole` and
+`ConSplitter` output DriverBinding.Stop static control flow at RVAs
+`0xE28` and `0x1480`. It does not simulate vendor hardware behavior.
+
+```powershell
+python -m unittest -v test_msi_shared_console_stop_model
+```
+
+```powershell
+python .\\msi_shared_console_stop_model.py
+```
+
+The reported symbolic `FREEPOOL_ERROR` and `TEXT_UNINSTALL_ERROR` are
+model categories, not measured EFI_STATUS codes. The tool intentionally
+shows how returning EFI_SUCCESS may coexist with an unchanged marker or a
+partial shared output-list update. Actual AMD console continuity, other-GPU
+ownership, and reboot recovery are **unverified**. GitHub-hosted offline tests
+run in `/.github/workflows/offline-firmware-contracts.yml`, independently of
+the EFI or CUDA environment.
+
