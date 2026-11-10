@@ -842,12 +842,12 @@ def _graph_options(config):
         raise ValueError('GRAPH_ROOTS requires a list of 1 to 4 explicit function addresses')
     options = {
         'depth': ('GRAPH_DEPTH', 2, 0, 4),
-        'nodes': ('GRAPH_MAX_NODES', 64, 1, 256),
-        'edges': ('GRAPH_MAX_EDGES', 256, 1, 2048),
-        'references': ('GRAPH_REFS_PER_FUNCTION', 128, 1, 512),
-        'instructions': ('GRAPH_INSTRUCTIONS_PER_FUNCTION', 6000, 1, 50000),
-        'seconds': ('GRAPH_TIMEOUT_SECONDS', 45, 1, 180),
-        'decompile': ('GRAPH_DECOMPILE_LIMIT', 0, 0, 12),
+        'nodes': ('GRAPH_MAX_NODES', 64, 1, 2048),
+        'edges': ('GRAPH_MAX_EDGES', 256, 1, 16384),
+        'references': ('GRAPH_REFS_PER_FUNCTION', 128, 1, 16384),
+        'instructions': ('GRAPH_INSTRUCTIONS_PER_FUNCTION', 6000, 1, 120000),
+        'seconds': ('GRAPH_TIMEOUT_SECONDS', 45, 1, 900),
+        'decompile': ('GRAPH_DECOMPILE_LIMIT', 0, 0, 128),
         'code_chars': ('GRAPH_CODE_CHARS', 16000, 256, MAX_FULL_DECOMP_CHARS),
     }
     result = {}
@@ -860,6 +860,12 @@ def _graph_options(config):
     if direction not in ('both', 'forward', 'backward'):
         raise ValueError('GRAPH_DIRECTION must be both, forward, or backward')
     result['direction'] = direction
+    on_walk = config.get('GRAPH_DECOMPILE_ON_WALK', False)
+    if type(on_walk) is not bool:
+        raise ValueError('GRAPH_DECOMPILE_ON_WALK must be a Boolean')
+    if on_walk and result['decompile'] == 0:
+        raise ValueError('GRAPH_DECOMPILE_ON_WALK requires GRAPH_DECOMPILE_LIMIT > 0')
+    result['decompile_on_walk'] = on_walk
     result['roots'] = roots
     return result
 
@@ -913,7 +919,7 @@ def graph_reference_walk(program, roots, log, report_path, options=None):
             return False
         return True
 
-    def register_function(fn, distance, root=False, expand=True):
+    def register_function(fn, distance, root=False, expand=True, orientation=None):
         key = 'f_' + key_of(fn.getEntryPoint())
         if key not in nodes:
             if len(nodes) >= options['nodes']:
@@ -929,9 +935,14 @@ def graph_reference_walk(program, roots, log, report_path, options=None):
                 nodes[key]['root'] = True
         # An address-taken function can later become a real direct callee:
         # it must then be enqueued rather than silently left as a data-only leaf.
-        if expand and distance <= options['depth'] and key not in processed and key not in queued:
-            queue.append((fn, distance))
-            queued.add(key)
+        # Each direction is a separate path from a seed. Never reverse a path
+        # at a shared utility, which would pull unrelated callers into the graph.
+        directions = ('forward', 'backward') if options['direction'] == 'both' else (options['direction'],)
+        for walk in directions if orientation is None else (orientation,):
+            state = (key, walk)
+            if expand and distance < options['depth'] and state not in processed and state not in queued:
+                queue.append((fn, distance, walk))
+                queued.add(state)
         return key
 
     def register_site(kind, address, label):
@@ -980,81 +991,124 @@ def graph_reference_walk(program, roots, log, report_path, options=None):
             continue
         register_function(fn, 0, root=True)
 
-    while queue and checked_time():
-        fn, distance = queue.popleft()
-        owner = 'f_' + key_of(fn.getEntryPoint())
-        queued.discard(owner)
-        if owner in processed:
-            continue
-        processed.add(owner)
-        if options['direction'] in ('both', 'backward'):
-            for ref in bounded(references.getReferencesTo(fn.getEntryPoint())):
-                ref_type = ref.getReferenceType()
-                site = ref.getFromAddress()
-                if ref_type.isCall() or ref_type.isJump():
-                    caller = functions.getFunctionContaining(site)
-                    if caller is None:
-                        omitted.add('UNDEFINED_CALLER')
-                        continue
-                    if ref_type.isJump() and caller.getEntryPoint() == fn.getEntryPoint():
-                        continue  # intra-function branch to own entry, not a tail call
-                    source = register_function(caller, distance + 1,
-                                               expand=distance < options['depth'])
-                    edge_between(source, owner, site, 'CALL' if ref_type.isCall() else 'TAIL_JUMP')
-                elif ref_type.isData():
-                    block = memory.getBlock(site)
-                    label = 'DATA XREF\n0x%s\n%s' % (
-                        key_of(site), str(block.getName()) if block is not None else 'unmapped')
-                    data_node = register_site('DATA', site, label)
-                    edge_between(data_node, owner, site, 'DATA_REF')
-        if options['direction'] in ('both', 'forward'):
-            count = 0
-            for insn in listing.getInstructions(fn.getBody(), True):
-                if not checked_time():
-                    break
-                if count >= options['instructions']:
-                    omitted.add('INSTRUCTION_LIMIT')
-                    break
-                count += 1
-                mnemonic = str(insn.getMnemonicString()).upper()
-                if mnemonic not in ('CALL', 'JMP', 'LEA', 'MOV'):
-                    continue
-                source = insn.getAddress()
-                found_call = False
-                for ref in bounded(references.getReferencesFrom(source)):
+    decompiled_entries = set()
+    live_decompiler = None
+    if options['decompile_on_walk']:
+        from ghidra.app.decompiler import DecompInterface
+        live_decompiler = DecompInterface()
+        if not live_decompiler.openProgram(program):
+            omitted.add('DECOMPILER_OPEN_FAILED')
+            live_decompiler.dispose()
+            live_decompiler = None
+    try:
+        while queue and checked_time():
+            fn, distance, walk = queue.popleft()
+            owner = 'f_' + key_of(fn.getEntryPoint())
+            state = (owner, walk)
+            queued.discard(state)
+            if state in processed:
+                continue
+            processed.add(state)
+            # Decompile at the point of traversal to preserve the evidence order.
+            # Each function is attempted once even if both paths reach it.
+            if (live_decompiler is not None and owner not in decompiled_entries and len(decompiled_entries) < options['decompile']):
+                decompiled_entries.add(owner)
+                try:
+                    from ghidra.util.task import TaskMonitor
+                    result = live_decompiler.decompileFunction(fn, DECOMP_TIMEOUT_SECONDS, TaskMonitor.DUMMY)
+                    if result is None or not result.decompileCompleted():
+                        omitted.add('DECOMPILE_FAILED')
+                        log('GRAPH_DECOMPILE_UNAVAILABLE entry=0x%s distance=%d' % (key_of(fn.getEntryPoint()), distance))
+                    else:
+                        decompiled = result.getDecompiledFunction()
+                        code = str(decompiled.getC()) if decompiled is not None else ''
+                        if decompiled is None:
+                            omitted.add('DECOMPILE_FAILED')
+                            log('GRAPH_DECOMPILE_UNAVAILABLE entry=0x%s reason=missing_c' % key_of(fn.getEntryPoint()))
+                        else:
+                            clipped = len(code) > options['code_chars']
+                            log('GRAPH_DECOMPILER_BEGIN entry=0x%s distance=%d clipped=%s total_chars=%d' % (
+                                key_of(fn.getEntryPoint()), distance, clipped, len(code)))
+                            log(code[:options['code_chars']])
+                            log('GRAPH_DECOMPILER_END entry=0x%s' % key_of(fn.getEntryPoint()))
+                            if clipped:
+                                omitted.add('DECOMPILER_OUTPUT_CLIPPED')
+                except Exception as exc:
+                    omitted.add('DECOMPILE_FAILED')
+                    log('GRAPH_DECOMPILE_UNAVAILABLE entry=0x%s error_type=%s' % (
+                        key_of(fn.getEntryPoint()), type(exc).__name__))
+            if walk == 'backward':
+                for ref in bounded(references.getReferencesTo(fn.getEntryPoint())):
                     ref_type = ref.getReferenceType()
-                    if ref_type.isCall() or (mnemonic == 'JMP' and ref_type.isJump()):
-                        found_call = True
-                        target = functions.getFunctionContaining(ref.getToAddress())
-                        if target is None:
-                            unresolved = register_site('INDIRECT', source,
-                                                       'UNRESOLVED DESTINATION\n0x' + key_of(source))
-                            edge_between(owner, unresolved, source, 'INDIRECT_UNKNOWN')
+                    site = ref.getFromAddress()
+                    if ref_type.isCall() or ref_type.isJump():
+                        caller = functions.getFunctionContaining(site)
+                        if caller is None:
+                            omitted.add('UNDEFINED_CALLER')
                             continue
-                        target_key = 'f_' + key_of(target.getEntryPoint())
-                        if target_key == owner and mnemonic == 'JMP':
-                            continue  # a branch inside the same function, not a call
-                        dest = register_function(target, distance + 1,
-                                                 expand=distance < options['depth'])
-                        edge_between(owner, dest, source,
-                                     'CALL' if ref_type.isCall() else 'TAIL_JUMP')
-                        if 'guard_dispatch' in str(target.getName()).lower():
-                            unresolved = register_site(
-                                'INDIRECT', source, 'GUARDED TARGET UNKNOWN\n0x' + key_of(source))
-                            edge_between(owner, unresolved, source, 'INDIRECT_UNKNOWN')
-                    elif ref_type.isData() and mnemonic in ('LEA', 'MOV'):
-                        target = functions.getFunctionContaining(ref.getToAddress())
-                        if target is not None:
-                            target_key = register_function(target, distance + 1, expand=False)
-                            edge_between(owner, target_key, source, 'ADDRESS_TAKEN')
-                if mnemonic == 'CALL' and not found_call:
-                    unresolved = register_site('INDIRECT', source,
-                                               'INDIRECT CALL UNKNOWN\n0x' + key_of(source))
-                    edge_between(owner, unresolved, source, 'INDIRECT_UNKNOWN')
+                        if ref_type.isJump() and caller.getEntryPoint() == fn.getEntryPoint():
+                            continue  # intra-function branch to own entry, not a tail call
+                        source = register_function(caller, distance + 1,
+                                                   expand=True, orientation='backward')
+                        edge_between(source, owner, site, 'CALL' if ref_type.isCall() else 'TAIL_JUMP')
+                    elif ref_type.isData():
+                        block = memory.getBlock(site)
+                        label = 'DATA XREF\n0x%s\n%s' % (
+                            key_of(site), str(block.getName()) if block is not None else 'unmapped')
+                        data_node = register_site('DATA', site, label)
+                        edge_between(data_node, owner, site, 'DATA_REF')
+            if walk == 'forward':
+                count = 0
+                for insn in listing.getInstructions(fn.getBody(), True):
+                    if not checked_time():
+                        break
+                    if count >= options['instructions']:
+                        omitted.add('INSTRUCTION_LIMIT')
+                        break
+                    count += 1
+                    mnemonic = str(insn.getMnemonicString()).upper()
+                    if mnemonic not in ('CALL', 'JMP', 'LEA', 'MOV'):
+                        continue
+                    source = insn.getAddress()
+                    found_call = False
+                    for ref in bounded(references.getReferencesFrom(source)):
+                        ref_type = ref.getReferenceType()
+                        if ref_type.isCall() or (mnemonic == 'JMP' and ref_type.isJump()):
+                            found_call = True
+                            target = functions.getFunctionContaining(ref.getToAddress())
+                            if target is None:
+                                unresolved = register_site('INDIRECT', source,
+                                                           'UNRESOLVED DESTINATION\n0x' + key_of(source))
+                                edge_between(owner, unresolved, source, 'INDIRECT_UNKNOWN')
+                                continue
+                            target_key = 'f_' + key_of(target.getEntryPoint())
+                            if target_key == owner and mnemonic == 'JMP':
+                                continue  # a branch inside the same function, not a call
+                            dest = register_function(target, distance + 1,
+                                                     expand=True, orientation='forward')
+                            edge_between(owner, dest, source,
+                                         'CALL' if ref_type.isCall() else 'TAIL_JUMP')
+                            if 'guard_dispatch' in str(target.getName()).lower():
+                                unresolved = register_site(
+                                    'INDIRECT', source, 'GUARDED TARGET UNKNOWN\n0x' + key_of(source))
+                                edge_between(owner, unresolved, source, 'INDIRECT_UNKNOWN')
+                        elif ref_type.isData() and mnemonic in ('LEA', 'MOV'):
+                            target = functions.getFunctionContaining(ref.getToAddress())
+                            if target is not None:
+                                target_key = register_function(target, distance + 1, expand=False)
+                                edge_between(owner, target_key, source, 'ADDRESS_TAKEN')
+                    if mnemonic == 'CALL' and not found_call:
+                        unresolved = register_site('INDIRECT', source,
+                                                   'INDIRECT CALL UNKNOWN\n0x' + key_of(source))
+                        edge_between(owner, unresolved, source, 'INDIRECT_UNKNOWN')
+
+    finally:
+        if live_decompiler is not None:
+            live_decompiler.dispose()
 
     # Decompile only explicitly budgeted graph nodes. Graphing does not require
     # decompilation and zero is the safe default for large driver functions.
-    if options['decompile']:
+    if options['decompile'] and not options['decompile_on_walk']:
         from ghidra.app.decompiler import DecompInterface
         from ghidra.util.task import TaskMonitor
         decompiler = DecompInterface()
@@ -1090,16 +1144,20 @@ def graph_reference_walk(program, roots, log, report_path, options=None):
         finally:
             decompiler.dispose()
 
+    if options['decompile_on_walk']:
+        log('GRAPH_DECOMPILE_COUNT=%d GRAPH_DECOMPILE_LIMIT=%d' % (
+            len(decompiled_entries), options['decompile']))
     dot_path = report_path.with_name(report_path.stem + '-reference-graph.dot')
     json_path = report_path.with_name(report_path.stem + '-reference-graph.json')
     verdict = 'PARTIAL' if omitted else 'COMPLETE'
     snapshot = {
-        'schema': 'ghidra-static-function-references-v1',
-        'scope': 'existing direct references only; no Ghidra DB writes or dynamic resolution',
+        'schema': 'ghidra-static-function-references-v3',
+        'scope': 'direction-preserving paths from each seed; existing Ghidra references only; no database writes or dynamic target resolution',
         'status': verdict,
         'roots': ['0x%x' % int(str(x), 0) for x in roots],
         'limits': {key: value for key, value in options.items() if key != 'roots'},
         'omissions': sorted(omitted),
+        'walk_decompilation_attempted': len(decompiled_entries),
         'nodes': [dict(id=key, **value) for key, value in sorted(nodes.items())],
         'edges': sorted(edges.values(), key=lambda x: (x['source'], x['site'], x['target'], x['kind'])),
     }
@@ -1110,7 +1168,7 @@ def graph_reference_walk(program, roots, log, report_path, options=None):
     with json_path.open('x', encoding='utf-8') as stream:
         json.dump(snapshot, stream, indent=2, sort_keys=True)
         stream.write('\n')
-    log('GRAPH_SCOPE=STATIC_DEFINED_REFERENCES_ONLY indirect-callees-unknown data-xrefs-not-calls')
+    log('GRAPH_SCOPE=DIRECTION_PRESERVING_STATIC_XREF_ONLY forward-and-backward-paths-not-mixed data-xrefs-not-calls indirect-target-unknown')
     log('GRAPH_NODES=%d GRAPH_EDGES=%d GRAPH_OMISSIONS=%s' % (
         len(nodes), len(edges), ','.join(sorted(omitted)) or 'NONE'))
     log('GRAPH_DOT=%s' % dot_path)

@@ -781,7 +781,9 @@ class ReferenceGraphWalkTests(unittest.TestCase):
         for settings in (
             {'GRAPH_ROOTS': '0x100'},
             {'GRAPH_ROOTS': ['0x100'], 'GRAPH_DEPTH': -1},
-            {'GRAPH_ROOTS': ['0x100'], 'GRAPH_DECOMPILE_LIMIT': 13},
+            {'GRAPH_ROOTS': ['0x100'], 'GRAPH_DECOMPILE_LIMIT': 129},
+            {'GRAPH_ROOTS': ['0x100'], 'GRAPH_DECOMPILE_ON_WALK': True},
+            {'GRAPH_ROOTS': ['0x100'], 'GRAPH_DECOMPILE_ON_WALK': 'yes'},
             {'GRAPH_ROOTS': ['0x100'], 'GRAPH_MAX_NODES': True},
             {'GRAPH_ROOTS': ['0x100'], 'GRAPH_DIRECTION': 'magic'},
         ):
@@ -801,3 +803,139 @@ class ReferenceGraphWalkTests(unittest.TestCase):
         self.assertFalse(complete)
         self.assertEqual(graph['omissions'], ['INVALID_ROOT'])
 
+
+
+    def test_bidirectional_walk_preserves_direction_at_shared_helper(self):
+        # Root A calls helper B; unrelated D calls B. No D -> A path exists.
+        # In both mode, a wrong forward-then-backward pivot pulls D into graph.
+        program, Address = self._fixture()
+        function_type = type(program.functions.functions[0])
+        reference_type = type(program.references.refs[0])
+        program.functions.functions.append(function_type(0x400, [(0x410, 'CALL')]))
+        program.references.refs = [
+            ref for ref in program.references.refs if ref.src.value != 0x220
+        ]
+        program.references.refs.append(reference_type(0x410, 0x200, 'CALL'))
+        with patch.object(self, '_fixture', return_value=(program, Address)):
+            complete, graph, _dot = self._run(GRAPH_DIRECTION='both', GRAPH_DEPTH=2)
+        self.assertTrue(complete)
+        self.assertNotIn('f_400', {node['id'] for node in graph['nodes']})
+        self.assertEqual(graph['schema'], 'ghidra-static-function-references-v3')
+        self.assertIn(('f_100', 'f_200', 'CALL'),
+                      {(e['source'], e['target'], e['kind']) for e in graph['edges']})
+
+    def test_authorized_increased_graph_and_decompile_limits(self):
+        options = probe._graph_options({
+            'GRAPH_ROOTS': ['0x100'],
+            'GRAPH_MAX_NODES': 1024,
+            'GRAPH_MAX_EDGES': 8192,
+            'GRAPH_REFS_PER_FUNCTION': 8192,
+            'GRAPH_INSTRUCTIONS_PER_FUNCTION': 100000,
+            'GRAPH_TIMEOUT_SECONDS': 600,
+            'GRAPH_DECOMPILE_LIMIT': 64,
+            'GRAPH_DECOMPILE_ON_WALK': True,
+        })
+        self.assertEqual(options['nodes'], 1024)
+        self.assertEqual(options['edges'], 8192)
+        self.assertEqual(options['decompile'], 64)
+        self.assertTrue(options['decompile_on_walk'])
+
+    def test_decompiles_during_walk_once_per_function_with_single_session(self):
+        import json
+        import sys
+        from pathlib import Path
+        from types import ModuleType, SimpleNamespace
+
+        instances = []
+
+        class FakeDecompiler:
+            def __init__(self):
+                self.calls = []
+                self.disposed = False
+                instances.append(self)
+
+            def openProgram(self, program):
+                return True
+
+            def decompileFunction(self, fn, _timeout, _monitor):
+                self.calls.append(fn.getEntryPoint().value)
+                return SimpleNamespace(
+                    decompileCompleted=lambda: True,
+                    getDecompiledFunction=lambda: SimpleNamespace(
+                        getC=lambda: 'void FUN_%x() {}' % fn.getEntryPoint().value))
+
+            def dispose(self):
+                self.disposed = True
+
+        modules = {name: ModuleType(name) for name in (
+            'ghidra', 'ghidra.app', 'ghidra.app.decompiler',
+            'ghidra.util', 'ghidra.util.task')}
+        modules['ghidra.app.decompiler'].DecompInterface = FakeDecompiler
+        modules['ghidra.util.task'].TaskMonitor = SimpleNamespace(DUMMY=object())
+
+        program, Address = self._fixture()
+        report = Path(self.directory.name) / 'during-walk.txt'
+        settings = probe._graph_options({
+            'GRAPH_ROOTS': ['0x100'],
+            'GRAPH_DIRECTION': 'forward',
+            'GRAPH_DEPTH': 3,
+            'GRAPH_DECOMPILE_ON_WALK': True,
+            'GRAPH_DECOMPILE_LIMIT': 2,
+        })
+        logs = []
+        with patch.dict(sys.modules, modules), patch.object(
+                probe, '_address', side_effect=lambda _p, value: Address(value)):
+            complete = probe.graph_reference_walk(program, ['0x100'],
+                                                  logs.append, report, settings)
+        graph = json.loads(report.with_name('during-walk-reference-graph.json').read_text())
+        self.assertTrue(complete)
+        self.assertEqual(graph['status'], 'COMPLETE')
+        self.assertEqual(graph['walk_decompilation_attempted'], 2)
+        self.assertEqual(len(instances), 1)
+        self.assertTrue(instances[0].disposed)
+        self.assertEqual(len(instances[0].calls), 2)
+        self.assertEqual(len(set(instances[0].calls)), 2)
+        self.assertEqual(instances[0].calls[0], 0x100)
+        self.assertTrue(any('GRAPH_DECOMPILER_BEGIN entry=0x100' in line for line in logs))
+        self.assertTrue(any('GRAPH_DECOMPILER_END entry=0x100' in line for line in logs))
+        self.assertTrue(any('GRAPH_DECOMPILE_COUNT=2' in line for line in logs))
+
+    def test_failed_or_clipped_walk_decompile_is_partial(self):
+        import json
+        import sys
+        from pathlib import Path
+        from types import ModuleType, SimpleNamespace
+
+        class FakeDecompiler:
+            def openProgram(self, _program):
+                return True
+
+            def decompileFunction(self, _fn, _timeout, _monitor):
+                return SimpleNamespace(
+                    decompileCompleted=lambda: True,
+                    getDecompiledFunction=lambda: SimpleNamespace(getC=lambda: 'C' * 300))
+
+            def dispose(self):
+                pass
+
+        modules = {name: ModuleType(name) for name in (
+            'ghidra', 'ghidra.app', 'ghidra.app.decompiler',
+            'ghidra.util', 'ghidra.util.task')}
+        modules['ghidra.app.decompiler'].DecompInterface = FakeDecompiler
+        modules['ghidra.util.task'].TaskMonitor = SimpleNamespace(DUMMY=object())
+
+        program, Address = self._fixture()
+        report = Path(self.directory.name) / 'clipped.txt'
+        settings = probe._graph_options({
+            'GRAPH_ROOTS': ['0x100'], 'GRAPH_DIRECTION': 'forward',
+            'GRAPH_DECOMPILE_ON_WALK': True, 'GRAPH_DECOMPILE_LIMIT': 1,
+            'GRAPH_CODE_CHARS': 256,
+        })
+        with patch.dict(sys.modules, modules), patch.object(
+                probe, '_address', side_effect=lambda _p, value: Address(value)):
+            complete = probe.graph_reference_walk(program, ['0x100'],
+                                                  lambda _s: None, report, settings)
+        graph = json.loads(report.with_name('clipped-reference-graph.json').read_text())
+        self.assertFalse(complete)
+        self.assertEqual(graph['status'], 'PARTIAL')
+        self.assertIn('DECOMPILER_OUTPUT_CLIPPED', graph['omissions'])
