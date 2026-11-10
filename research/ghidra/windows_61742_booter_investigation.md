@@ -1,3 +1,11 @@
+# 2026-11-10 — ACR call-site owner and selector values are now source-grounded
+
+Original `nvlddmkm-61742-booter-discovery-20261110-111436-775840.txt`, SHA-256 `4c1f8e9578dd77cebb6fbe6ab3957ec04ea42a4f7b2ea0f447ecbb2f058559f1`, `STATUS=COMPLETE`, pinned Windows 617.42 MD5 `3fb9afac9d0e394723e830aa14e60512`. Both direct calls to previously classified ACR `FUN_140905460` (`0x140AF60E2` and `0x140AF6128`) belong to `FUN_140AF5F30`; both pass `RCX=RBX`, `RDX=RDI`, `R9D=0`. The first conditionally selects `R8D=0/1/3/4`, and second selects `R8D=0x10/0x12`; nonzero `EAX` is checked. This confirms call ownership and register argument setup but not a full caller, actual Booter source or runtime loader identity. Only source-grounded next target: full unclipped `FUN_140AF5F30` via `exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140af5f30"], "FULL_DECOMP_MAX_CHARS": 131072, "__name__": "__main__"})` in the original read-only PyGhidra session. Retain `STATUS=PARTIAL` if clipped. No repeat `FUN_140905460` or generic scans.
+
+Retail SKU is independently matched to official ASUS/ZOTAC product entries: ASUS `TUF-RTX4090-O24G-OG-GAMING`, ZOTAC `ZT-A30820J-10PLHR` (manufacturer P/N `9288-BN612-420Z8`). No full serials or photos committed. These do not prove actual factory-installed VBIOS; vendor verification and physical Stop/recovery remain unverified. All hardware permission flags false.
+
+---
+
 # 2026-11-10 — ACR HS main body re-confirmed, two direct incoming caller sites remain source-specific (STATIC)
 
 The owner supplied `nvlddmkm-61742-booter-discovery-20261110-110140-350801.txt` (16,693 bytes, SHA-256 `d07339fe477c428240ccac08754a05e449df09c65f65d9ed5d66acf094912207`, `STATUS=COMPLETE`, original `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`). It decompiles `FUN_140905460` completely without clipping. The Nov 9 report `20261109-152202-652131` **already analyzed this same ACR HS resource and indirect dispatch function**, and later original reports fully classified dependent `FUN_1409060D0`, `FUN_1401BC180` and `FUN_140AF43E0`. No repeat decompilation is required.
