@@ -1,0 +1,47 @@
+name: Firmware and shared-console offline contracts
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'research/gop/*.py'
+      - 'research/firmware/inspect_installed_firmware.py'
+      - 'research/firmware/test_inspect_installed_firmware.py'
+      - '.github/workflows/offline-firmware-contracts.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create persistent activity log before checkout
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/gu-contract-log"
+          {
+            echo "event=$GITHUB_EVENT_NAME repo=$GITHUB_REPOSITORY sha=$GITHUB_SHA ref=$GITHUB_REF run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT"
+            date -u
+            uname -a
+            python3 --version
+            df -h .
+          } > "$RUNNER_TEMP/gu-contract-log/host.log" 2>&1
+      - uses: actions/checkout@v4
+      - name: Execute existing offline models and original-container parsing tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          LOG="$RUNNER_TEMP/gu-contract-log/host.log"
+          trap 'rc=$?; { echo "HOST_EXIT=$rc"; git status --short; df -h .; } >> "$LOG" 2>&1; exit "$rc"' EXIT
+          {
+            python3 -m unittest discover -s research/gop -p 'test_*.py' -v
+            python3 -m unittest discover -s research/firmware -p 'test_inspect_installed_firmware.py' -v
+            python3 research/gop/msi_shared_console_stop_model.py
+          } 2>&1 | tee -a "$LOG"
+      - name: Upload complete activity log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-stop-offline-host-log-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gu-contract-log/host.log
+          if-no-files-found: error
