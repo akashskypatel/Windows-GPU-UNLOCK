@@ -377,9 +377,13 @@ class FunctionCallTraceTests(unittest.TestCase):
 class NestedReceiverCandidateTests(unittest.TestCase):
     """Host-only regression tests for candidate matching, not live Ghidra proof."""
 
+    class _Address(int):
+        def getOffset(self):
+            return int(self)
+
     class _Insn:
         def __init__(self, va, asm):
-            self.va, self.asm = va, asm
+            self.va, self.asm = NestedReceiverCandidateTests._Address(va), asm
 
         def getAddress(self):
             return self.va
@@ -392,8 +396,17 @@ class NestedReceiverCandidateTests(unittest.TestCase):
 
     class _Fixture:
         def __init__(self, asm):
-            self.instructions = [NestedReceiverCandidateTests._Insn(i + 1, x)
-                                 for i, x in enumerate(asm)]
+            self.base = 0x140000100
+            self.instructions = [
+                NestedReceiverCandidateTests._Insn(self.base + i * 8, x)
+                for i, x in enumerate(asm)
+            ]
+            self.data = bytearray(b'\xcc' * (len(asm) * 8))
+            # Each fake instruction is eight bytes. Place a real disp32 byte
+            # pattern only when the supplied assembly contains that literal.
+            for i, instruction in enumerate(self.instructions):
+                if '0x108' in str(instruction).lower():
+                    self.data[i * 8 + 2:i * 8 + 6] = (0x108).to_bytes(4, 'little')
 
         def getListing(self):
             return self
@@ -404,8 +417,32 @@ class NestedReceiverCandidateTests(unittest.TestCase):
         def getMemory(self):
             return self
 
+        def getBlocks(self):
+            return [self]
+
+        def getStart(self):
+            return NestedReceiverCandidateTests._Address(self.base)
+
+        def getSize(self):
+            return len(self.data)
+
+        def getName(self):
+            return '.text'
+
+        def isInitialized(self):
+            return True
+
+        def isExecute(self):
+            return True
+
         def getInstructions(self, forward):
-            return iter(self.instructions)
+            raise AssertionError('full Ghidra instruction iteration must not be used')
+
+        def getInstructionContaining(self, address):
+            index = (int(address) - self.base) // 8
+            if not (0 <= index < len(self.instructions)):
+                return None
+            return self.instructions[index]
 
         def getInstructionAfter(self, address):
             for index, instruction in enumerate(self.instructions):
@@ -420,25 +457,28 @@ class NestedReceiverCandidateTests(unittest.TestCase):
             return self
 
         def contains(self, address):
-            return True
+            return self.base <= int(address) < self.base + len(self.data)
 
         def getName(self):
             return 'FUN_TEST_RECEIVER'
 
         def getEntryPoint(self):
-            return 0x140000100
+            return NestedReceiverCandidateTests._Address(self.base)
 
-        def getBlock(self, address):
-            return self
+        def read_bytes(self, address, size):
+            index = int(address) - self.base
+            if index < 0 or index + size > len(self.data):
+                raise ValueError('outside fixture block')
+            return bytes(self.data[index:index + size])
 
-        def isExecute(self):
-            return True
-
-    def _report(self, asm):
+    def _report(self, asm, deadline=None):
         import time
         lines = []
-        status = probe.scan_nested_receiver_candidates(
-            self._Fixture(asm), lines.append, time.monotonic() + 2)
+        program = self._Fixture(asm)
+        with patch.object(probe, '_address', side_effect=lambda _p, value: self._Address(value)), \
+                patch.object(probe, '_memory_bytes', side_effect=lambda memory, address, length: memory.read_bytes(address, length)):
+            status = probe.scan_nested_receiver_candidates(
+                program, lines.append, time.monotonic() + 2 if deadline is None else deadline)
         return status, '\n'.join(lines)
 
     def test_pointer_copy_then_nested_callback_field_is_candidate(self):
@@ -474,6 +514,58 @@ class NestedReceiverCandidateTests(unittest.TestCase):
         self.assertFalse(status)
         self.assertIn('capped=True', report)
         self.assertIn('scan_complete=False', report)
+
+    def test_seed_literal_in_nonload_is_not_a_receiver(self):
+        status, report = self._report([
+            'MOV qword ptr [RBX + 0x108],RAX',
+            'MOV RCX,qword ptr [RAX + 0x170]',
+            'CALL RDX'])
+        self.assertTrue(status)
+        self.assertIn('raw_hits=1', report)
+        self.assertIn('seeds=0 matched_fields=0', report)
+        self.assertNotIn('RECEIVER_CANDIDATE seed_va=', report)
+
+    def test_seed_spanning_memory_chunk_is_found_exactly_once(self):
+        with patch.object(probe, 'CHUNK_BYTES', 3):
+            status, report = self._report([
+                'MOV RAX,qword ptr [RBX + 0x108]',
+                'MOV RCX,qword ptr [RAX + 0x170]',
+                'CALL RDX'])
+        self.assertTrue(status)
+        self.assertIn('seeds=1 matched_fields=1', report)
+        self.assertEqual(report.count('RECEIVER_CANDIDATE seed_va='), 1)
+
+    def test_byte_cap_cannot_claim_complete(self):
+        with patch.object(probe, 'MAX_SCAN_BYTES', 4):
+            status, report = self._report([
+                'MOV RAX,qword ptr [RBX + 0x108]',
+                'MOV RCX,qword ptr [RAX + 0x170]'])
+        self.assertFalse(status)
+        self.assertIn('reason=BYTE_BUDGET', report)
+        self.assertIn('scan_complete=False', report)
+
+    def test_expired_deadline_cannot_claim_complete(self):
+        status, report = self._report([
+            'MOV RAX,qword ptr [RBX + 0x108]',
+            'MOV RCX,qword ptr [RAX + 0x170]'], deadline=0)
+        self.assertFalse(status)
+        self.assertIn('reason=TIME_BUDGET', report)
+        self.assertIn('timed_out=True scan_complete=False', report)
+
+    def test_short_memory_read_is_partial_and_reports_error(self):
+        lines = []
+        program = self._Fixture([
+            'MOV RAX,qword ptr [RBX + 0x108]',
+            'MOV RCX,qword ptr [RAX + 0x170]'])
+        with patch.object(probe, '_address', side_effect=lambda _p, value: self._Address(value)), \
+                patch.object(probe, '_memory_bytes', return_value=b'\x08'):
+            import time
+            status = probe.scan_nested_receiver_candidates(program, lines.append, time.monotonic() + 2)
+        self.assertFalse(status)
+        report = '\n'.join(lines)
+        self.assertIn('SCAN_NESTED_RECEIVER_READ_ERROR', report)
+        self.assertIn('scan_complete=False', report)
+
 
 
 

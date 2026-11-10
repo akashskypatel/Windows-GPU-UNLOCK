@@ -629,68 +629,136 @@ def _receiver_field_step(asm, aliases):
 
 
 def scan_nested_receiver_candidates(program, log, deadline):
-    """Bounded forward pairs of [object+0x108] and [pointer+0x170/+0x250].
+    """Find source-grounded receiver candidates without a full instruction walk.
 
-    Candidate evidence only: no exact Falcon receiver, invocation or Booter proven.
+    Scan executable bytes only for the 32-bit +0x108 field displacement. For
+    each byte hit, use an EXISTING Ghidra instruction and require an exact
+    MOV register,[register+0x108] operand before bounded same-function alias
+    tracking. This is static, branch-insensitive and not a runtime call proof.
     """
     listing = program.getListing()
     functions = program.getFunctionManager()
     memory = program.getMemory()
-    examined = 0
+    blocks = [b for b in memory.getBlocks() if b.isInitialized() and b.isExecute()]
+    blocks.sort(key=lambda b: int(b.getStart().getOffset()))
+    needle = (0x108).to_bytes(4, 'little')
+    raw_hits = 0
+    inspected = 0
     seeds = 0
     matches = 0
     recorded = 0
+    scanned_bytes = 0
+    seen_instructions = set()
+    complete = True
     timed_out = False
-    log('SCAN_NESTED_RECEIVER_BEGIN seed=read_qword_at_0x108 slots=0x170,0x250 lookahead=%d budget_seconds=%d max_recorded=%d' % (
-        MAX_RECEIVER_LOOKAHEAD, MAX_RECEIVER_SECONDS, MAX_RECEIVER_RECORDED))
-    for instruction in listing.getInstructions(True):
-        examined += 1
-        if examined % 1024 == 0 and time.monotonic() > deadline:
-            timed_out = True
-            break
-        if str(instruction.getMnemonicString()).upper() != 'MOV':
-            continue
-        seed_asm = str(instruction)
-        start = RECEIVER_LOAD_RE.match(seed_asm)
-        if start is None:
-            continue
-        block = memory.getBlock(instruction.getAddress())
-        if block is None or not block.isExecute():
-            continue
-        fn = functions.getFunctionContaining(instruction.getAddress())
-        if fn is None:
-            continue
-        seeds += 1
-        aliases = {start.group(1).upper()}
-        cursor = instruction
-        for distance in range(1, MAX_RECEIVER_LOOKAHEAD + 1):
-            cursor = listing.getInstructionAfter(cursor.getAddress())
-            if cursor is None or not fn.getBody().contains(cursor.getAddress()):
+    stopped = False
+    log('SCAN_NESTED_RECEIVER_BEGIN seed=read_qword_at_0x108 slots=0x170,0x250 '
+        'method=existing_instruction_byte_seeded lookahead=%d max_bytes=%d '
+        'max_recorded=%d deadline_bounded=True block_count=%d' %
+        (MAX_RECEIVER_LOOKAHEAD, MAX_SCAN_BYTES, MAX_RECEIVER_RECORDED, len(blocks)))
+
+    for block_index, block in enumerate(blocks):
+        base = int(block.getStart().getOffset())
+        length = int(block.getSize())
+        offset = 0
+        previous = b''
+        while offset < length:
+            if scanned_bytes >= MAX_SCAN_BYTES or time.monotonic() >= deadline:
+                complete = False
+                timed_out = time.monotonic() >= deadline
+                stopped = True
+                log('SCAN_NESTED_RECEIVER_TRUNCATED block=%s remaining_bytes=%d reason=%s' %
+                    (block.getName(), length - offset,
+                     'TIME_BUDGET' if timed_out else 'BYTE_BUDGET'))
                 break
-            field_asm = str(cursor)
-            slot = _receiver_field_step(field_asm, aliases)
-            if slot is None:
-                continue
-            matches += 1
-            nearby_transfer = False
-            follower = cursor
-            for _ in range(8):
-                follower = listing.getInstructionAfter(follower.getAddress())
-                if follower is None or not fn.getBody().contains(follower.getAddress()):
+            take = min(CHUNK_BYTES, length - offset, MAX_SCAN_BYTES - scanned_bytes)
+            try:
+                current = _memory_bytes(memory, _address(program, base + offset), take)
+                if len(current) != take:
+                    raise ValueError('short read')
+            except Exception as exc:
+                complete = False
+                stopped = True
+                log('SCAN_NESTED_RECEIVER_READ_ERROR block=%s va=0x%x error_type=%s' %
+                    (block.getName(), base + offset, type(exc).__name__))
+                break
+            for relative in _slot_displacement_hits(previous, current, needle):
+                raw_hits += 1
+                if time.monotonic() >= deadline:
+                    timed_out = True
+                    complete = False
+                    stopped = True
                     break
-                if str(follower.getMnemonicString()).upper() in ('CALL', 'JMP'):
-                    nearby_transfer = True
-                    break
-            if recorded < MAX_RECEIVER_RECORDED:
-                recorded += 1
-                log('RECEIVER_CANDIDATE seed_va=%s seed_asm=%s field_va=%s field_asm=%s slot=0x%x distance=%d nearby_transfer=%s function=%s(%s) potential_alias_only=True' % (
-                    instruction.getAddress(), seed_asm, cursor.getAddress(), field_asm,
-                    slot, distance, nearby_transfer, fn.getName(), fn.getEntryPoint()))
+                site = _address(program, base + offset + relative)
+                instruction = listing.getInstructionContaining(site)
+                if instruction is None:
+                    continue
+                instruction_addr = instruction.getAddress()
+                key = int(instruction_addr.getOffset())
+                if key in seen_instructions:
+                    continue
+                seen_instructions.add(key)
+                inspected += 1
+                if str(instruction.getMnemonicString()).upper() != 'MOV':
+                    continue
+                seed_asm = str(instruction)
+                start = RECEIVER_LOAD_RE.match(seed_asm)
+                if start is None:
+                    continue
+                fn = functions.getFunctionContaining(instruction_addr)
+                if fn is None:
+                    continue
+                seeds += 1
+                aliases = {start.group(1).upper()}
+                cursor = instruction
+                for distance in range(1, MAX_RECEIVER_LOOKAHEAD + 1):
+                    cursor = listing.getInstructionAfter(cursor.getAddress())
+                    if cursor is None or not fn.getBody().contains(cursor.getAddress()):
+                        break
+                    field_asm = str(cursor)
+                    slot = _receiver_field_step(field_asm, aliases)
+                    if slot is None:
+                        continue
+                    matches += 1
+                    nearby_transfer = False
+                    follower = cursor
+                    for _ in range(8):
+                        follower = listing.getInstructionAfter(follower.getAddress())
+                        if follower is None or not fn.getBody().contains(follower.getAddress()):
+                            break
+                        if str(follower.getMnemonicString()).upper() in ('CALL', 'JMP'):
+                            nearby_transfer = True
+                            break
+                    if recorded < MAX_RECEIVER_RECORDED:
+                        recorded += 1
+                        log('RECEIVER_CANDIDATE seed_va=%s seed_asm=%s field_va=%s '
+                            'field_asm=%s slot=0x%x distance=%d nearby_transfer=%s '
+                            'function=%s(%s) potential_alias_only=True' %
+                            (instruction_addr, seed_asm, cursor.getAddress(), field_asm,
+                             slot, distance, nearby_transfer, fn.getName(), fn.getEntryPoint()))
+            previous = (previous + current)[-3:]
+            offset += take
+            scanned_bytes += take
+            if stopped:
+                break
+        if stopped:
+            remaining_blocks = len(blocks) - block_index - 1
+            if remaining_blocks:
+                log('SCAN_NESTED_RECEIVER_UNVISITED_BLOCKS count=%d' % remaining_blocks)
+            break
     capped = matches > recorded
-    log('SCAN_NESTED_RECEIVER_END examined_instructions=%d seeds=%d matched_fields=%d recorded=%d capped=%s timed_out=%s scan_complete=%s' % (
-        examined, seeds, matches, recorded, capped, timed_out, not (timed_out or capped)))
-    log('SCAN_NESTED_RECEIVER_LIMIT=Linear register-copy heuristic; no control-flow or same-receiver proof; may miss indirect aliases and outer+0xf0->+0x18')
-    return not (timed_out or capped)
+    if capped:
+        complete = False
+    log('SCAN_NESTED_RECEIVER_END scanned_bytes=%d raw_hits=%d '
+        'defined_candidate_instructions=%d seeds=%d matched_fields=%d '
+        'recorded=%d capped=%s timed_out=%s scan_complete=%s' %
+        (scanned_bytes, raw_hits, inspected, seeds, matches, recorded,
+         capped, timed_out, complete))
+    log('SCAN_NESTED_RECEIVER_LIMIT=Byte-seeded *existing* instructions only; '
+        'linear same-function register-copy heuristic; no alias/branch or actual '
+        'loader invocation proof; misses computed offsets, interprocedural aliases '
+        'and outer+0xf0->+0x18 patterns')
+    return complete
 
 
 def inspect_static_bytes(program, sites, log):
