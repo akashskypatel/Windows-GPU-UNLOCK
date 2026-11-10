@@ -184,6 +184,72 @@ class FirmwareInventoryTests(unittest.TestCase):
             self.assertEqual(found['occurrences'], 2)
             self.assertFalse(found['unique_occurrence'])
 
+    def test_duplicate_fwversion_refused_instead_of_last_wins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'gsp.bin'
+            make_gsp(path)
+            data = bytearray(path.read_bytes())
+            label = b'.fwsignature_ad10x'
+            off = data.index(label)
+            data[off:off + len(label)] = b'.fwversion\0' + b'\0' * (len(label) - len(b'.fwversion\0'))
+            shoff = struct.unpack_from('<Q', data, 40)[0]
+            # Fourth section header aliases the first .fwversion section.
+            # Before the fix, the name dictionary silently picked one.
+            data += data[shoff + 2 * 64:shoff + 3 * 64]
+            struct.pack_into('<H', data, 60, 4)
+            path.write_bytes(data)
+            with self.assertRaisesRegex(ValueError, 'duplicate GSP .fwversion'):
+                fw.inspect_gsp(path)
+
+    def test_changed_source_between_scan_and_report_refused(self):
+        from unittest.mock import patch
+        for changed in ('gsp', 'ucodes'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                gsp = root / 'gsp.bin'
+                ucodes = root / 'ucodes.bin'
+                fp = (0x2d38befecdb703a6).to_bytes(8, 'little')
+                make_gsp_with_fwimage(gsp, b'A' * 20 + fp + b'B' * 20)
+                make_ucodes(ucodes)
+                original = fw._find_fingerprint_in_fwimage
+
+                def change_after_scan(path, gsp_info, fingerprint):
+                    result = original(path, gsp_info, fingerprint)
+                    target = gsp if changed == 'gsp' else ucodes
+                    data = bytearray(target.read_bytes())
+                    data[-1] ^= 1
+                    target.write_bytes(data)
+                    return result
+
+                with patch.object(fw, '_find_fingerprint_in_fwimage',
+                                  side_effect=change_after_scan):
+                    with self.assertRaisesRegex(ValueError, 'source changed during inventory'):
+                        fw.inspect_pair(gsp, ucodes)
+
+    def test_report_created_during_inspection_is_never_overwritten(self):
+        from unittest.mock import patch
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gsp = root / 'gsp.bin'
+            ucodes = root / 'ucodes.bin'
+            output = root / 'report.json'
+            make_gsp(gsp)
+            make_ucodes(ucodes)
+            original = fw.inspect_pair
+
+            def concurrent_create(*args, **kwargs):
+                result = original(*args, **kwargs)
+                output.write_text('existing owner data', encoding='utf-8')
+                return result
+
+            with patch.object(fw, 'inspect_pair', side_effect=concurrent_create):
+                with patch.object(sys, 'argv', ['script', '--gsp', str(gsp),
+                                                '--ucodes', str(ucodes),
+                                                '--output', str(output)]):
+                    self.assertEqual(fw.main(), 1)
+            self.assertEqual(output.read_text(encoding='utf-8'), 'existing owner data')
+
     def test_existing_report_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -81,10 +81,14 @@ def inspect_gsp(path: Path) -> dict:
                            'type': typ, 'offset': off, 'size': length})
     # The version string and per-architecture signature *bytes* are useful
     # for cross-release comparison. Neither authenticates a signature.
-    section_by_name = {entry['name']: entry for entry in result}
+    # A dictionary would silently pick the last of several conflicting
+    # .fwversion sources. The version is source evidence, never a guess.
+    version_sections = [entry for entry in result if entry['name'] == '.fwversion']
+    if len(version_sections) > 1:
+        raise ValueError('ambiguous duplicate GSP .fwversion sections')
     fwversion = None
     fwversion_bytes = None
-    version_section = section_by_name.get('.fwversion')
+    version_section = version_sections[0] if version_sections else None
     if version_section is not None and version_section['type'] != 8:
         if version_section['size'] > 256:
             raise ValueError('oversized GSP .fwversion section')
@@ -196,6 +200,16 @@ def inspect_pair(gsp: Path, ucodes: Path, package_dir: Path | None = None) -> di
         output['package_files_identical'] = all(x['same_size'] and x['same_sha256'] for x in comparison.values())
     else:
         output['package_files_identical'] = None
+
+    # Parsing, fingerprint scanning and package comparison open files in
+    # separate passes. Refuse a changed source rather than report a GSP hash
+    # from one version and a fingerprint from another. This is a bounded
+    # read-only consistency check, not an atomic filesystem snapshot.
+    if (_checked_file(gsp) != gsp_info['bytes']
+            or _checked_file(ucodes) != ucodes_info['bytes']
+            or _sha256(gsp) != gsp_info['sha256']
+            or _sha256(ucodes) != ucodes_info['sha256']):
+        raise ValueError('GSP or NVUCODES source changed during inventory')
     return output
 
 
@@ -210,7 +224,10 @@ def main() -> int:
         if args.output.exists() or args.output.is_symlink():
             raise ValueError('output already exists; choose a new report path')
         report = inspect_pair(args.gsp, args.ucodes, args.package_dir)
-        args.output.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+        # Exclusive creation closes the check-then-write race: another
+        # process cannot cause this report to overwrite an existing file.
+        with args.output.open('x', encoding='utf-8') as dst:
+            dst.write(json.dumps(report, indent=2) + '\n')
         status = 'PARTIAL' if report['package_files_identical'] is False else 'COMPLETE'
         print(f'STATUS={status} REPORT={args.output} CAN_UNLOCK=false CAN_FLASH=false')
         return 2 if status == 'PARTIAL' else 0
