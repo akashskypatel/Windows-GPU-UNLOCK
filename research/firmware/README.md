@@ -100,3 +100,25 @@ The host-only inspector now scans exactly the ELF .fwimage section in bounded 1 
 For the user's Windows 617.42-installed GSP 615.78.05 pair, a separate read-only console check observed fingerprint 0x2d38befecdb703a6 **once** at file offset 17492248 (0x010ae918), relative to .fwimage offset 64 at 17492184 (0x010ae8d8). The result is user-supplied static evidence, not a run of this newly integrated inspector.
 
 Use the same --gsp, --ucodes, and --package-dir arguments shown above, but choose a **new** --output path such as windows-61742-gsp-ucodes-inventory-v3.json. The matching bytes support file-pair provenance, not verified signature validity, hardware execution, or a driver/firmware ABI guarantee.
+
+### Original Windows 617.42 NVUCODES index inventory (read-only)
+
+The original preserved Windows 617.42 GSP and NVUCODES files were independently SHA-256 verified on 2026-11-10. A read-only analysis of the original embedded GSP RISC-V loader identified header checks at virtual addresses `0x01AD14A8–0x01AD14EA`, followed by a 24-byte per-index copy and external-flag check at `0x01AD153E–0x01AD157A`. These checks are original Windows evidence in addition to NVIDIA's public private-storage structure definition.
+
+For the **pinned** Windows NVUCODES file (SHA-256 `eed53d76248582d71c629e8b6230aee48ce673c91d782301c94e98ac6a6db7aa`), the separate `inspect_ucodes_index.py` tool validates the 1,293-entry index, its 24-byte records and all external-data ranges. It reports 205 populated external entries and 1,088 empty indices; the table ends at `0x7950`, and the first payload begins at `0x7A00`. No record crosses the end of the 58,215,936-byte source. The tool produces SHA-256 values for each bounded record; it does not output or distribute firmware record bytes.
+
+Run the existing synthetic negative tests with:
+
+```powershell
+python -m unittest discover -s research/firmware -p test_inspect_ucodes_index.py -v
+```
+
+Run a fresh read-only index report with:
+
+```powershell
+python .\research\firmware\inspect_ucodes_index.py --ucodes 'C:\Windows\System32\DriverStore\FileRepository\nv_dispsi.inf_amd64_ccd7fbb71bb72370\ucodes_ga10x.bin' --output 'D:\Projects\gpu-unlock\windows-61742-ucodes-index.json'
+```
+
+The output path must be new. The tool requires the original pinned source SHA-256 and rejects changed, unknown, malformed, overlapping, out-of-range and unsupported index entries. The older `inspect_installed_firmware.py` v3 report still correctly states `records_parsed=false`; it remains a header-and-section report and is not retroactively changed.
+
+**Open:** Source-grounded index-to-firmware labels and actual AD102/GA102 production Booter IMAGE/HEADER/SIG/PATCH mapping, signed-image acceptance, live loader invocation/descriptor, and post-operation hardware safety. A valid index is not an authenticated Booter. `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`.
