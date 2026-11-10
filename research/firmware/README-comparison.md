@@ -40,7 +40,7 @@ The comparator checks the source archive's exact SHA-256, validates the six exis
 
 It prints `STATUS=COMPLETE` with `REPORT=` on completed comparison or `STATUS=ERROR` otherwise. The fields can_detach, can_unlock, and can_flash always remain false.
 
-**Verification scope:** Twelve synthetic local tests and Python compilation passed in the assistant environment. The official 615.78.08 source archive has not yet been processed. Do not use a reference comparison as evidence of Windows firmware compatibility, cryptographic signature validity, or permission to run unsigned code.
+**Current verification scope (2026-11-10):** The official pinned 615.78.08 source archive **was processed**. The owner supplied the completed `boot-assets-610-vs-615-reference-v2.json` (5,529 bytes; SHA-256 `56e69692fbb880d9b4c9871748b8563f85ec3e40fc0797ef31f5ad1107084aaa`). Four GSP boot image/descriptor outputs are byte-identical across Linux versions; both production Booter bundles differ in **all three parsed components** (72-byte metadata, executable image and 768-byte signatures). This comparison does not establish Windows driver compatibility or authenticated signatures.
 
 ## Interpretation of the real 610.43.03 vs 615.78.08 comparison
 
@@ -48,6 +48,10 @@ The user ran the pinned official source archive on Windows. Twelve synthetic tes
 
 The comparator now adds per-Booter component SHA-256, size and equality checks for the 72-byte research bundle metadata wrapper, internal production image, and appended signature records. This distinguishes changes in code and metadata from changes in signatures. It does not authenticate signatures or alter any firmware.
 
-After updating from main, rerun the existing comparator command above with a **new** report file name such as `D:\Projects\gpu-unlock\boot-assets-610-vs-615-reference-v2.json`. This retains the original report and adds `assets['booter_load_ad102.bin'].components` and the corresponding GA102 component data (without the space in the field name: `booter_load_ad102.bin`).
+The previous v2 run is **complete**. Both chip-specific metadata/image/signature components were inspected with the published original source and exact hashes. No additional 610↔615 rerun is requested.
 
-The refactor has 15 passing synthetic tests locally. Real source asset comparison with the expanded component reporting remains pending until a Windows re-run.
+## Original Windows 617.42 GSP/ucodes inventory (completed static metadata)
+
+The owner supplied `windows-61742-gsp-ucodes-inventory-v3.json` (6,199 bytes; SHA-256 `6c057c145d8850c9982837ede1e24165ef6a47f3fd08ed239b6364909057275e`). It reports a 27,043,992-byte RISC-V ELF64 GSP (SHA-256 `f89d8f615e6146ed2808df974b7af7f1aabda876596391b0aabcc32ba293c34f`) with `.fwversion=615.78.05`, 19 ELF sections, and 4,096-byte AD10x and GA10x signature sections. A distinct 58,215,936-byte `NVUCODES` file (SHA-256 `eed53d76248582d71c629e8b6230aee48ce673c91d782301c94e98ac6a6db7aa`) has 1,293 declared entries, **not yet parsed**. DriverStore and extracted-package file sizes/hashes match, but this is not driver acceptance. The NVUCODES header fingerprint occurs once within GSP `.fwimage` and does **not** prove semantic or runtime pairing.
+
+The existing Windows `inspect_installed_firmware.py` produced the structural inventory; the independent offline universal `tools/check_firmware_evidence.py` checks consistency of the two **reports**, not the underlying firmware bytes. [CI 42843765104](https://github.com/akashskypatel/universal-gpu-unlock/actions/runs/42843765104) PASS (12 host-negative tests and Windows EFI build). Unresolved: authoritative NVUCODES entry definitions, authenticated signatures, Windows production signed Booter producer/descriptor/loader ABI, physical driver Stop and safe recovery. No report, user-attested source or third-party project authorizes hardware mutation.
