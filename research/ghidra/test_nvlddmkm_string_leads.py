@@ -202,8 +202,7 @@ class SlotDisplacementScanTests(unittest.TestCase):
         from types import SimpleNamespace
         base = 0x140000000
         starts = [n for n in range(len(data)) if data.startswith(b'\x70\x01\x00\x00', n)]
-        assert len(starts) <= 1
-        instruction = self.Instruction(base + starts[0], asm) if starts else None
+        instructions = [self.Instruction(base + location, asm) for location in starts]
 
         class ExecutableMemoryBlock:
             def isInitialized(self):
@@ -225,7 +224,7 @@ class SlotDisplacementScanTests(unittest.TestCase):
             def getMemory(self):
                 return MemoryWithCode()
             def getListing(self):
-                return SimpleNamespace(getInstructionContaining=lambda a: instruction if instruction is not None and a >= instruction.addr and a < instruction.addr + 4 else None)
+                return SimpleNamespace(getInstructionContaining=lambda a: next((item for item in instructions if item.addr <= a < item.addr + 4), None))
             def getFunctionManager(self):
                 return SimpleNamespace(getFunctionContaining=lambda a: SimpleNamespace(getName=lambda: 'FUN_target', getEntryPoint=lambda: base))
 
@@ -235,7 +234,8 @@ class SlotDisplacementScanTests(unittest.TestCase):
              patch.object(probe, 'CHUNK_BYTES', chunk_bytes), \
              patch.object(probe, 'MAX_SCAN_BYTES', max_bytes), \
              patch.object(probe.time, 'monotonic', return_value=1.0):
-            result = probe.scan_existing_slot_displacements(ProgramWithCode(), 0x170, out.append, 2.0, focus=focus)
+            result = probe.scan_existing_slot_displacements(ProgramWithCode(), 0x170, out.append, 2.0, focus=focus,
+                                                            max_recorded=probe.MAX_SLOT_CANDIDATES)
         return result, out
 
     def test_write_focus_selects_qword_store_and_not_memory_read(self):
@@ -301,11 +301,15 @@ class SlotDisplacementScanTests(unittest.TestCase):
         self.assertTrue(any('scan_complete=False' in x for x in out))
 
     def test_candidate_cap_marks_scan_partial(self):
-        with patch.object(probe, 'MAX_SLOT_CANDIDATES', 0):
-            result, out = self.run_scan(b'AB\x70\x01\x00\x00CD',
-                                        'MOV RAX,qword ptr [RCX + 0x170]')
+        # Two distinct existing instruction sites exceed the valid positive cap.
+        # This fails if a second match is dropped without returning PARTIAL.
+        candidate_bytes = b'AB\x70\x01\x00\x00CD\x70\x01\x00\x00EF'
+        with patch.object(probe, 'MAX_SLOT_CANDIDATES', 1):
+            result, out = self.run_scan(
+                candidate_bytes, 'MOV RAX,qword ptr [RCX + 0x170]')
         self.assertFalse(result)
-        self.assertTrue(any('distinct_instruction_candidates=1 recorded=0 capped=True' in x for x in out))
+        self.assertTrue(any('distinct_instruction_candidates=2 recorded=1 capped=True' in x for x in out))
+        self.assertEqual(sum(x.startswith('SLOT_CANDIDATE ') for x in out), 1)
 
     def test_exact_budget_on_first_of_two_blocks_does_not_report_complete(self):
         from types import SimpleNamespace

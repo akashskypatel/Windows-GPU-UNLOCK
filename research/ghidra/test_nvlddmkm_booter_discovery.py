@@ -246,13 +246,13 @@ class DecompilationCoverageTests(unittest.TestCase):
     def test_clipped_regular_decompilation_reports_incomplete(self):
         completed, lines = self._analyze('X' * (probe.MAX_DECOMP_CHARS + 5))
         self.assertFalse(completed)
-        self.assertIn('DECOMPILER_BEGIN entry=1401b0e00 clipped=True', lines)
+        self.assertTrue(any(line.startswith('DECOMPILER_BEGIN entry=1401b0e00 clipped=True ') for line in lines))
         self.assertTrue(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in item for item in lines))
 
     def test_unclipped_regular_decompilation_remains_complete(self):
         completed, lines = self._analyze('short code')
         self.assertTrue(completed)
-        self.assertIn('DECOMPILER_BEGIN entry=1401b0e00 clipped=False', lines)
+        self.assertTrue(any(line.startswith('DECOMPILER_BEGIN entry=1401b0e00 clipped=False ') for line in lines))
         self.assertFalse(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in item for item in lines))
 
     def test_17087_character_decompilation_is_preserved_without_focus_filter(self):
@@ -262,7 +262,7 @@ class DecompilationCoverageTests(unittest.TestCase):
         completed, lines = self._analyze(source)
         self.assertTrue(completed)
         self.assertIn(source, lines)
-        self.assertIn('DECOMPILER_BEGIN entry=1401b0e00 clipped=False', lines)
+        self.assertTrue(any(line.startswith('DECOMPILER_BEGIN entry=1401b0e00 clipped=False ') for line in lines))
         self.assertFalse(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in item for item in lines))
 
 
