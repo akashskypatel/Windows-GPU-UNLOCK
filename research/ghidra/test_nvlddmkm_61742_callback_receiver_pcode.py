@@ -248,6 +248,75 @@ class CallbackDataflowTests(unittest.TestCase):
         self.assertIn("callback_invoke_not_proven=TRUE", line)
         self.assertEqual(probe.MAX_FOCUSED_OPS_PER_SITE, 16)
 
+    def test_initializer_inbound_keeps_call_refs_not_address_taken_data(self):
+        class CallType:
+            def __init__(self, is_call):
+                self.called = is_call
+            def isCall(self):
+                return self.called
+            def __str__(self):
+                return "CALL" if self.called else "DATA"
+        class TypedRef:
+            def __init__(self, source, is_call):
+                self.source = Address(source)
+                self.kind = CallType(is_call)
+            def getFromAddress(self):
+                return self.source
+            def getReferenceType(self):
+                return self.kind
+        class TypedReferences:
+            def getReferencesTo(self, addr):
+                return [TypedRef(0x140100000, False),
+                        TypedRef(0x140100010, True),
+                        TypedRef(0x140100010, True),
+                        TypedRef(0x140100020, True)]
+        owner = Function(0x1400ffff0)
+        program = Program({0x140100000: owner, 0x140100010: owner,
+                           0x140100020: owner})
+        program.functions.getFunctionAt = lambda address: Function(probe.INITIALIZER)
+        program.refs = TypedReferences()
+        found = []
+        calls, complete = probe.select_initializer_callers(program, found.append)
+        self.assertTrue(complete)
+        self.assertEqual([addr.getOffset() for _, addr in calls],
+                         [0x140100010, 0x140100020])
+        self.assertTrue(any("direct_call=False" in line for line in found))
+        self.assertTrue(any("explicit_calls=2" in line for line in found))
+
+    def test_missing_initializer_and_callsite_overflow_fail_closed(self):
+        class CallType:
+            def isCall(self):
+                return True
+            def __str__(self):
+                return "CALL"
+        class Ref:
+            def __init__(self, at):
+                self.at = Address(at)
+            def getFromAddress(self):
+                return self.at
+            def getReferenceType(self):
+                return CallType()
+        class ManyReferences:
+            def getReferencesTo(self, addr):
+                return [Ref(0x140300000 + i * 8)
+                        for i in range(probe.MAX_INITIALIZER_CALLSITES + 4)]
+        missing = Program({})
+        missing.functions.getFunctionAt = lambda address: None
+        found, complete = probe.select_initializer_callers(missing, lambda _: None)
+        self.assertFalse(complete)
+        self.assertEqual(found, [])
+        points = [0x140300000 + i * 8
+                  for i in range(probe.MAX_INITIALIZER_CALLSITES + 4)]
+        source = Program({point: Function(0x140200000) for point in points})
+        source.functions.getFunctionAt = lambda address: Function(probe.INITIALIZER)
+        source.refs = ManyReferences()
+        messages = []
+        found, complete = probe.select_initializer_callers(source, messages.append)
+        self.assertFalse(complete)
+        self.assertEqual(len(found), probe.MAX_INITIALIZER_CALLSITES)
+        self.assertIn("INITIALIZER_CALLSITE_TRUNCATED",
+                      "\n".join(messages))
+
     def test_original_driver_md5_rejects_lookalikes_without_output_file(self):
         class WrongDriver:
             def getExecutableMD5(self):

@@ -19,6 +19,11 @@ FUNCTION_RECORD = 0x140e19a0c        # Consecutive 32-bit RVAs; not a 64-bit loa
 FOCUSED_FIELD_SITES = (0x1417e8b32, 0x1417e8e45, 0x1417e8ef9,
                        0x1417e983c, 0x1417e985a)
 MAX_FOCUSED_OPS_PER_SITE = 16
+INITIALIZER = 0x1417e8550           # Existing, observed +0x170/+0x250 callback setter.
+MAX_INITIALIZER_INBOUND = 48
+MAX_INITIALIZER_CALLERS = 4
+MAX_INITIALIZER_CALLSITES = 10
+MAX_CALLER_PCODE_OPS = 18000
 LOADER = 0x140bf3880                  # Original flcnLoadAndExecuteHsBinaryViaDma_GA10X.
 REGISTRATION_SITES = (0x1417e8e3e, 0x1417e8e45)  # Existing nested +0x170 callback stores.
 FIELD_OFFSETS = frozenset((0x108, 0x170, 0x250, 0x3e8))
@@ -181,6 +186,98 @@ def candidate_functions(program, say):
     return [found[k] for k in sorted(found)], complete
 
 
+def select_initializer_callers(program, say):
+    """Select only original explicit CALL xrefs to the proven callback setter.
+
+    No DATA ref, thunk jump, or address-taken reference counts as invocation.
+    This is limited inbound provenance, not a full indirect receiver search.
+    """
+    functions = program.getFunctionManager()
+    initializer = functions.getFunctionAt(va(program, INITIALIZER))
+    if initializer is None:
+        say("INITIALIZER_UNAVAILABLE entry=0x%x" % INITIALIZER)
+        return [], False
+    calls = []
+    seen = set()
+    complete = True
+    count = 0
+    for ref in program.getReferenceManager().getReferencesTo(initializer.getEntryPoint()):
+        if count >= MAX_INITIALIZER_INBOUND:
+            say("INITIALIZER_REFS_TRUNCATED cap=%d" % MAX_INITIALIZER_INBOUND)
+            complete = False
+            break
+        count += 1
+        source = ref.getFromAddress()
+        type_ = ref.getReferenceType()
+        is_call = bool(type_.isCall())
+        owner = functions.getFunctionContaining(source)
+        say("INITIALIZER_INBOUND source=%s type=%s direct_call=%s owner=%s" %
+            (source, type_, is_call, owner.getEntryPoint() if owner is not None else "UNKNOWN"))
+        if not is_call:
+            continue
+        if owner is None:
+            complete = False
+            continue
+        key = int(source.getOffset())
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(calls) >= MAX_INITIALIZER_CALLSITES:
+            say("INITIALIZER_CALLSITE_TRUNCATED cap=%d" % MAX_INITIALIZER_CALLSITES)
+            complete = False
+            continue
+        calls.append((owner, source))
+    say("INITIALIZER_XREF_SUMMARY refs_inspected=%d explicit_calls=%d complete=%s "
+        "no_callsite_not_proof_of_no_runtime_indirect_call=TRUE" %
+        (count, len(calls), complete))
+    return calls, complete
+
+
+def dump_initializer_callers(program, decompiler, say):
+    """Show actual call-site p-code arguments for bounded direct setter callers."""
+    from ghidra.util.task import TaskMonitor
+    from ghidra.program.model.pcode import PcodeOp
+    selected, complete = select_initializer_callers(program, say)
+    seen = set()
+    for owner, site in selected:
+        entry = int(owner.getEntryPoint().getOffset())
+        if entry not in seen:
+            if len(seen) >= MAX_INITIALIZER_CALLERS:
+                say("INITIALIZER_CALLER_FUNCTION_TRUNCATED cap=%d" % MAX_INITIALIZER_CALLERS)
+                complete = False
+                continue
+            seen.add(entry)
+        result = decompiler.decompileFunction(owner, DECOMP_TIMEOUT_SECONDS, TaskMonitor.DUMMY)
+        if result is None or not result.decompileCompleted() or result.getHighFunction() is None:
+            say("INITIALIZER_CALLER_DECOMP_FAIL function=%s" % owner.getEntryPoint())
+            complete = False
+            continue
+        found = False
+        count = 0
+        for op in result.getHighFunction().getPcodeOps():
+            count += 1
+            if count > MAX_CALLER_PCODE_OPS:
+                say("INITIALIZER_CALLER_PCODE_TRUNCATED function=%s cap=%d" %
+                    (owner.getEntryPoint(), MAX_CALLER_PCODE_OPS))
+                complete = False
+                break
+            if (op.getSeqnum().getTarget() != site or
+                    op.getOpcode() not in (PcodeOp.CALL, PcodeOp.CALLIND)):
+                continue
+            found = True
+            say("INITIALIZER_DIRECT_CALL_PCODE function=%s site=%s opcode=%s "
+                "inputs=%d args_not_runtime_object_identity=TRUE" %
+                (owner.getEntryPoint(), site, op.getMnemonic(), op.getNumInputs()))
+            for i in range(min(int(op.getNumInputs()), 8)):
+                say("  INITIALIZER_CALL_INPUT index=%d evidence=%s" %
+                    (i, fmt_node(op.getInput(i), depth=3)))
+        if not found:
+            say("INITIALIZER_CALLSITE_PCODE_UNAVAILABLE function=%s site=%s" %
+                (owner.getEntryPoint(), site))
+            complete = False
+    return complete
+
+
 def dump_high_pcode(decompiler, fn, say):
     from ghidra.util.task import TaskMonitor
     from ghidra.program.model.pcode import PcodeOp
@@ -270,7 +367,7 @@ def main():
         stream = report.open("w", encoding="utf-8")
         say("IDENTITY=nvlddmkm.sys MD5=%s BASE=0x%x" % (md5, image_base))
         say("MODE=PASSIVE READ_ONLY EXISTING_GHIDRA_ANALYSIS NO_DATABASE_WRITES NO_DEVICE_ACTION")
-        say("METHOD=Exact prior registration and five source-grounded field sites, bounded p-code operations and 12-byte function-record candidate")
+        say("METHOD=Existing exact initializer sites and 12-byte function record plus bounded direct inbound setter CALL p-code args")
         say("LIMIT=Not a complete indirect call graph; no asserted same-instance target or signed firmware acceptance")
         complete = inspect_function_record(program, say)
         for site in REGISTRATION_SITES + FOCUSED_FIELD_SITES:
@@ -293,6 +390,8 @@ def main():
                     (fn.getEntryPoint(), fn.getName()))
                 if not dump_high_pcode(decompiler, fn, say):
                     complete = False
+            if not dump_initializer_callers(program, decompiler, say):
+                complete = False
         status = "COMPLETE" if complete else "PARTIAL"
         say("STOCK_WINDOWS_BOOTER_ORIGIN_PROVEN=FALSE")
         say("ACTUAL_NESTED_LOADER_INVOCATION_PROVEN=FALSE")
