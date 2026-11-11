@@ -174,7 +174,7 @@ def validate_graph(graph):
         if node['id'] in lookup:
             raise ValueError('duplicate graph node id')
         lookup[node['id']] = node
-    sites = set()
+    sites = {}
     for edge in edges:
         if not isinstance(edge, dict) or edge.get('kind') != 'INDIRECT_UNKNOWN':
             continue
@@ -189,14 +189,20 @@ def validate_graph(graph):
         address = int(raw, 16)
         if not DRIVER_BASE <= address < DRIVER_BASE + (1 << 32):
             raise ValueError('graph site outside original driver image range')
-        if source.get('entry') is None or int(source['entry'], 16) > address:
-            raise ValueError('bad source entry for graph site')
-        sites.add(address)
+        owner_entry = source.get('entry')
+        if not isinstance(owner_entry, str) or not re.fullmatch(r'0x[0-9a-fA-F]{9,16}', owner_entry):
+            raise ValueError('bad original function-owner entry')
+        owner = int(owner_entry, 16)
+        if owner > address or not DRIVER_BASE <= owner < DRIVER_BASE + (1 << 32):
+            raise ValueError('bad original function-owner range')
+        if address in sites and sites[address] != owner:
+            raise ValueError('graph assigns one indirect call to different owners')
+        sites[address] = owner
         if len(sites) > MAX_GRAPH_CALL_SITES:
             raise ValueError('too many graph unresolved call sites')
     if not sites:
         raise ValueError('graph has no original unresolved call sites')
-    return sorted(sites)
+    return sites
 
 
 def graph_function_candidates(program, graph_path, say):
@@ -214,7 +220,7 @@ def graph_function_candidates(program, graph_path, say):
     listing, manager = program.getListing(), program.getFunctionManager()
     found = {}
     invalid = 0
-    for site in sites:
+    for site, original_owner in sorted(sites.items()):
         addr = _address(program, site)
         instruction = listing.getInstructionAt(addr)
         fn = manager.getFunctionContaining(addr)
@@ -224,6 +230,11 @@ def graph_function_candidates(program, graph_path, say):
             say('GRAPH_SITE_UNAVAILABLE va=0x%x original_instruction_missing_or_not_transfer=TRUE' % site)
             continue
         entry = int(fn.getEntryPoint().getOffset())
+        if entry != original_owner:
+            invalid += 1
+            say('GRAPH_SITE_OWNER_MISMATCH va=0x%x graph_owner=0x%x current_owner=0x%x' %
+                (site, original_owner, entry))
+            continue
         if entry not in found and len(found) >= MAX_GRAPH_FUNCTIONS:
             raise ValueError('graph call-site owner count exceeds limit')
         found.setdefault(entry, []).append((site, str(instruction)))
