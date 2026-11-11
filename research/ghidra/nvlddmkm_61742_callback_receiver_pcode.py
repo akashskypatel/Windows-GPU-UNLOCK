@@ -24,6 +24,12 @@ MAX_INITIALIZER_INBOUND = 48
 MAX_INITIALIZER_CALLERS = 4
 MAX_INITIALIZER_CALLSITES = 10
 MAX_CALLER_PCODE_OPS = 18000
+CONSTRUCTOR = 0x1417e99b0  # Exactly one source-grounded caller of initializer.
+MAX_CONSTRUCTOR_INBOUND = 48
+MAX_CONSTRUCTOR_CALLSITES = 10
+MAX_CONSTRUCTOR_CALLERS = 4
+MAX_CONSTRUCTOR_FOLLOWING = 16
+MAX_CONSTRUCTOR_NEARBY_PCODE = 48
 LOADER = 0x140bf3880                  # Original flcnLoadAndExecuteHsBinaryViaDma_GA10X.
 REGISTRATION_SITES = (0x1417e8e3e, 0x1417e8e45)  # Existing nested +0x170 callback stores.
 FIELD_OFFSETS = frozenset((0x108, 0x170, 0x250, 0x3e8))
@@ -186,24 +192,26 @@ def candidate_functions(program, say):
     return [found[k] for k in sorted(found)], complete
 
 
-def select_initializer_callers(program, say):
-    """Select only original explicit CALL xrefs to the proven callback setter.
+def select_initializer_callers(program, say, *, target=INITIALIZER,
+                               label="INITIALIZER",
+                               max_inbound=MAX_INITIALIZER_INBOUND,
+                               max_callsites=MAX_INITIALIZER_CALLSITES):
+    """Select exact existing direct CALL references, never address-taken DATA.
 
-    No DATA ref, thunk jump, or address-taken reference counts as invocation.
-    This is limited inbound provenance, not a full indirect receiver search.
+    The same bounded evidence filter serves the already proven initializer and
+    the newly grounded constructor. It does not discover indirect receivers.
     """
     functions = program.getFunctionManager()
-    initializer = functions.getFunctionAt(va(program, INITIALIZER))
-    if initializer is None:
-        say("INITIALIZER_UNAVAILABLE entry=0x%x" % INITIALIZER)
+    callee = functions.getFunctionAt(va(program, target))
+    if callee is None:
+        say("%s_UNAVAILABLE entry=0x%x" % (label, target))
         return [], False
-    calls = []
-    seen = set()
+    calls, seen = [], set()
     complete = True
     count = 0
-    for ref in program.getReferenceManager().getReferencesTo(initializer.getEntryPoint()):
-        if count >= MAX_INITIALIZER_INBOUND:
-            say("INITIALIZER_REFS_TRUNCATED cap=%d" % MAX_INITIALIZER_INBOUND)
+    for ref in program.getReferenceManager().getReferencesTo(callee.getEntryPoint()):
+        if count >= max_inbound:
+            say("%s_REFS_TRUNCATED cap=%d" % (label, max_inbound))
             complete = False
             break
         count += 1
@@ -211,8 +219,9 @@ def select_initializer_callers(program, say):
         type_ = ref.getReferenceType()
         is_call = bool(type_.isCall())
         owner = functions.getFunctionContaining(source)
-        say("INITIALIZER_INBOUND source=%s type=%s direct_call=%s owner=%s" %
-            (source, type_, is_call, owner.getEntryPoint() if owner is not None else "UNKNOWN"))
+        say("%s_INBOUND source=%s type=%s direct_call=%s owner=%s" %
+            (label, source, type_, is_call,
+             owner.getEntryPoint() if owner is not None else "UNKNOWN"))
         if not is_call:
             continue
         if owner is None:
@@ -222,14 +231,14 @@ def select_initializer_callers(program, say):
         if key in seen:
             continue
         seen.add(key)
-        if len(calls) >= MAX_INITIALIZER_CALLSITES:
-            say("INITIALIZER_CALLSITE_TRUNCATED cap=%d" % MAX_INITIALIZER_CALLSITES)
+        if len(calls) >= max_callsites:
+            say("%s_CALLSITE_TRUNCATED cap=%d" % (label, max_callsites))
             complete = False
             continue
         calls.append((owner, source))
-    say("INITIALIZER_XREF_SUMMARY refs_inspected=%d explicit_calls=%d complete=%s "
+    say("%s_XREF_SUMMARY refs_inspected=%d explicit_calls=%d complete=%s "
         "no_callsite_not_proof_of_no_runtime_indirect_call=TRUE" %
-        (count, len(calls), complete))
+        (label, count, len(calls), complete))
     return calls, complete
 
 
@@ -274,6 +283,99 @@ def dump_initializer_callers(program, decompiler, say):
         if not found:
             say("INITIALIZER_CALLSITE_PCODE_UNAVAILABLE function=%s site=%s" %
                 (owner.getEntryPoint(), site))
+            complete = False
+    return complete
+
+
+def bounded_constructor_following(program, owner, site, say):
+    """Read existing linear instructions only; not a control-flow guarantee."""
+    listing = program.getListing()
+    initial = listing.getInstructionContaining(site)
+    if (initial is None or int(initial.getAddress().getOffset()) !=
+            int(site.getOffset())):
+        say("CONSTRUCTOR_CALLSITE_UNAVAILABLE site=%s" % site)
+        return None
+    addresses = {int(site.getOffset())}
+    cursor = initial
+    for distance in range(1, MAX_CONSTRUCTOR_FOLLOWING + 1):
+        next_insn = listing.getInstructionAfter(cursor.getAddress())
+        if next_insn is None or not owner.getBody().contains(next_insn.getAddress()):
+            break
+        say("CONSTRUCTOR_LINEAR_AFTER site=%s distance=%d address=%s asm=%s "
+            "not_control_flow_proof=TRUE" %
+            (site, distance, next_insn.getAddress(), next_insn))
+        addresses.add(int(next_insn.getAddress().getOffset()))
+        cursor = next_insn
+    return addresses
+
+
+def dump_constructor_owner_callers(program, decompiler, say):
+    """Inspect who receives a constructor result; do not assume shared identity."""
+    from ghidra.util.task import TaskMonitor
+    from ghidra.program.model.pcode import PcodeOp
+    selected, complete = select_initializer_callers(
+        program, say, target=CONSTRUCTOR, label="CONSTRUCTOR",
+        max_inbound=MAX_CONSTRUCTOR_INBOUND,
+        max_callsites=MAX_CONSTRUCTOR_CALLSITES)
+    examined = set()
+    for owner, site in selected:
+        entry = int(owner.getEntryPoint().getOffset())
+        if entry not in examined:
+            if len(examined) >= MAX_CONSTRUCTOR_CALLERS:
+                say("CONSTRUCTOR_CALLER_FUNCTION_TRUNCATED cap=%d" %
+                    MAX_CONSTRUCTOR_CALLERS)
+                complete = False
+                continue
+            examined.add(entry)
+        addresses = bounded_constructor_following(program, owner, site, say)
+        if addresses is None:
+            complete = False
+            continue
+        result = decompiler.decompileFunction(owner, DECOMP_TIMEOUT_SECONDS, TaskMonitor.DUMMY)
+        if result is None or not result.decompileCompleted() or result.getHighFunction() is None:
+            say("CONSTRUCTOR_CALLER_DECOMP_FAIL function=%s site=%s" %
+                (owner.getEntryPoint(), site))
+            complete = False
+            continue
+        calls, nearby, inspected = 0, 0, 0
+        for op in result.getHighFunction().getPcodeOps():
+            inspected += 1
+            if inspected > MAX_CALLER_PCODE_OPS:
+                say("CONSTRUCTOR_CALLER_PCODE_TRUNCATED function=%s cap=%d" %
+                    (owner.getEntryPoint(), MAX_CALLER_PCODE_OPS))
+                complete = False
+                break
+            op_addr = int(op.getSeqnum().getTarget().getOffset())
+            if op_addr not in addresses:
+                continue
+            if op_addr == int(site.getOffset()) and op.getOpcode() in (PcodeOp.CALL, PcodeOp.CALLIND):
+                calls += 1
+                say("CONSTRUCTOR_DIRECT_CALL_PCODE function=%s site=%s op=%s "
+                    "inputs=%d output=%s returned_object_identity_unproven=TRUE" %
+                    (owner.getEntryPoint(), site, op.getMnemonic(),
+                     op.getNumInputs(), fmt_node(op.getOutput(), 3)))
+                for index in range(min(int(op.getNumInputs()), 8)):
+                    say("  CONSTRUCTOR_CALL_INPUT index=%d evidence=%s" %
+                        (index, fmt_node(op.getInput(index), 3)))
+            elif op_addr != int(site.getOffset()) and op.getOpcode() in (
+                    PcodeOp.STORE, PcodeOp.RETURN, PcodeOp.CALL, PcodeOp.CALLIND):
+                nearby += 1
+                if nearby <= MAX_CONSTRUCTOR_NEARBY_PCODE:
+                    say("CONSTRUCTOR_LINEAR_PCODE address=%s opcode=%s output=%s "
+                        "inputs=%s not_same_instance_proof=TRUE" %
+                        (op.getSeqnum().getTarget(), op.getMnemonic(),
+                         fmt_node(op.getOutput(), 2),
+                         ";".join(fmt_node(op.getInput(k), 2) for k in
+                                  range(min(int(op.getNumInputs()), 5)))))
+                else:
+                    complete = False
+        say("CONSTRUCTOR_CALLER_SUMMARY entry=%s site=%s calls=%d "
+            "linear_ops=%d inspected=%d complete=%s" %
+            (owner.getEntryPoint(), site, calls,
+             min(nearby, MAX_CONSTRUCTOR_NEARBY_PCODE), inspected,
+             calls > 0 and nearby <= MAX_CONSTRUCTOR_NEARBY_PCODE and
+             inspected <= MAX_CALLER_PCODE_OPS))
+        if calls == 0:
             complete = False
     return complete
 
@@ -367,20 +469,32 @@ def main():
         stream = report.open("w", encoding="utf-8")
         say("IDENTITY=nvlddmkm.sys MD5=%s BASE=0x%x" % (md5, image_base))
         say("MODE=PASSIVE READ_ONLY EXISTING_GHIDRA_ANALYSIS NO_DATABASE_WRITES NO_DEVICE_ACTION")
-        say("METHOD=Existing exact initializer sites and 12-byte function record plus bounded direct inbound setter CALL p-code args")
+        constructor_only = bool(globals().get("TRACE_CONSTRUCTOR_OWNER_ONLY", False))
+        say("METHOD=%s" % (
+            "Only source-grounded FUN_1417e99b0 direct inbound callers and linear post-call evidence"
+            if constructor_only else
+            "Existing exact initializer sites and 12-byte function record plus bounded direct inbound setter CALL p-code args"))
         say("LIMIT=Not a complete indirect call graph; no asserted same-instance target or signed firmware acceptance")
-        complete = inspect_function_record(program, say)
-        for site in REGISTRATION_SITES + FOCUSED_FIELD_SITES:
-            complete = existing_instruction_window(program, site, say) and complete
-        functions, candidates_complete = candidate_functions(program, say)
-        complete = candidates_complete and complete
-        if not functions:
-            complete = False
+        complete = True
+        if not constructor_only:
+            complete = inspect_function_record(program, say)
+        if not constructor_only:
+            for site in REGISTRATION_SITES + FOCUSED_FIELD_SITES:
+                complete = existing_instruction_window(program, site, say) and complete
+            functions, candidates_complete = candidate_functions(program, say)
+            complete = candidates_complete and complete
         else:
-            from ghidra.app.decompiler import DecompInterface
-            decompiler = DecompInterface()
-            if not decompiler.openProgram(program):
-                raise RuntimeError("Ghidra decompiler openProgram failed")
+            functions = []
+        from ghidra.app.decompiler import DecompInterface
+        decompiler = DecompInterface()
+        if not decompiler.openProgram(program):
+            raise RuntimeError("Ghidra decompiler openProgram failed")
+        if constructor_only:
+            if not dump_constructor_owner_callers(program, decompiler, say):
+                complete = False
+        else:
+            if not functions:
+                complete = False
             for fn in functions[:MAX_FUNCTIONS]:
                 if time.monotonic() - started > WALL_SECONDS:
                     say("TIME_LIMIT_REACHED before_function=%s" % fn.getEntryPoint())

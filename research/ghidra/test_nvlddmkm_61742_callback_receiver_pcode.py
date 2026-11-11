@@ -317,6 +317,122 @@ class CallbackDataflowTests(unittest.TestCase):
         self.assertIn("INITIALIZER_CALLSITE_TRUNCATED",
                       "\n".join(messages))
 
+    def test_constructor_caller_only_selects_real_direct_calls(self):
+        class Type:
+            def __init__(self, call):
+                self.call = call
+            def isCall(self):
+                return self.call
+            def __str__(self):
+                return "UNCONDITIONAL_CALL" if self.call else "DATA"
+        class Ref:
+            def __init__(self, address, call):
+                self.address, self.kind = Address(address), Type(call)
+            def getFromAddress(self):
+                return self.address
+            def getReferenceType(self):
+                return self.kind
+        class Refs:
+            def getReferencesTo(self, address):
+                self_address = address.getOffset()
+                self_test = probe.CONSTRUCTOR
+                if self_address != self_test:
+                    return []
+                return [Ref(0x140050000, False), Ref(0x140050008, True),
+                        Ref(0x140050008, True), Ref(0x140050010, True)]
+        owner = Function(0x14004f000)
+        program = Program({0x140050000: owner, 0x140050008: owner,
+                           0x140050010: owner})
+        program.functions.getFunctionAt = lambda address: (
+            Function(probe.CONSTRUCTOR) if address.getOffset() == probe.CONSTRUCTOR
+            else None)
+        program.refs = Refs()
+        records = []
+        calls, complete = probe.select_initializer_callers(
+            program, records.append, target=probe.CONSTRUCTOR, label="CONSTRUCTOR",
+            max_inbound=probe.MAX_CONSTRUCTOR_INBOUND,
+            max_callsites=probe.MAX_CONSTRUCTOR_CALLSITES)
+        self.assertTrue(complete)
+        self.assertEqual([site.getOffset() for _, site in calls],
+                         [0x140050008, 0x140050010])
+        self.assertIn("CONSTRUCTOR_INBOUND", "\n".join(records))
+        self.assertIn("explicit_calls=2", "\n".join(records))
+        self.assertFalse(any("INITIALIZER_INBOUND" in record for record in records))
+
+    def test_constructor_call_limit_marks_incomplete(self):
+        class RefType:
+            def isCall(self):
+                return True
+            def __str__(self):
+                return "CALL"
+        class Ref:
+            def __init__(self, addr):
+                self.addr = Address(addr)
+            def getFromAddress(self):
+                return self.addr
+            def getReferenceType(self):
+                return RefType()
+        class Refs:
+            def getReferencesTo(self, addr):
+                return [Ref(0x140500000 + i * 8) for i in range(8)]
+        source = {0x140500000 + i*8: Function(0x140600000)
+                  for i in range(8)}
+        program = Program(source)
+        program.functions.getFunctionAt = lambda address: Function(probe.CONSTRUCTOR)
+        program.refs = Refs()
+        output = []
+        calls, complete = probe.select_initializer_callers(
+            program, output.append, target=probe.CONSTRUCTOR, label="CONSTRUCTOR",
+            max_inbound=32, max_callsites=3)
+        self.assertFalse(complete)
+        self.assertEqual(len(calls), 3)
+        self.assertIn("CONSTRUCTOR_CALLSITE_TRUNCATED", "\n".join(output))
+
+    def test_constructor_linear_window_never_crosses_function_boundary(self):
+        class Insn:
+            def __init__(self, offset):
+                self.address = Address(offset)
+            def getAddress(self):
+                return self.address
+            def __str__(self):
+                return "MOV RAX,RBX"
+        class Listing:
+            def __init__(self, addresses):
+                self.entries = {addr: Insn(addr) for addr in addresses}
+                self.all = addresses
+            def getInstructionContaining(self, addr):
+                return self.entries.get(addr.getOffset())
+            def getInstructionAfter(self, addr):
+                at = self.all.index(addr.getOffset())
+                return (self.entries[self.all[at+1]] if at+1 < len(self.all)
+                        else None)
+        class Body:
+            def contains(self, addr):
+                return addr.getOffset() < 0x140070018
+        class Caller(Function):
+            def getBody(self):
+                return Body()
+        class ProgramWithListing:
+            def __init__(self, addresses):
+                self.listing = Listing(addresses)
+            def getListing(self):
+                return self.listing
+        owner = Caller(0x140070000)
+        program = ProgramWithListing([0x140070000, 0x140070008,
+                                      0x140070010, 0x140070018])
+        output = []
+        actual = probe.bounded_constructor_following(
+            program, owner, Address(0x140070008), output.append)
+        self.assertEqual(actual, {0x140070008, 0x140070010})
+        self.assertTrue(any("not_control_flow_proof=TRUE" in line
+                            for line in output))
+        self.assertFalse(any("address=0x140070018" in line for line in output))
+        output.clear()
+        missing = probe.bounded_constructor_following(
+            program, owner, Address(0x140070009), output.append)
+        self.assertIsNone(missing)
+        self.assertIn("CONSTRUCTOR_CALLSITE_UNAVAILABLE", output[0])
+
     def test_original_driver_md5_rejects_lookalikes_without_output_file(self):
         class WrongDriver:
             def getExecutableMD5(self):
