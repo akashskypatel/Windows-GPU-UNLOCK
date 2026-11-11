@@ -128,14 +128,14 @@ class CallbackDataflowTests(unittest.TestCase):
         owners[0x140001000] = Function(0x140a00000)
         observed = []
         program = Program(owners, {
-            probe.SLOT: [0x140001000],
+            probe.FUNCTION_RECORD: [0x140001000],
             probe.LOADER: [0x140001000],
         })
         functions, complete = probe.candidate_functions(program, observed.append)
         self.assertTrue(complete)
         self.assertEqual([int(f.getEntryPoint().getOffset()) for f in functions],
                          sorted([probe.LOADER, 0x1417e8e00, 0x140a00000]))
-        self.assertTrue(any("LOADER_POINTER_SLOT" in line for line in observed))
+        self.assertTrue(any("FUNCTION_RECORD_CANDIDATE" in line for line in observed))
         self.assertTrue(any("LOADER_ENTRY" in line for line in observed))
         self.assertFalse(any("runtime_proven" in line for line in observed))
 
@@ -145,7 +145,7 @@ class CallbackDataflowTests(unittest.TestCase):
         for i, point in enumerate(points):
             owners[point] = Function(0x140300000 + i * 16)
         observed = []
-        program = Program(owners, {probe.SLOT: points})
+        program = Program(owners, {probe.FUNCTION_RECORD: points})
         functions, complete = probe.candidate_functions(program, observed.append)
         self.assertFalse(complete)
         self.assertEqual(len(functions), probe.MAX_FUNCTIONS)
@@ -166,6 +166,87 @@ class CallbackDataflowTests(unittest.TestCase):
         self.assertIn("[const=0x170]", probe.fmt_node(root, depth=3))
         self.assertNotIn("[const=0x170]", probe.fmt_node(root, depth=1))
         self.assertEqual(probe.fmt_node(None), "NULL")
+
+    def test_function_metadata_is_three_rvas_not_a_64_bit_pointer(self):
+        record = probe.decode_runtime_function_record(
+            (0x00bf3880, 0x00bf3e60, 0x00c00000),
+            probe.EXPECTED_BASE, probe.LOADER)
+        self.assertTrue(record["candidate"])
+        self.assertEqual(record["begin"], 0x140bf3880)
+        self.assertEqual(record["end"], 0x140bf3e60)
+        self.assertEqual(record["unwind"], 0x140c00000)
+        for words in ((0x00bf3880, 0x00bf3880, 0x00c00000),
+                      (0x00bf3880, 0x00bf3e60, 0),
+                      (0x00bf3881, 0x00bf3e60, 0x00c00000)):
+            with self.subTest(words=words):
+                self.assertFalse(probe.decode_runtime_function_record(
+                    words, probe.EXPECTED_BASE, probe.LOADER)["candidate"])
+        for invalid in ((0x00bf3880, 0x00bf3e60), (-1, 7, 1),
+                        (0x100000000, 7, 1)):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    probe.decode_runtime_function_record(
+                        invalid, probe.EXPECTED_BASE, probe.LOADER)
+
+    def test_12_byte_record_is_checked_and_reported_without_pointer_claim(self):
+        class Block:
+            def isInitialized(self):
+                return True
+            def isExecute(self):
+                return True
+            def getName(self):
+                return ".pdata"
+        class Memory:
+            def __init__(self, words):
+                self.words = words
+            def getBlock(self, address):
+                return Block()
+            def getInt(self, address):
+                return self.words[address.getOffset()]
+        class ProgramWithMemory:
+            def __init__(self, words):
+                self.memory = Memory(words)
+            def getMemory(self):
+                return self.memory
+            def getAddressFactory(self):
+                return self
+            def getDefaultAddressSpace(self):
+                return self
+            def getAddress(self, value):
+                return Address(value)
+        words = {probe.FUNCTION_RECORD: 0x00bf3880,
+                 probe.FUNCTION_RECORD + 4: 0x00bf3e60,
+                 probe.FUNCTION_RECORD + 8: 0x00c00000}
+        messages = []
+        self.assertTrue(probe.inspect_function_record(
+            ProgramWithMemory(words), messages.append))
+        self.assertIn("pointer_slot=FALSE", messages[0])
+        self.assertIn("end_exclusive_va=0x140bf3e60", messages[0])
+        self.assertIn("section=.pdata", messages[0])
+        messages.clear()
+        self.assertFalse(probe.inspect_function_record(
+            ProgramWithMemory({probe.FUNCTION_RECORD: 0x00bf3880}),
+            messages.append))
+        self.assertIn("FUNCTION_RECORD_READ_ERROR", messages[0])
+
+    def test_focused_pcode_reports_store_without_claiming_an_invocation(self):
+        class Pcode:
+            def getMnemonic(self):
+                return "STORE"
+            def getOutput(self):
+                return None
+            def getNumInputs(self):
+                return 3
+            def getInput(self, index):
+                return (Node("memspace", 0x1b1),
+                        Node("address", definition=Definition([Node("field", 0x170)])),
+                        Node("callback", definition=Definition([Node("loader")])))[index]
+        line = probe.format_focused_op(Function(0x1417e8550), Pcode(),
+                                       Address(0x1417e8e45))
+        self.assertIn("op=STORE", line)
+        self.assertIn("const=0x170", line)
+        self.assertIn("callback_invoke_not_proven=TRUE", line)
+        self.assertEqual(probe.MAX_FOCUSED_OPS_PER_SITE, 16)
 
     def test_original_driver_md5_rejects_lookalikes_without_output_file(self):
         class WrongDriver:

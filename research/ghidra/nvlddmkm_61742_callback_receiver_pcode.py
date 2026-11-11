@@ -15,7 +15,10 @@ import traceback
 EXPECTED_MD5 = "3fb9afac9d0e394723e830aa14e60512"
 EXPECTED_BASE = 0x140000000
 REPORT_DIR = Path(r"D:\Projects\gpu-unlock\ghidra")
-SLOT = 0x140e19a0c                    # Existing DATA reference to HS loader.
+FUNCTION_RECORD = 0x140e19a0c        # Consecutive 32-bit RVAs; not a 64-bit loader pointer.
+FOCUSED_FIELD_SITES = (0x1417e8b32, 0x1417e8e45, 0x1417e8ef9,
+                       0x1417e983c, 0x1417e985a)
+MAX_FOCUSED_OPS_PER_SITE = 16
 LOADER = 0x140bf3880                  # Original flcnLoadAndExecuteHsBinaryViaDma_GA10X.
 REGISTRATION_SITES = (0x1417e8e3e, 0x1417e8e45)  # Existing nested +0x170 callback stores.
 FIELD_OFFSETS = frozenset((0x108, 0x170, 0x250, 0x3e8))
@@ -30,6 +33,58 @@ WALL_SECONDS = 85
 
 def va(program, number):
     return program.getAddressFactory().getDefaultAddressSpace().getAddress(int(number))
+
+
+def decode_runtime_function_record(words, base, loader):
+    """Interpret possible Windows x64 exception metadata, not callback use."""
+    if len(words) != 3 or any(type(w) is not int or w < 0 or w > 0xffffffff
+                              for w in words):
+        raise ValueError("exactly three unsigned 32-bit relative virtual addresses required")
+    begin, end, unwind = words
+    return {"begin_rva": begin, "end_rva": end, "unwind_rva": unwind,
+            "begin": base + begin, "end": base + end, "unwind": base + unwind,
+            "candidate": begin != 0 and begin < end and unwind != 0 and
+                         base + begin == loader}
+
+
+def inspect_function_record(program, say):
+    """Report all three fields and memory sections; do not label it a pointer."""
+    address = va(program, FUNCTION_RECORD)
+    memory = program.getMemory()
+    block = memory.getBlock(address)
+    if block is None or not block.isInitialized():
+        say("FUNCTION_RECORD_UNAVAILABLE address=%s" % address)
+        return False
+    try:
+        fields = tuple(int(memory.getInt(va(program, FUNCTION_RECORD + offset))) &
+                       0xffffffff for offset in (0, 4, 8))
+        record = decode_runtime_function_record(fields, EXPECTED_BASE, LOADER)
+        start_block = memory.getBlock(va(program, record["begin"]))
+        unwind_block = memory.getBlock(va(program, record["unwind"]))
+        say("FUNCTION_RECORD_CANDIDATE address=%s section=%s begin_rva=0x%x "
+            "end_rva=0x%x unwind_rva=0x%x begin_va=0x%x end_exclusive_va=0x%x "
+            "unwind_va=0x%x beginning_matches_loader=%s start_executable=%s "
+            "unwind_mapped=%s pointer_slot=FALSE type_not_proven=TRUE" %
+            (address, block.getName(), record["begin_rva"], record["end_rva"],
+             record["unwind_rva"], record["begin"], record["end"],
+             record["unwind"], record["candidate"],
+             bool(start_block is not None and start_block.isExecute()),
+             unwind_block is not None))
+        return True
+    except Exception as exc:
+        say("FUNCTION_RECORD_READ_ERROR address=%s error=%s" %
+            (address, type(exc).__name__))
+        return False
+
+
+def format_focused_op(fn, op, address):
+    """Describe an exact-site p-code read/write without claiming a receiver."""
+    inputs = ";".join(fmt_node(op.getInput(i), 2) for i in
+                      range(min(int(op.getNumInputs()), 5)))
+    return ("FOCUSED_PCODE function=%s address=%s op=%s output=%s inputs=%s "
+            "callback_invoke_not_proven=TRUE" %
+            (fn.getEntryPoint(), address, op.getMnemonic(),
+             fmt_node(op.getOutput(), 1), inputs))
 
 
 def fmt_node(node, depth=2):
@@ -98,9 +153,10 @@ def candidate_functions(program, say):
             return None, False
         found[int(fn.getEntryPoint().getOffset())] = fn
 
-    # The pointer slot and the function ENTRY have different kinds of refs.
-    # No DATA reference is treated as a real call.
-    for target, name in ((SLOT, "LOADER_POINTER_SLOT"), (LOADER, "LOADER_ENTRY")):
+    # Possible exception metadata is not a callback pointer slot.
+    # No metadata reference or address-taken reference is an actual call.
+    for target, name in ((FUNCTION_RECORD, "FUNCTION_RECORD_CANDIDATE"),
+                         (LOADER, "LOADER_ENTRY")):
         count = 0
         for reference in refs.getReferencesTo(va(program, target)):
             if count >= MAX_INBOUND:
@@ -136,6 +192,7 @@ def dump_high_pcode(decompiler, fn, say):
         return False
     high = result.getHighFunction()
     calls, fields, total = 0, 0, 0
+    focus_counts = {site: 0 for site in FOCUSED_FIELD_SITES}
     excess_fields = False
     truncated = False
     for op in high.getPcodeOps():
@@ -145,6 +202,13 @@ def dump_high_pcode(decompiler, fn, say):
             truncated = True
             break
         location = op.getSeqnum().getTarget()
+        site = int(location.getOffset())
+        if int(fn.getEntryPoint().getOffset()) == 0x1417e8550 and site in focus_counts:
+            focus_counts[site] += 1
+            if focus_counts[site] <= MAX_FOCUSED_OPS_PER_SITE:
+                say(format_focused_op(fn, op, location))
+            else:
+                truncated = True
         if op.getOpcode() == PcodeOp.CALLIND:
             if calls >= MAX_CALLIND_PER_FUNCTION:
                 truncated = True
@@ -168,6 +232,12 @@ def dump_high_pcode(decompiler, fn, say):
                          int(node.getOffset()), ";".join(fmt_node(op.getInput(k), 1)
                          for k in range(min(int(op.getNumInputs()), 3)))))
                     break
+    if int(fn.getEntryPoint().getOffset()) == 0x1417e8550:
+        for site, count in sorted(focus_counts.items()):
+            say("FOCUSED_SITE_SUMMARY address=0x%x pcode_ops=%d capped=%s" %
+                (site, count, count > MAX_FOCUSED_OPS_PER_SITE))
+            if count == 0:
+                truncated = True
     truncated = truncated or excess_fields
     say("PCODE_SUMMARY function=%s inspected=%d callind_recorded=%d offset_ops_recorded=%d truncated=%s" %
         (fn.getEntryPoint(), total, calls, min(fields, MAX_FIELD_OPS_PER_FUNCTION), str(truncated)))
@@ -200,22 +270,10 @@ def main():
         stream = report.open("w", encoding="utf-8")
         say("IDENTITY=nvlddmkm.sys MD5=%s BASE=0x%x" % (md5, image_base))
         say("MODE=PASSIVE READ_ONLY EXISTING_GHIDRA_ANALYSIS NO_DATABASE_WRITES NO_DEVICE_ACTION")
-        say("METHOD=Exact callback-site windows + existing references + bounded high-pcode CALLIND and constant-offset definitions")
+        say("METHOD=Exact prior registration and five source-grounded field sites, bounded p-code operations and 12-byte function-record candidate")
         say("LIMIT=Not a complete indirect call graph; no asserted same-instance target or signed firmware acceptance")
-        complete = True
-        slot_address = va(program, SLOT)
-        if program.getMemory().getBlock(slot_address) is None:
-            say("DATA_SLOT_UNAVAILABLE address=%s" % slot_address)
-            complete = False
-        else:
-            try:
-                raw = int(program.getMemory().getLong(slot_address)) & ((1 << 64) - 1)
-                say("DATA_SLOT address=%s qword=0x%x expected_loader=0x%x matches=%s" %
-                    (slot_address, raw, LOADER, raw == LOADER))
-            except Exception as exc:
-                say("DATA_SLOT_READ_FAILED error=%s" % type(exc).__name__)
-                complete = False
-        for site in REGISTRATION_SITES:
+        complete = inspect_function_record(program, say)
+        for site in REGISTRATION_SITES + FOCUSED_FIELD_SITES:
             complete = existing_instruction_window(program, site, say) and complete
         functions, candidates_complete = candidate_functions(program, say)
         complete = candidates_complete and complete
