@@ -8,6 +8,8 @@ It NEVER establishes runtime receiver identity, signature acceptance or GPU use.
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
+import json
 from pathlib import Path
 import re
 import time
@@ -16,8 +18,16 @@ import traceback
 DRIVER_MD5 = '3fb9afac9d0e394723e830aa14e60512'
 DRIVER_BASE = 0x140000000
 REPORT_DIR = Path(r'D:\Projects\gpu-unlock\ghidra')
+GRAPH_FILE = REPORT_DIR / 'nvlddmkm-61742-booter-discovery-20261110-134621-824423-reference-graph.json'
+GRAPH_SCHEMA = 'ghidra-static-function-references-v3'
+GRAPH_ROOTS = frozenset(('0x140bf3880', '0x14179e530', '0x140aece90'))
+MAX_GRAPH_BYTES = 8 * 1024 * 1024
+MAX_GRAPH_NODES = 2048
+MAX_GRAPH_EDGES = 16384
+MAX_GRAPH_CALL_SITES = 256
+MAX_GRAPH_FUNCTIONS = 128
 MAX_SCAN_BYTES = 64 * 1024 * 1024
-MAX_SECONDS = 85
+MAX_SECONDS = 120
 CHUNK_SIZE = 256 * 1024
 MAX_FUNCTIONS = 48
 MAX_SEEDS = 240
@@ -126,11 +136,102 @@ def _memory_bytes(memory, addr, size):
     buf = JArray(JByte)(size)
     if int(memory.getBytes(addr, buf)) != size:
         raise ValueError('short memory read')
-    return bytes(int(item) & 0xff for item in buf)
+    # Bulk buffer conversion is essential: per-byte JPype access exhausted the
+    # entire 85-second budget after only 1 MiB in the owner's first report.
+    try:
+        return memoryview(buf).tobytes()
+    except (TypeError, BufferError):
+        # Correctness fallback for an incompatible bridge; not fast-path proof.
+        return bytes(int(item) & 0xff for item in buf)
 
 
 def _address(program, number):
     return program.getAddressFactory().getDefaultAddressSpace().getAddress(int(number))
+
+
+def validate_graph(graph):
+    """Extract bounded unresolved call sites from the completed original graph.
+
+    A graph is static reference evidence, NOT proof of a real loader callback.
+    Reject partial, foreign-schema, or inconsistent snapshots rather than scan
+    unrelated driver code to compensate.
+    """
+    if not isinstance(graph, dict) or graph.get('schema') != GRAPH_SCHEMA:
+        raise ValueError('unsupported existing-reference graph schema')
+    if graph.get('status') != 'COMPLETE' or graph.get('omissions') != []:
+        raise ValueError('graph contains unresolved scan omissions')
+    roots = graph.get('roots')
+    if not isinstance(roots, list) or not GRAPH_ROOTS.issubset(set(roots)):
+        raise ValueError('graph does not contain the three previously reviewed source roots')
+    nodes, edges = graph.get('nodes'), graph.get('edges')
+    if (not isinstance(nodes, list) or not isinstance(edges, list) or
+            len(nodes) > MAX_GRAPH_NODES or len(edges) > MAX_GRAPH_EDGES):
+        raise ValueError('graph nodes/edges absent or exceed bounded source limits')
+    lookup = {}
+    for node in nodes:
+        if not isinstance(node, dict) or not isinstance(node.get('id'), str):
+            raise ValueError('malformed graph node')
+        if node['id'] in lookup:
+            raise ValueError('duplicate graph node id')
+        lookup[node['id']] = node
+    sites = set()
+    for edge in edges:
+        if not isinstance(edge, dict) or edge.get('kind') != 'INDIRECT_UNKNOWN':
+            continue
+        source = lookup.get(edge.get('source'))
+        target = lookup.get(edge.get('target'))
+        if (source is None or target is None or source.get('kind') != 'FUNCTION' or
+                target.get('kind') != 'INDIRECT'):
+            raise ValueError('unresolved graph edge has invalid owner or target')
+        raw = edge.get('site')
+        if not isinstance(raw, str) or not re.fullmatch(r'0x[0-9a-fA-F]{9,16}', raw):
+            raise ValueError('invalid indirect-call virtual address')
+        address = int(raw, 16)
+        if not DRIVER_BASE <= address < DRIVER_BASE + (1 << 32):
+            raise ValueError('graph site outside original driver image range')
+        if source.get('entry') is None or int(source['entry'], 16) > address:
+            raise ValueError('bad source entry for graph site')
+        sites.add(address)
+        if len(sites) > MAX_GRAPH_CALL_SITES:
+            raise ValueError('too many graph unresolved call sites')
+    if not sites:
+        raise ValueError('graph has no original unresolved call sites')
+    return sorted(sites)
+
+
+def graph_function_candidates(program, graph_path, say):
+    """Validate a completed source graph against existing Ghidra call sites."""
+    path = Path(graph_path)
+    if not path.is_file():
+        raise FileNotFoundError('previous source graph missing: %s' % path)
+    if path.stat().st_size > MAX_GRAPH_BYTES:
+        raise ValueError('source graph file too large')
+    data = path.read_bytes()
+    graph = json.loads(data.decode('utf-8'))
+    sites = validate_graph(graph)
+    say('GRAPH_INPUT path=%s bytes=%d sha256=%s schema=%s' %
+        (path, len(data), hashlib.sha256(data).hexdigest(), GRAPH_SCHEMA))
+    listing, manager = program.getListing(), program.getFunctionManager()
+    found = {}
+    invalid = 0
+    for site in sites:
+        addr = _address(program, site)
+        instruction = listing.getInstructionAt(addr)
+        fn = manager.getFunctionContaining(addr)
+        if (instruction is None or fn is None or
+                str(instruction.getMnemonicString()).upper() not in ('CALL', 'JMP')):
+            invalid += 1
+            say('GRAPH_SITE_UNAVAILABLE va=0x%x original_instruction_missing_or_not_transfer=TRUE' % site)
+            continue
+        entry = int(fn.getEntryPoint().getOffset())
+        if entry not in found and len(found) >= MAX_GRAPH_FUNCTIONS:
+            raise ValueError('graph call-site owner count exceeds limit')
+        found.setdefault(entry, []).append((site, str(instruction)))
+    say('GRAPH_SITE_SUMMARY recorded_sites=%d validated_sites=%d unavailable_sites=%d owning_functions=%d' %
+        (len(sites), len(sites)-invalid, invalid, len(found)))
+    if invalid:
+        raise ValueError('source graph references missing or changed original instructions')
+    return found
 
 
 def discover_function_seeds(program, say, deadline):
@@ -194,16 +295,18 @@ def discover_function_seeds(program, say, deadline):
     return found, complete
 
 
-def inspect_function(program, decompiler, entry, seeds, say, deadline):
+def inspect_function(program, decompiler, entry, seeds, say, deadline, graph_mode=False):
     from ghidra.program.model.pcode import PcodeOp
     from ghidra.util.task import TaskMonitor
     fn = program.getFunctionManager().getFunctionAt(_address(program, entry))
     if fn is None:
         say('FUNCTION_MISSING entry=0x%x' % entry)
         return False
-    say('FUNCTION_BEGIN entry=0x%x consumer_seeds=%d' % (entry, len(seeds)))
+    say('FUNCTION_BEGIN entry=0x%x %s=%d' %
+        (entry, 'graph_call_sites' if graph_mode else 'consumer_seeds', len(seeds)))
     for addr, asm in seeds:
-        say('  EXISTING_READ va=0x%x asm=%s' % (addr, asm))
+        say('  EXISTING_GRAPH_CALL va=0x%x asm=%s' % (addr, asm) if graph_mode
+            else '  EXISTING_READ va=0x%x asm=%s' % (addr, asm))
     if time.monotonic() >= deadline:
         say('FUNCTION_TIMEOUT entry=0x%x' % entry)
         return False
@@ -216,6 +319,8 @@ def inspect_function(program, decompiler, entry, seeds, say, deadline):
         return False
     ops = high.getPcodeOps()
     seen_ops = calls = flow_candidates = 0
+    graph_sites = {addr for addr, _ in seeds} if graph_mode else set()
+    pcode_graph_sites = set()
     complete = True
     while ops.hasNext():
         op = ops.next()
@@ -224,6 +329,24 @@ def inspect_function(program, decompiler, entry, seeds, say, deadline):
             say('PCODE_TRUNCATED entry=0x%x limit_or_deadline=TRUE' % entry)
             complete = False
             break
+        try:
+            op_site = int(op.getSeqnum().getTarget().getOffset())
+        except (AttributeError, TypeError):
+            op_site = -1
+        in_graph = graph_mode and op_site in graph_sites
+        if in_graph and op.getOpcode() in (PcodeOp.CALL, PcodeOp.CALLIND):
+            pcode_graph_sites.add(op_site)
+            say('  GRAPH_SITE_PCODE va=0x%x opcode=%s inputs=%d call_target_unresolved=TRUE' %
+                (op_site, op.getMnemonic(), op.getNumInputs()))
+        if in_graph and op.getOpcode() == PcodeOp.CALL:
+            # A direct guarded-dispatch call is NOT an indirect-loader call.
+            # Record only explicit input provenance, not an inferred target.
+            guard_args = _inputs(op)
+            guarded = [(i, *classify_call_input(arg)) for i, arg in enumerate(guard_args)]
+            found = [row for row in guarded if row[1]]
+            if found:
+                say('  GRAPH_GUARDED_ARGUMENT_FLOW va=0x%x inputs=%d traces=%s method_target_unproven=TRUE' %
+                    (op_site, len(guard_args), ','.join('%d:slot170=%s:outer108=%s' % row for row in found)))
         if op.getOpcode() != PcodeOp.CALLIND:
             continue
         calls += 1
@@ -237,8 +360,13 @@ def inspect_function(program, decompiler, entry, seeds, say, deadline):
         if active:
             flow_candidates += 1
             evidence = ','.join('%d:slot170=%s:outer108=%s' % x for x in active)
-            say('  CALL_INPUT_FLOW va=%s inputs=%d traces=%s same_instance_unproven=TRUE' %
-                (op.getSeqnum().getTarget(), len(args), evidence))
+            label = ('GRAPH_CALL_INPUT_FLOW' if in_graph else
+                     'OTHER_FUNCTION_CALL_INPUT_FLOW' if graph_mode else 'CALL_INPUT_FLOW')
+            say('  %s va=%s inputs=%d traces=%s same_instance_unproven=TRUE' %
+                (label, op.getSeqnum().getTarget(), len(args), evidence))
+    if graph_mode:
+        for site in sorted(graph_sites - pcode_graph_sites):
+            say('  GRAPH_SITE_NO_CALL_PCODE va=0x%x decompiler_mapping_unavailable=TRUE' % site)
     say('FUNCTION_END entry=0x%x callind=%d traced=%d pcode=%d complete=%s' %
         (entry, min(calls, MAX_CALLS_PER_FUNCTION), flow_candidates, seen_ops, complete))
     return complete
@@ -270,20 +398,33 @@ def main():
         say('STATUS=RUNNING')
         say('IDENTITY=nvlddmkm.sys MD5=%s BASE=0x%x' % (md5, base))
         say('MODE=READ_ONLY EXISTING_INSTRUCTIONS_AND_HIGH_PCODE NO_GHIDRA_OR_GPU_WRITES')
-        say('METHOD=+0x170 existing-read seeds; CALLIND input LOAD def-use; optional same-chain +0x108')
+        say('METHOD=Original completed 410-node reference graph, its unresolved call sites; CALLIND input LOAD def-use')
         say('LIMIT=CFG guarded dispatch may hide real target as implicit register; missing result is not negative proof')
-        seeds, complete = discover_function_seeds(program, say, start+MAX_SECONDS)
+        use_raw_scan = bool(globals().get('SCAN_EXECUTABLE', False))
+        if use_raw_scan:
+            say('MODE_DETAIL=OPT_IN_RAW_EXISTING_INSTRUCTION_SCAN not_original_graph')
+            seeds, complete = discover_function_seeds(program, say, start+MAX_SECONDS)
+        else:
+            graph_path = globals().get('GRAPH_JSON', GRAPH_FILE)
+            seeds = graph_function_candidates(program, graph_path, say)
+            complete = True
         from ghidra.app.decompiler import DecompInterface
         decompiler = DecompInterface()
         if not decompiler.openProgram(program):
             raise RuntimeError('Ghidra decompiler initialization failed')
+        processed = 0
         for entry, sites in sorted(seeds.items()):
             if time.monotonic() >= start+MAX_SECONDS:
                 complete = False
                 say('TIME_LIMIT before_function=0x%x' % entry)
                 break
-            if not inspect_function(program, decompiler, entry, sites, say, start+MAX_SECONDS):
+            if not inspect_function(program, decompiler, entry, sites, say, start+MAX_SECONDS, graph_mode=not use_raw_scan):
                 complete = False
+            processed += 1
+        say('INSPECTION_SUMMARY candidates=%d processed=%d omitted=%d' %
+            (len(seeds), processed, len(seeds)-processed))
+        if processed != len(seeds):
+            complete = False
         say('PROVEN_SAME_PUBLISHED_RECEIVER=FALSE')
         say('ORIGINAL_WINDOWS_SIGNED_BOOTER_SOURCE_PROVEN=FALSE')
         say('FIRMWARE_ACCEPTANCE_OR_HARDWARE_TEST=FALSE')
