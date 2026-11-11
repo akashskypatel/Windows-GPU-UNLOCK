@@ -1,3 +1,15 @@
+# 2026-11-11 — Clarification: verified original DriverStore files versus Booter-to-loader mapping
+
+**Situation.** Owner correctly identified misleading language in the execution map: original Windows 617.42 firmware file provenance was already resolved. The original unmodified `gsp_ga10x.bin` and `ucodes_ga10x.bin` came from the Windows DriverStore and their file hashes/sizes were independently verified; NVUCODES index boundaries and 205 external records were also validated.
+
+**Background.** The previous phrase "original Windows signed Booter provenance" could be read to require fresh binaries or source authenticity proof despite completed original-file acquisition. NVIDIA Linux 615.78.08 Booter bindata components do not by themselves prove the production Booter contents or selection in stock Windows 617.42.
+
+**Assessment.** Distinguish **CLOSED original file provenance** from **OPEN Windows production Booter record identity and binding**: determine which original archive/embedded producer maps AD102/GA102 IMAGE, HEADER, SIG and patch metadata to an actual Windows secure-loader invocation, its third-argument descriptor, and accepted signed firmware on the target hardware. Do not imply that acquiring unmodified source containers authenticates a particular extracted Booter executable/signature pair. This is not a request to repeat extraction or index parsing.
+
+**Recommendation.** Continue the already bounded `R15/R8` machine trace only if it can establish same-instance loader invocation; classify the bitset/state path as unrelated if warranted. Keep the original file acquisition, index, cross-version Linux comparison and previous source scans closed. The active action snapshot has been corrected in `research/nvidia_unlock_evidence_to_execution_map.md`, and the universal plan has the same disposition. All physical safety gates remain false.
+
+---
+
 # 2026-11-11 — Original 617.42 R15/R8 candidate: complete bitset-owner decompilation, exact machine trace required
 
 **Situation.** Owner original-driver passive Ghidra report `nvlddmkm-61742-booter-discovery-20261111-152141-767061.txt` (SHA-256 `984458a3ecb09c1831a5de08a5e09611d26764eed5dfcf08dbe11ef81980023b`; original `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`) ended `STATUS=COMPLETE`. Three requested C decompilations were not clipped. No Ghidra database or hardware change was made.
