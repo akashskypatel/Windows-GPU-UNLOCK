@@ -29,6 +29,7 @@ MAX_TARGETS = 4
 MAX_INCOMING_REFS = 24
 MAX_DATA_SITES = 8
 MAX_INSTRUCTION_SITES = 4
+MAX_FUNCTION_LISTING_INSTRUCTIONS = 1024
 MAX_CALL_TRACE_FUNCTIONS = 2
 MAX_CALL_TRACE_SITES = 32
 MAX_SLOT_CANDIDATES = 80
@@ -832,6 +833,51 @@ def decompilation_excerpt(code, terms, limit=MAX_DECOMP_CHARS):
     return ''.join(output), counts, clipped
 
 
+
+def inspect_function_listing(program, targets, log):
+    """Record one exact existing function's machine listing without modifying Ghidra.
+
+    This is a bounded static record. Sequential instructions can belong to
+    different control-flow paths. Assembly alone does not prove register
+    provenance, object identity, indirect target or runtime acceptance.
+    """
+    if isinstance(targets, (str, bytes)) or not isinstance(targets, (list, tuple)) or len(targets) > 1:
+        raise ValueError('TRACE_FUNCTION_LISTING requires at most one explicit function entry')
+    complete = True
+    for raw in targets:
+        addr = _address(program, int(str(raw), 0))
+        block = program.getMemory().getBlock(addr)
+        fn = program.getFunctionManager().getFunctionContaining(addr)
+        if block is None or not block.isExecute() or fn is None or fn.getEntryPoint() != addr:
+            log('FUNCTION_LISTING_UNAVAILABLE VA=%s exact executable function entry required' % addr)
+            complete = False
+            continue
+        count = 0
+        covered = 0
+        capped = False
+        log('FUNCTION_LISTING_BEGIN entry=%s name=%s max_instructions=%d' % (
+            addr, fn.getName(), MAX_FUNCTION_LISTING_INSTRUCTIONS))
+        for instruction in program.getListing().getInstructions(fn.getBody(), True):
+            if count >= MAX_FUNCTION_LISTING_INSTRUCTIONS:
+                log('FUNCTION_LISTING_TRUNCATED entry=%s limit=%d' % (
+                    addr, MAX_FUNCTION_LISTING_INSTRUCTIONS))
+                capped = True
+                complete = False
+                break
+            log('  LISTING VA=%s asm=%s' % (instruction.getAddress(), instruction))
+            count += 1
+            covered += int(instruction.getLength())
+        body_size = int(fn.getBody().getNumAddresses())
+        if count == 0 or covered != body_size:
+            log('FUNCTION_LISTING_COVERAGE_PARTIAL entry=%s instruction_bytes=%d body_bytes=%d' % (
+                addr, covered, body_size))
+            complete = False
+        log('FUNCTION_LISTING_END entry=%s instructions=%d instruction_bytes=%d body_bytes=%d capped=%s' % (
+            addr, count, covered, body_size, capped))
+    log('FUNCTION_LISTING_SCOPE=EXISTING_GHIDRA_LISTING_ONLY REGISTER_STACK_PROVENANCE_NOT_INFERRED')
+    return complete
+
+
 def targeted_decompile(program, addresses, log):
     if not addresses:
         log('DECOMPILATION=SKIPPED no explicit TARGET_FUNCTIONS provided')
@@ -1323,6 +1369,10 @@ def main():
             if not graph_reference_walk(program, roots, output, report_path, graph_options):
                 status = 'PARTIAL'
                 output('GRAPH_COMPLETE=FALSE; some bounded static references or decompilations omitted')
+        full_listing = globals().get('TRACE_FUNCTION_LISTING', ())
+        if full_listing and not inspect_function_listing(program, full_listing, output):
+            status = 'PARTIAL'
+            output('FUNCTION_LISTING_COMPLETE=FALSE; original listing omitted instructions or function unavailable')
         if not targeted_decompile(program, targets, output) and status == 'COMPLETE':
             status = 'PARTIAL'
             output('TARGETS_COMPLETE=FALSE; at least one requested function was undefined or could not be decompiled')
