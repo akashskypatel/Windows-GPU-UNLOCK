@@ -306,6 +306,90 @@ def discover_function_seeds(program, say, deadline):
     return found, complete
 
 
+MAX_GUARD_PRECEDING=18
+GUARD_DISPATCH_RE = re.compile(r'^(?:CALL|JMP)\s+(?:qword ptr\s+)?\[\s*0x140e02aa8\s*\]$', re.I)
+RAX_FIELD170_RE = re.compile(r'^MOV\s+RAX\s*,\s*(?:qword ptr\s+)?\[[^\]\n]*\+\s*0x170\b[^\]\n]*\]$', re.I)
+
+
+def _rax_write_kind(operation, rax_register):
+    """Identify writes overlapping RAX in original machine p-code, not high C."""
+    output = operation.getOutput()
+    if output is None:
+        return None
+    address = output.getAddress()
+    register_address = rax_register.getAddress()
+    if address.getAddressSpace() != register_address.getAddressSpace():
+        return None
+    base = int(register_address.getOffset())
+    size = int(rax_register.getMinimumByteSize())
+    beginning = int(address.getOffset())
+    width = int(output.getSize())
+    if width <= 0 or not (beginning < base + size and base < beginning + width):
+        return None
+    return 'FULL_RAX' if beginning == base and width >= size else 'PARTIAL_RAX'
+
+
+def inspect_guard_rax_window(program, function, site, say, window=MAX_GUARD_PRECEDING):
+    """Report bounded RAX target setup before an original CFG call.
+
+    The prior listing sequence is not proof of an executed control-flow path.
+    """
+    if type(window) is not int or not 1 <= window <= MAX_GUARD_PRECEDING:
+        raise ValueError('invalid bounded preceding-instruction count')
+    listing = program.getListing()
+    address = _address(program, site)
+    call = listing.getInstructionAt(address)
+    if call is None or not function.getBody().contains(address):
+        say('GUARD_RAX_UNAVAILABLE va=0x%x reason=missing_call_or_owner' % site)
+        return False
+    asm = str(call)
+    if not GUARD_DISPATCH_RE.match(asm):
+        say('GUARD_RAX_SKIPPED va=0x%x reason=not_exact_CFG_dispatch' % site)
+        return True
+    rax = program.getRegister('RAX')
+    if rax is None or int(rax.getMinimumByteSize()) != 8:
+        say('GUARD_RAX_UNAVAILABLE va=0x%x reason=no_64bit_rax_register' % site)
+        return False
+    earlier = []
+    cursor = call
+    for _ in range(window):
+        before = listing.getInstructionBefore(cursor.getAddress())
+        if before is None or not function.getBody().contains(before.getAddress()):
+            break
+        earlier.append(before)
+        cursor = before
+    say('GUARD_RAX_WINDOW va=0x%x preceding=%d'
+        ' scope=linear_listing_control_flow_unverified' % (site, len(earlier)))
+    writes = 0
+    last = None
+    explicit = 0
+    try:
+        for instruction in reversed(earlier):
+            pos = int(instruction.getAddress().getOffset())
+            text = str(instruction)
+            say('  GUARD_BEFORE va=0x%x asm=%s' % (pos, text))
+            kinds = []
+            for operation in instruction.getPcode():
+                kind = _rax_write_kind(operation, rax)
+                if kind is not None:
+                    kinds.append(kind)
+            if kinds:
+                writes += 1
+                last = pos
+                direct = bool(RAX_FIELD170_RE.match(text))
+                explicit += int(direct)
+                say('  GUARD_RAX_WRITE va=0x%x kinds=%s explicit_0x170_read=%s'
+                    ' same_instance_unproven=TRUE' %
+                    (pos, ','.join(sorted(set(kinds))), direct))
+        say('GUARD_RAX_SUMMARY va=0x%x writers=%d last_linear=%s'
+            ' explicit_0x170_reads=%d no_runtime_or_path_proof=TRUE' %
+            (site, writes, '0x%x' % last if last is not None else 'UNKNOWN', explicit))
+    except Exception as exc:
+        say('GUARD_RAX_PCODE_UNAVAILABLE va=0x%x error_type=%s incomplete=TRUE' %
+            (site, type(exc).__name__))
+        return False
+    return True
+
 def inspect_function(program, decompiler, entry, seeds, say, deadline, graph_mode=False):
     from ghidra.program.model.pcode import PcodeOp
     from ghidra.util.task import TaskMonitor
@@ -318,6 +402,11 @@ def inspect_function(program, decompiler, entry, seeds, say, deadline, graph_mod
     for addr, asm in seeds:
         say('  EXISTING_GRAPH_CALL va=0x%x asm=%s' % (addr, asm) if graph_mode
             else '  EXISTING_READ va=0x%x asm=%s' % (addr, asm))
+    guard_complete = True
+    if graph_mode:
+        for site, _ in seeds:
+            if not inspect_guard_rax_window(program, fn, site, say):
+                guard_complete = False
     if time.monotonic() >= deadline:
         say('FUNCTION_TIMEOUT entry=0x%x' % entry)
         return False
@@ -332,7 +421,7 @@ def inspect_function(program, decompiler, entry, seeds, say, deadline, graph_mod
     seen_ops = calls = flow_candidates = 0
     graph_sites = {addr for addr, _ in seeds} if graph_mode else set()
     pcode_graph_sites = set()
-    complete = True
+    complete = guard_complete
     while ops.hasNext():
         op = ops.next()
         seen_ops += 1
@@ -409,8 +498,8 @@ def main():
         say('STATUS=RUNNING')
         say('IDENTITY=nvlddmkm.sys MD5=%s BASE=0x%x' % (md5, base))
         say('MODE=READ_ONLY EXISTING_INSTRUCTIONS_AND_HIGH_PCODE NO_GHIDRA_OR_GPU_WRITES')
-        say('METHOD=Original completed 410-node reference graph, its unresolved call sites; CALLIND input LOAD def-use')
-        say('LIMIT=CFG guarded dispatch may hide real target as implicit register; missing result is not negative proof')
+        say('METHOD=Existing original graph callsites; exact CFG RAX machine-pcode windows; bounded CALLIND argument flow')
+        say('LIMIT=Linear preceding RAX writes are not executed path, same receiver, or firmware acceptance proof')
         use_raw_scan = bool(globals().get('SCAN_EXECUTABLE', False))
         if use_raw_scan:
             say('MODE_DETAIL=OPT_IN_RAW_EXISTING_INSTRUCTION_SCAN not_original_graph')
