@@ -110,7 +110,7 @@ def graph_fixture(site='0x140bf3bca'):
 
 class GraphInputTests(unittest.TestCase):
     def test_valid_completed_original_root_graph(self):
-        self.assertEqual(flow.validate_graph(graph_fixture()), [0x140bf3bca])
+        self.assertEqual(flow.validate_graph(graph_fixture()), {0x140bf3bca: 0x140bf3880})
 
     def test_partial_or_unrelated_reference_graph_is_not_accepted(self):
         g = graph_fixture()
@@ -182,6 +182,12 @@ class GraphInputTests(unittest.TestCase):
             self.assertTrue(any('GRAPH_INPUT' in row and 'sha256=' in row for row in logged))
             self.assertRaises(ValueError, flow.graph_function_candidates,
                               make_program('MOV'), path, lambda _: None)
+            # A different current owner must not inherit the graph source edge.
+            unrelated_program = make_program('CALL')
+            foreign = SimpleNamespace(getEntryPoint=lambda: Address(0x140bf3890))
+            unrelated_program.getFunctionManager().getFunctionContaining = lambda _: foreign
+            self.assertRaises(ValueError, flow.graph_function_candidates,
+                              unrelated_program, path, lambda _: None)
 
     def test_graph_missing_or_oversized_not_silently_scanned(self):
         with tempfile.TemporaryDirectory() as tmp:
