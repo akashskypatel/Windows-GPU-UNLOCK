@@ -1031,3 +1031,94 @@ class ReferenceGraphWalkTests(unittest.TestCase):
         self.assertFalse(complete)
         self.assertEqual(graph['status'], 'PARTIAL')
         self.assertIn('DECOMPILER_OUTPUT_CLIPPED', graph['omissions'])
+
+
+class BoundedFunctionListingTests(unittest.TestCase):
+    """Independent mock checks: preserve evidence and fail on incomplete listings."""
+
+    @staticmethod
+    def fixture(assemblies=('MOV R15,qword ptr [RCX + 0x2138]',
+                             'LEA R8,[RSP + 0x58]'), executable=True,
+                entry=0x100, body_bytes=None):
+        from types import SimpleNamespace
+
+        class Address:
+            def __init__(self, value):
+                self.value = value
+
+            def __eq__(self, other):
+                return isinstance(other, Address) and self.value == other.value
+
+            def __str__(self):
+                return '0x%x' % self.value
+
+        class Instruction:
+            def __init__(self, address, asm):
+                self.address, self.asm = Address(address), asm
+
+            def getAddress(self):
+                return self.address
+
+            def getLength(self):
+                return 3
+
+            def __str__(self):
+                return self.asm
+
+        instructions = [Instruction(0x100 + i * 3, asm)
+                        for i, asm in enumerate(assemblies)]
+        body = SimpleNamespace(getNumAddresses=lambda: (
+            3 * len(instructions) if body_bytes is None else body_bytes))
+        function = SimpleNamespace(getEntryPoint=lambda: Address(entry),
+                                   getName=lambda: 'FUN_100', getBody=lambda: body)
+        program = SimpleNamespace(
+            getMemory=lambda: SimpleNamespace(getBlock=lambda _address: (
+                SimpleNamespace(isExecute=lambda: executable))),
+            getFunctionManager=lambda: SimpleNamespace(
+                getFunctionContaining=lambda _address: function),
+            getListing=lambda: SimpleNamespace(
+                getInstructions=lambda _body, _forward: iter(instructions)))
+        return program, Address
+
+    def test_complete_listing_preserves_register_and_stack_machine_evidence(self):
+        program, address = self.fixture()
+        records = []
+        with patch.object(probe, '_address', side_effect=lambda _p, n: address(n)):
+            self.assertTrue(probe.inspect_function_listing(program, ['0x100'], records.append))
+        self.assertEqual(sum('  LISTING VA=' in record for record in records), 2)
+        self.assertTrue(any('MOV R15,qword ptr [RCX + 0x2138]' in record for record in records))
+        self.assertTrue(any('LEA R8,[RSP + 0x58]' in record for record in records))
+        self.assertTrue(any('REGISTER_STACK_PROVENANCE_NOT_INFERRED' in record for record in records))
+        self.assertFalse(any('TRUNCATED' in record for record in records))
+
+    def test_cap_is_a_reported_partial_result_not_success(self):
+        program, address = self.fixture()
+        records = []
+        with patch.object(probe, '_address', side_effect=lambda _p, n: address(n)), \
+             patch.object(probe, 'MAX_FUNCTION_LISTING_INSTRUCTIONS', 1):
+            self.assertFalse(probe.inspect_function_listing(program, ['0x100'], records.append))
+        self.assertTrue(any('FUNCTION_LISTING_TRUNCATED' in record for record in records))
+        self.assertEqual(sum('  LISTING VA=' in record for record in records), 1)
+
+    def test_missing_instruction_coverage_is_partial(self):
+        program, address = self.fixture(body_bytes=7)
+        records = []
+        with patch.object(probe, '_address', side_effect=lambda _p, n: address(n)):
+            self.assertFalse(probe.inspect_function_listing(program, ['0x100'], records.append))
+        self.assertTrue(any('FUNCTION_LISTING_COVERAGE_PARTIAL' in record for record in records))
+
+    def test_rejects_nonentry_and_nonexecutable_targets(self):
+        for kwargs in ({'entry': 0x200}, {'executable': False}):
+            with self.subTest(kwargs=kwargs):
+                program, address = self.fixture(**kwargs)
+                records = []
+                with patch.object(probe, '_address', side_effect=lambda _p, n: address(n)):
+                    self.assertFalse(probe.inspect_function_listing(program, ['0x100'], records.append))
+                self.assertTrue(any('FUNCTION_LISTING_UNAVAILABLE' in record for record in records))
+
+    def test_rejects_unbounded_or_malformed_target_sets(self):
+        program, _ = self.fixture()
+        for invalid in ('0x100', ['0x100', '0x200'], {0x100}, None):
+            with self.subTest(targets=invalid), self.assertRaises(ValueError):
+                probe.inspect_function_listing(program, invalid, lambda _line: None)
+
