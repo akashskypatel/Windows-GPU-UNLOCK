@@ -1,3 +1,15 @@
+# 2026-11-11 — Owner currently routes all three displays through RTX 3080; Phase 0 passive card identification unchanged
+
+**Situation.** Owner reports three displays currently attached to RTX 3080. Stock Windows `nvidia-smi` confirms RTX 4090 `00000000:01:00.0` and RTX 3080 `00000000:04:00.0`, both driver 617.42.
+
+**Background.** The already verified AMD-only preboot console evidence (0018/0019) was captured in a different display wiring state. The current physical layout may establish NVIDIA console ownership and shared dependencies in a new passive log. PCI identity and console topology are separate observations.
+
+**Assessment.** The isolated selected-card read-only diagnostic may run unchanged, with all three displays on the 3080, for Phase 0 ordered PCI selection. Its actual console isolation verdict is recorded independently; CONFLICT/INCOMPLETE is not proof that PCI selection failed, and no console survival claim transfers from the AMD-only observations to the current cable setup. Selecting both cards gives no authority to disconnect or mutate them.
+
+**Recommendation.** Do not request monitor cable changes for Phase 0. Continue with the previously reviewed removable-device, signed EFI procedure; verify the current boot's PCI identities and retain the generated diagnostic log. Before any later vendor Stop, restore and independently verify an AMD-only preboot console and separately establish peer and cold-recovery safety. No driver Stop, FLR, DMA, firmware writes, persistent EFI install or flash authorized. `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-11 — Complete original Windows 617.42 R15/R8 bitset-call classification; start selected-card physical Phase 0
 
 **Situation.** Owner supplied `nvlddmkm-61742-booter-discovery-20261111-153929-506833.txt` (19,573 original bytes, SHA-256 `085123fa7cbd51ad00e967d6f2beabc26021d4e428fef1e349633b27d5a11454`) from unchanged `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`. `STATUS=COMPLETE`, all 318 machine instructions and 1,273 original function-body bytes covered. This is original read-only Ghidra evidence and no GPU mutation.
