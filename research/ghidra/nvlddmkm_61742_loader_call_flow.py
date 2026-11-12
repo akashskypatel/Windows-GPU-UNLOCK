@@ -465,11 +465,17 @@ def inspect_function(program, decompiler, entry, seeds, say, deadline, graph_mod
             say('  %s va=%s inputs=%d traces=%s same_instance_unproven=TRUE' %
                 (label, op.getSeqnum().getTarget(), len(args), evidence))
     if graph_mode:
-        unmapped = graph_sites - pcode_graph_sites
-        if unmapped:
-            complete = False
-        for site in sorted(unmapped):
-            say('  GRAPH_SITE_NO_CALL_PCODE va=0x%x decompiler_mapping_unavailable=TRUE' % site)
+        # A verified JMP through the CFG dispatcher is a tail transfer; Ghidra
+        # may represent it as BRANCHIND rather than a CALL/CALLIND operation.
+        # Absence of a CALL p-code mapping is only incomplete for real CALLs.
+        for site, asm in seeds:
+            if site in pcode_graph_sites:
+                continue
+            if asm.split(None, 1)[0].upper() == 'JMP':
+                say('  GRAPH_SITE_TAIL_JMP_NO_CALL_PCODE va=0x%x known_machine_transfer=TRUE target_unresolved=TRUE' % site)
+            else:
+                complete = False
+                say('  GRAPH_SITE_NO_CALL_PCODE va=0x%x decompiler_mapping_unavailable=TRUE' % site)
     say('FUNCTION_END entry=0x%x callind=%d traced=%d pcode=%d complete=%s' %
         (entry, min(calls, MAX_CALLS_PER_FUNCTION), flow_candidates, seen_ops, complete))
     return complete

@@ -287,6 +287,18 @@ class GraphPcodeCoverageTests(unittest.TestCase):
             self.assertFalse(any("GRAPH_SITE_NO_CALL_PCODE" in line
                                  for line in mapped_log))
             self.assertIn("complete=True", mapped_log[-1])
+            # The saved original 617.42 graph has two real JMP tail calls.
+            # Such sites must not be counted as unmapped ordinary CALLs.
+            tail_log = []
+            self.assertTrue(flow.inspect_function(
+                program, decompiler([]), 0x140bf3880,
+                [(0x140bf3bca, "JMP qword ptr [0x140e02aa8]")],
+                tail_log.append, float("inf"), graph_mode=True))
+            self.assertTrue(any("GRAPH_SITE_TAIL_JMP_NO_CALL_PCODE" in line
+                                for line in tail_log))
+            self.assertFalse(any("GRAPH_SITE_NO_CALL_PCODE " in line
+                                 for line in tail_log))
+            self.assertIn("complete=True", tail_log[-1])
 
 class MemoryConversionTests(unittest.TestCase):
     def test_java_array_bulk_buffer_not_iterated_per_byte(self):
