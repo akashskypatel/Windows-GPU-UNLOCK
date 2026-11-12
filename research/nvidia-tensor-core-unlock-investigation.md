@@ -1,3 +1,21 @@
+# 2026-11-12 — Original Windows 617.42 data-transfer callee classified; real x64 source/length caller ABI still open
+
+**Situation.** Received `nvlddmkm-61742-booter-discovery-20261112-085746-256630.txt` (4,316 bytes, SHA-256 `1d4128c22ec16edb8e611f7e3146e59cb288cfada51fe8141385845a9381c786`); original `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`, `STATUS=COMPLETE`, `DECOMPILER_BEGIN entry=140645bb0 clipped=False total_chars=2574`, hardware/Ghidra mutation NONE. Eight direct incoming calls plus one DATA reference; exact known Falcon preparation site `FUN_140BF1390:0x140BF19C6` is one of the direct calls. This closes the **unclassified function body**, not the signed Booter record-to-loader proof.
+
+**Source-derived classification.** `FUN_140645BB0` accepts **six** inputs. It reads resource mode with `FUN_1401BAD20(param_3)`; for mode 1, calls preparation `FUN_1401BC8D0`, then `FUN_1400DF7C0(local_68,param_6,param_5,param_6)` and `FUN_1401BD4C0`. Otherwise it receives a resource mapping via `FUN_1401BB0B0`, saves a guarded state value, loops over `param_6` with a `0x100000` chunk/boundary, sources 32-bit words from `param_5+offset` and invokes `FUN_140126F40` at `0x700000+offset`, then restores guarded state. This is an original **data-transfer/staging helper**, not a visible signed Booter IMAGE/HEADER/SIG/PATCH producer or direct invocation of `FUN_140BF3880`. Do not assert hardware MMIO semantics, ownership, successfully transferred bytes or firmware acceptance from source alone.
+
+**ABI discrepancy at direct original call.** The saved full `FUN_140BF1390` high-level body expresses only four inputs to `FUN_140645BB0`, whereas the callee reads fifth source address and sixth count. This source difference may come from Ghidra's inferred prototype and cannot establish that machine stack parameters are absent, null, or signed source bytes. The **actual original Windows x64 call at `0x140BF19C6`** provides the next smallest precise evidence target; no retained Ghidra machine window covers it.
+
+**Owner instruction — one bounded read-only original call-site capture (not run by agent):**
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x140bf19c6"], "__name__": "__main__"})
+```
+Require original driver MD5, `INSTRUCTION_SITE VA=140bf19c6` and its bounded existing machine-instruction window, final `STATUS=COMPLETE`, `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. Report source and count setup from actual stack writes only if visible, including conditional predecessors; register/stack inference and runtime execution require separate evidence. If earlier setup is outside the 12-instruction window, retain partial **provenance** even when the tool says `STATUS=COMPLETE`: that status only verifies collection, not full source tracing.
+
+**Recommendation / owner / agent.** **AGENT — completed:** classify this real source-backed helper and narrow the blocker to exact caller fifth/sixth argument provenance, update the authoritative plans. **AGENT — next:** after owner report, determine whether the source/length come from the original signed Booter records and whether a distinct verified descriptor flows to published `+0x170=FUN_140BF3880`; otherwise close the helper as generic. **OWNER — next:** run the single exact read-only command and attach raw report. **HARDWARE:** keep `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`; no on-device action.
+
+---
+
 # 2026-11-12 — Original Falcon preparation resource callee selected for first body classification
 
 **Situation.** Continuing from the fully classified Windows 617.42 original `FUN_140BF1390`, not the completed broad graph or callback searches, reveals one direct original callee `FUN_140645BB0` in its metadata-preparation branch. No new original-driver execution was made.
