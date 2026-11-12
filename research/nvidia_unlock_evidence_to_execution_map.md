@@ -8,6 +8,8 @@ Develop a **one-card-at-a-time, preboot** process that can change the relevant N
 
 **Current decision:** Passive identification and ordered two-card preparation **PASS**. Active NVIDIA release, signed firmware loading, selector writes, FLR, Windows-after-unlock proof, and cold recovery remain **BLOCKED**. Source and host tests are not permission to run a physical transaction.
 
+**Terms:** UEFI means Unified Extensible Firmware Interface. GOP means Graphics Output Protocol. FWSEC is the protected firmware security stage. SEC2 is NVIDIA's security processor. DMA means direct memory access. FLR means PCIe Function Level Reset. ABI means the machine call contract. HMMA means the Tensor Core matrix-multiply instructions. See the investigation record for the original-driver function and firmware details.
+
 **All four gates are false:**
 
 `CAN_DETACH=false`  
@@ -56,7 +58,7 @@ A later operator request must pass **each prerequisite** before execution advanc
 
 | Step | Action / required observation | State |
 |---|---|---|
-| 01 | Verify both full PCI identities, parent bridges, current boot handles and physical ROM/input pins. Reject duplicate or changed target/peer. | **PASS for prior passive captures**; refresh before any future test. |
+| 01 | Verify both full PCI identities, parent bridges, current boot handles and physical ROM/input pins. Reject duplicate or changed target/peer. | **PARTIAL.** Exact PCI and bridge identity **PASS (PASSIVE)**; original-installed ROM provenance and full cold hardware inputs remain **OPEN**. Refresh before any future test. |
 | 02 | Select **one** target in explicit order. Re-read both target and non-target PCI configuration, driver/GOP path and owner graph. Do not select a default first adapter. | **PASS — PASSIVE/HOST.** |
 | 03 | Verify an **independent AMD-owned preboot console** for both output and error, no protected NVIDIA console dependency, and a separate non-target NVIDIA owner. Preserve USB log and known Windows boot path. | **CONFLICT in current cabling.** Prior AMD-only configuration is not post-Stop proof. |
 | 04 | Validate the original MSI GraphicsConsole, ConSplitter and NVIDIA GOP/DriverBinding Stop chain, exact selected children, all open protocol edges and recoverable failure handling. Obtain an independently reviewed physical recovery procedure. | **BLOCKED — PHYSICAL.** Static code and failure models are not enough. |
@@ -80,7 +82,7 @@ A later operator request must pass **each prerequisite** before execution advanc
 | Blocker | Exact proof still needed | Acceptance decision |
 |---|---|---|
 | Secure-loader source/record | Original production Windows AD102 and GA102 IMAGE/HEADER/SIG/PATCH labels or equivalent original producer, byte offsets/lengths/hashes and selected pointer flow. | **OPEN.** Never infer Windows slot numbers from Linux bindata values. |
-| Secure-loader invocation | Same-instance `outer+0x108` publication → nested method `+0x170` read → actual guarded call resolving to `FUN_140BF3880`; full third-input def-use and selected original signature. | **OPEN.** DATA references, same offsets and a generic transfer are not enough. |
+| Secure-loader invocation | Same-instance `outer+0x108` publication → nested method `+0x170` read → actual guarded call resolving to `FUN_140BF3880`; full third-input data flow and selected original signature. | **OPEN.** DATA references, same offsets and a generic transfer are not enough. |
 | Windows secure acceptance | Exact per-card hardware/stock-loader response to an authentic signed firmware set; invalid assets rejected. | **OPEN; physical proof not authorized.** |
 | Vendor and shared-console release | Correct same-boot AMD console ownership, original MSI shared-driver Stop effects, all close/uninstall statuses, peer preservation and recoverable partial failure. | **OPEN.** Current display setup is a conflict. |
 | Card recovery and original ROM | Reviewed recovery media, power-loss/restoration process, original ROM provenance and exact-card cold-state requirements. | **OPEN.** Archived ROM structure alone is insufficient. |
