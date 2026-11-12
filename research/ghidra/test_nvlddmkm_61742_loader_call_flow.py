@@ -200,6 +200,94 @@ class GraphInputTests(unittest.TestCase):
                               None, p, lambda _: None)
 
 
+
+class GraphPcodeCoverageTests(unittest.TestCase):
+    def test_unmapped_graph_call_is_partial_but_mapped_call_can_complete(self):
+        # An existing indirect call can be absent from Ghidra high p-code.
+        # The report must not claim COMPLETE when that proof is unavailable.
+        class Address(int):
+            def getOffset(self):
+                return int(self)
+
+        class Function:
+            def getEntryPoint(self):
+                return Address(0x140bf3880)
+
+        class Site:
+            def __init__(self, address):
+                self.address = address
+
+            def getTarget(self):
+                return Address(self.address)
+
+        class Pcode:
+            def getOpcode(self):
+                return 2
+
+            def getSeqnum(self):
+                return Site(0x140bf3bca)
+
+            def getMnemonic(self):
+                return "CALLIND"
+
+            def getNumInputs(self):
+                return 0
+
+        class Ops:
+            def __init__(self, items):
+                self.items = iter(items)
+                self.current = None
+
+            def hasNext(self):
+                if self.current is not None:
+                    return True
+                self.current = next(self.items, None)
+                return self.current is not None
+
+            def next(self):
+                result, self.current = self.current, None
+                return result
+
+        function = Function()
+        program = SimpleNamespace(
+            getAddressFactory=lambda: SimpleNamespace(
+                getDefaultAddressSpace=lambda: SimpleNamespace(
+                    getAddress=lambda n: Address(n))),
+            getFunctionManager=lambda: SimpleNamespace(
+                getFunctionAt=lambda address: function))
+        def decompiler(operations):
+            high = SimpleNamespace(getPcodeOps=lambda: Ops(operations))
+            result = SimpleNamespace(decompileCompleted=lambda: True,
+                                     getHighFunction=lambda: high)
+            return SimpleNamespace(decompileFunction=lambda *args: result)
+
+        modules = {
+            "ghidra": SimpleNamespace(), "ghidra.program": SimpleNamespace(),
+            "ghidra.program.model": SimpleNamespace(),
+            "ghidra.program.model.pcode": SimpleNamespace(
+                PcodeOp=SimpleNamespace(CALL=1, CALLIND=2)),
+            "ghidra.util": SimpleNamespace(),
+            "ghidra.util.task": SimpleNamespace(
+                TaskMonitor=SimpleNamespace(DUMMY=None)),
+        }
+        seeds = [(0x140bf3bca, "CALL RAX")]
+        with patch.dict(sys.modules, modules), patch.object(
+                flow, "inspect_guard_rax_window", return_value=True):
+            missing_log = []
+            self.assertFalse(flow.inspect_function(
+                program, decompiler([]), 0x140bf3880, seeds,
+                missing_log.append, float("inf"), graph_mode=True))
+            self.assertTrue(any("GRAPH_SITE_NO_CALL_PCODE" in line
+                                for line in missing_log))
+            self.assertIn("complete=False", missing_log[-1])
+            mapped_log = []
+            self.assertTrue(flow.inspect_function(
+                program, decompiler([Pcode()]), 0x140bf3880, seeds,
+                mapped_log.append, float("inf"), graph_mode=True))
+            self.assertFalse(any("GRAPH_SITE_NO_CALL_PCODE" in line
+                                 for line in mapped_log))
+            self.assertIn("complete=True", mapped_log[-1])
+
 class MemoryConversionTests(unittest.TestCase):
     def test_java_array_bulk_buffer_not_iterated_per_byte(self):
         class Buffer(bytearray):

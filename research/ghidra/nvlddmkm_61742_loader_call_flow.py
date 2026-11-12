@@ -465,7 +465,10 @@ def inspect_function(program, decompiler, entry, seeds, say, deadline, graph_mod
             say('  %s va=%s inputs=%d traces=%s same_instance_unproven=TRUE' %
                 (label, op.getSeqnum().getTarget(), len(args), evidence))
     if graph_mode:
-        for site in sorted(graph_sites - pcode_graph_sites):
+        unmapped = graph_sites - pcode_graph_sites
+        if unmapped:
+            complete = False
+        for site in sorted(unmapped):
             say('  GRAPH_SITE_NO_CALL_PCODE va=0x%x decompiler_mapping_unavailable=TRUE' % site)
     say('FUNCTION_END entry=0x%x callind=%d traced=%d pcode=%d complete=%s' %
         (entry, min(calls, MAX_CALLS_PER_FUNCTION), flow_candidates, seen_ops, complete))
