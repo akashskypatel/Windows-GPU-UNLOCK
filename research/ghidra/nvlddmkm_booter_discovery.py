@@ -923,7 +923,12 @@ def targeted_decompile(program, addresses, log):
                     entry, result.getErrorMessage() if result is not None else 'null-result'))
                 continue
             output = result.getDecompiledFunction()
-            code = str(output.getC()) if output is not None else ''
+            rendered = output.getC() if output is not None else None
+            code = str(rendered) if rendered is not None else ''
+            if not code.strip():
+                log('DECOMPILER_BODY_UNAVAILABLE=TRUE entry=%s empty_or_missing_C=TRUE' % entry)
+                all_targets_completed = False
+                continue
             focus_terms = globals().get('DECOMP_FOCUS_TERMS', ())
             if focus_terms:
                 excerpt, counts, truncated = decompilation_excerpt(code, focus_terms)

@@ -207,7 +207,7 @@ class DecompilationCoverageTests(unittest.TestCase):
                 return True
 
             def getDecompiledFunction(self):
-                return type('Output', (), {'getC': lambda self: c_source})()
+                return None if c_source is None else type('Output', (), {'getC': lambda self: c_source})()
 
         class Decompiler:
             def openProgram(self, program):
@@ -275,6 +275,17 @@ class DecompilationCoverageTests(unittest.TestCase):
         self.assertFalse(completed)
         self.assertTrue(any(line.startswith('DECOMPILER_BEGIN entry=1401b0e00 clipped=True ') for line in lines))
         self.assertTrue(any('DECOMPILER_OUTPUT_INCOMPLETE=TRUE' in item for item in lines))
+
+    def test_missing_or_empty_decompiler_body_is_incomplete(self):
+        # A successful decompiler return without C output cannot establish
+        # a complete function body, even when its length is below the cap.
+        for source in (None, '', '  ', '\\n\\t'):
+            with self.subTest(source=source):
+                completed, lines = self._analyze(source)
+                self.assertFalse(completed)
+                self.assertTrue(any('DECOMPILER_BODY_UNAVAILABLE=TRUE' in line
+                                    for line in lines))
+                self.assertFalse(any(line.startswith('DECOMPILER_BEGIN') for line in lines))
 
     def test_unclipped_regular_decompilation_remains_complete(self):
         completed, lines = self._analyze('short code')
