@@ -1,3 +1,21 @@
+# 2026-11-12 — Original Falcon resource transfer call proves all six machine arguments
+
+**Situation.** Owner's new passive original Windows 617.42 report `nvlddmkm-61742-booter-discovery-20261112-090540-564819.txt`, **1,997 bytes**, SHA-256 `82b535aa78963bc9365c8075d73bd3cab4a35d454b0d36bc26e0c956b2ea0981`, identity `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, confirms the source-requested instruction site at `FUN_140BF1390:0x140BF19C6` (`STATUS=COMPLETE`; `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`). The former C-prototype 4-versus-6 inputs question is resolved *only at machine calling convention level*, not at source-firmware identity level.
+
+**Exact original instruction argument setup:** `MOV R8,[RBX+0x2A0]` at `0x140BF19A8` supplies argument 3; `XOR R9D,R9D` at `0x140BF19AF` supplies argument 4 = zero; `MOV [RSP+0x28],RCX` at `0x140BF19B2` supplies argument 6 from earlier `RCX`; `MOV RCX,R15` at `0x140BF19B7` supplies argument 1; `MOV [RSP+0x20],RDX` at `0x140BF19BA` supplies argument 5 from earlier `RDX`; `MOV RDX,[R15+0x2218]` at `0x140BF19BF` supplies argument 2; direct `CALL FUN_140645BB0` at `0x140BF19C6`. No register fifth/sixth creator is shown in the recorded window. The preceding `JMP 0x140BF1F77` at `0x140BF19A3` is an error-path control transfer, not a straight-line execution predecessor of the call.
+
+**Source-level correlation and strict limit.** The previously complete original `FUN_140BF1390` C body reads `*(param_2+0x2B8)` and assigns `local_b8 = *(param_2+0x2B8)` and `local_b0 = (uint)*(param_2+0x2D8)` just before the high-level four-argument representation of `FUN_140645BB0`. The now complete six-argument callee consumes argument 5 as the source pointer and argument 6 as the data length. This makes the two fields a **specific, source-supported hypothesis**, not a recovered original register definition or an authenticated Windows signed Booter record. The distinct loader `FUN_140BF3880` still requires actual published nested `+0x170` invocation and an independent descriptor; no direct call or signature proof exists here.
+
+**Next owner-only, exact, passive original Ghidra instruction window:**
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_INSTRUCTION_SITES": ["0x140bf1989"], "__name__": "__main__"})
+```
+Inspect `0x140BF1989` and preceding 12 existing original machine instructions to test whether the `RDX/RCX` definitions flow along the valid branch to the already known `0x140BF19C6` call; do not infer control-flow reachability from a linear listing. Attach the raw output and original identity. If the window is insufficient, retain the unresolved source, no broader scan without a new reason.
+
+**Owner/agent:** **AGENT completed:** classify and ground the new call-site original instruction arguments, close the false four-argument absence question, preserve stronger source-hypothesis limits, reconcile both plans. **OWNER next:** run the one read-only instruction-site command and attach report. **AGENT next:** verify source/size values with the original branch/ABI and continue only a signed Booter record-to-loader real connection. **HARDWARE:** `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-12 — Original Windows 617.42 data-transfer callee classified; real x64 source/length caller ABI still open
 
 **Situation.** Received `nvlddmkm-61742-booter-discovery-20261112-085746-256630.txt` (4,316 bytes, SHA-256 `1d4128c22ec16edb8e611f7e3146e59cb288cfada51fe8141385845a9381c786`); original `nvlddmkm.sys` MD5 `3fb9afac9d0e394723e830aa14e60512`, base `0x140000000`, `STATUS=COMPLETE`, `DECOMPILER_BEGIN entry=140645bb0 clipped=False total_chars=2574`, hardware/Ghidra mutation NONE. Eight direct incoming calls plus one DATA reference; exact known Falcon preparation site `FUN_140BF1390:0x140BF19C6` is one of the direct calls. This closes the **unclassified function body**, not the signed Booter record-to-loader proof.
