@@ -1,3 +1,19 @@
+# 2026-11-12 — Original Falcon preparation resource callee selected for first body classification
+
+**Situation.** Continuing from the fully classified Windows 617.42 original `FUN_140BF1390`, not the completed broad graph or callback searches, reveals one direct original callee `FUN_140645BB0` in its metadata-preparation branch. No new original-driver execution was made.
+
+**Background and exact evidence.** Owner report `nvlddmkm-61742-booter-discovery-20261106-162523-880517.txt` is MD5 `3fb9afac9d0e394723e830aa14e60512`, `STATUS=COMPLETE` and `clipped=False` for `FUN_140BF1390`. The function reads `puVar4=*(uint**)(param_2+0x2C0)` and requires a nonnull pointer with count `*puVar4 >= 3` before the later resource work. A branch prepares a resource at `param_2+0x2A0` and checks a nonnull `param_2+0x2B8` before invoking `FUN_140645BB0(param_1,*(param_1+0x2218),*(param_2+0x2A0),0)`. The full callee is not classified in cumulative or dedicated original Windows notes; earlier generic transport, constructor and HS callbacks are already classified. **Do not infer** original Booter IMAGE/HEADER/SIG/PATCH identity, descriptor object ownership, actual nested `+0x170` invocation or signed acceptance from the argument positions alone. This is a source-backed *candidate to classify*, not a proven link.
+
+**Owner-only bounded read-only query (not yet executed by agent):**
+```python
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TARGET_FUNCTIONS": ["0x140645bb0"], "FULL_DECOMP_MAX_CHARS": 131072, "__name__": "__main__"})
+```
+Use the existing original Windows Ghidra project and preserved read-only Python reporter. Require pinned driver MD5, `DECOMPILER_BEGIN entry=140645bb0 clipped=False`, `DECOMPILER_END`, and terminal `STATUS/REPORT`. If more than 24 caller refs are present, `TARGET_INCOMING_REFS_TRUNCATED` intentionally makes the overall report PARTIAL; a complete C body remains usable. Do not repeat any scan or hardware diagnostic.
+
+**Assessment/recommendation.** **AGENT completed:** identify and source-check this exact new downstream callee, preserve previously closed 617.42 record-index and Falcon constructor results, update plans. **AGENT next:** classify the returned direct callee and follow only a signed-source/descriptor/same-instance loader dataflow edge demonstrably supported by it; if absent close this lead as generic. **OWNER next:** run the one-function read-only command and attach full raw report. **HARDWARE:** `CAN_DETACH=false CAN_UNLOCK=false CAN_FLASH=false RECOVERY_VERIFIED=false`.
+
+---
+
 # 2026-11-12 — Original Windows Ghidra report completeness corrected; Linux Booter labels rejected as Windows indices
 
 **Situation.** A source review of the original-driver read-only Ghidra reporter found two false-completion paths. One truncated the inbound reference list above 24 without marking the report incomplete. The second treated a successful decompiler return with no usable C text as complete. Neither changes the original driver or executable GPU operation.
