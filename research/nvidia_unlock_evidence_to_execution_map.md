@@ -140,13 +140,13 @@ The investigation file records **DEAD END** and **IRRELEVANT** candidates. Do no
 **Owner step 1 — safe local source update, one PowerShell paste:**
 
 ```powershell
-git -C 'D:\\Projects\\gpu-unlock\\Windows-GPU-UNLOCK' pull --ff-only
+git -C 'D:\Projects\gpu-unlock\Windows-GPU-UNLOCK' pull --ff-only
 ```
 
 **Owner step 2 — focused original-driver read only PyGhidra console command:** Trace **newly found** PE entry targets and the real `_deviceInit` caller, not the closed generic Booter transfer sites or symbol-pattern search. Run only in the already MD5-pinned original Windows 617.42 `nvlddmkm.sys` Ghidra program:
 
 ```python
-exec(open(r"D:\\Projects\\gpu-unlock\\Windows-GPU-UNLOCK\\research\\ghidra\\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_DATA_SITES": ["0x146d15e4c", "0x1403cd6b0"], "TRACE_FUNCTION_CALLS": ["0x146d110b0", "0x1403cd6b0"], "TARGET_FUNCTIONS": ["0x146d15e4c", "0x146d110b0", "0x1403cd6b0"], "FULL_DECOMP_MAX_CHARS": 24000, "__name__": "__main__"})
+exec(open(r"D:\Projects\gpu-unlock\Windows-GPU-UNLOCK\research\ghidra\nvlddmkm_booter_discovery.py", encoding="utf-8").read(), {"currentProgram": state.getCurrentProgram(), "SCAN_STRINGS": False, "TRACE_DATA_SITES": ["0x146d15e4c", "0x1403cd6b0"], "TRACE_FUNCTION_CALLS": ["0x146d110b0", "0x1403cd6b0"], "TARGET_FUNCTIONS": ["0x146d15e4c", "0x146d110b0", "0x1403cd6b0"], "FULL_DECOMP_MAX_CHARS": 24000, "__name__": "__main__"})
 ```
 
 **Owner step 3 — attach the complete `REPORT=` file:** Include driver MD5/base, original target incoming references, call traces and bounded target decompilation (including any `DECOMPILER_TRUNCATED` or `PARTIAL` marker), and `HARDWARE_ACTION=NONE GHIDRA_MUTATION=NONE`. This is the newly exposed startup candidate, **not** proof that it reaches the signed loader. No BIOS changes, Stop, lower-filter install, driver restart or hardware modification.
