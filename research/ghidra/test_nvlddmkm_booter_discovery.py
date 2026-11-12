@@ -1071,6 +1071,130 @@ class ReferenceGraphWalkTests(unittest.TestCase):
         self.assertIn('DECOMPILER_OUTPUT_CLIPPED', graph['omissions'])
 
 
+class PeEntryPointTests(unittest.TestCase):
+    """Independent mapped PE header evidence; missing entry is not accepted."""
+
+    @staticmethod
+    def header(entry=0x2000, image_size=0x400000):
+        data = bytearray(0x200)
+        data[:2] = b'MZ'
+        data[0x3c:0x40] = (0x100).to_bytes(4, 'little')
+        data[0x100:0x104] = b'PE\x00\x00'
+        data[0x104:0x106] = (0x8664).to_bytes(2, 'little')
+        data[0x114:0x116] = (0xf0).to_bytes(2, 'little')
+        data[0x118:0x11a] = (0x20b).to_bytes(2, 'little')
+        data[0x128:0x12c] = entry.to_bytes(4, 'little')
+        data[0x150:0x154] = image_size.to_bytes(4, 'little')
+        return bytes(data)
+
+    def test_amd64_entrypoint_is_read_from_header_not_symbol_name(self):
+        entry, image_size = probe.parse_pe64_entrypoint_header(self.header())
+        self.assertEqual(entry, 0x2000)
+        self.assertEqual(image_size, 0x400000)
+
+    def test_invalid_headers_and_outside_image_entry_are_rejected(self):
+        cases = [
+            (lambda b: b.__setitem__(slice(0, 2), b'NO'), 'DOS_HEADER_MISSING'),
+            (lambda b: b.__setitem__(slice(0x3c, 0x40),
+                                      (0x1001).to_bytes(4, 'little')), 'PE_OFFSET_OUT_OF_RANGE'),
+            (lambda b: b.__setitem__(slice(0x100, 0x104), b'NOPE'), 'PE_HEADER_MISSING_OR_SHORT'),
+            (lambda b: b.__setitem__(slice(0x104, 0x106),
+                                      (0x14c).to_bytes(2, 'little')), 'NOT_AMD64_PE'),
+            (lambda b: b.__setitem__(slice(0x118, 0x11a),
+                                      (0x10b).to_bytes(2, 'little')), 'NOT_PE32_PLUS'),
+            (lambda b: b.__setitem__(slice(0x114, 0x116),
+                                      (0x10).to_bytes(2, 'little')), 'OPTIONAL_HEADER_TOO_SHORT'),
+            (lambda b: b.__setitem__(slice(0x128, 0x12c),
+                                      (0).to_bytes(4, 'little')), 'ENTRY_RVA_OUTSIDE_IMAGE'),
+            (lambda b: b.__setitem__(slice(0x128, 0x12c),
+                                      (0x400000).to_bytes(4, 'little')), 'ENTRY_RVA_OUTSIDE_IMAGE'),
+        ]
+        for mutate, reason in cases:
+            data = bytearray(self.header())
+            mutate(data)
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, reason):
+                probe.parse_pe64_entrypoint_header(bytes(data))
+
+    @staticmethod
+    def mapped_program(entry_function=True, executable=True):
+        from types import SimpleNamespace
+
+        class Address:
+            def __init__(self, value):
+                self.value = value
+
+            def getOffset(self):
+                return self.value
+
+            def __eq__(self, other):
+                return isinstance(other, Address) and self.value == other.value
+
+            def __str__(self):
+                return '0x%x' % self.value
+
+        addr = Address(0x140002000)
+        next_addr = Address(0x140002006)
+        body = SimpleNamespace(contains=lambda address: address in (addr, next_addr))
+        function = SimpleNamespace(
+            getEntryPoint=lambda: addr if entry_function else Address(0x140001ff0),
+            getName=lambda: 'FUN_140002000', getBody=lambda: body)
+
+        class Listing:
+            def getInstructionAt(self, location):
+                return SimpleNamespace(getAddress=lambda: location,
+                                       __str__=lambda self: 'PUSH RBX')
+
+            def getInstructionAfter(self, location):
+                if location == addr:
+                    return SimpleNamespace(getAddress=lambda: next_addr,
+                                           __str__=lambda self: 'RET')
+                return None
+
+        program = SimpleNamespace(
+            getImageBase=lambda: Address(0x140000000),
+            getMemory=lambda: SimpleNamespace(getBlock=lambda _address: SimpleNamespace(
+                isInitialized=lambda: True, isExecute=lambda: executable)),
+            getFunctionManager=lambda: SimpleNamespace(
+                getFunctionContaining=lambda _addr: function),
+            getListing=lambda: Listing())
+        return program, Address
+
+    def test_reports_exact_existing_entry_and_bounded_instructions(self):
+        program, Address = self.mapped_program()
+        logs = []
+        data = self.header()
+        with patch.object(probe, '_address', side_effect=lambda _p, n: Address(n)), \
+                patch.object(probe, '_memory_bytes',
+                             side_effect=lambda _m, addr, n: data[:n]):
+            self.assertTrue(probe.inspect_pe_entrypoint(program, logs.append))
+        self.assertTrue(any('PE_ENTRYPOINT source=LOADED_PE32_PLUS_HEADER'
+                            in line and 'rva=0x2000' in line for line in logs))
+        self.assertTrue(any('PE_ENTRY_FUNCTION' in line and 'exact_entry=True'
+                            in line for line in logs))
+        self.assertEqual(sum('PE_ENTRY_INSTRUCTION' in line for line in logs), 2)
+        self.assertTrue(any('PE_ENTRY_CONTEXT_ONLY=TRUE' in line for line in logs))
+
+    def test_nonexecutable_or_wrong_function_start_is_partial(self):
+        for options in ({'executable': False}, {'entry_function': False}):
+            with self.subTest(options=options):
+                program, Address = self.mapped_program(**options)
+                logs = []
+                data = self.header()
+                with patch.object(probe, '_address', side_effect=lambda _p, n: Address(n)), \
+                        patch.object(probe, '_memory_bytes',
+                                     side_effect=lambda _m, addr, n: data[:n]):
+                    self.assertFalse(probe.inspect_pe_entrypoint(program, logs.append))
+                self.assertTrue(any('PE_ENTRYPOINT_UNAVAILABLE' in x for x in logs))
+
+    def test_truncated_or_unreadable_pe_header_is_partial(self):
+        program, Address = self.mapped_program()
+        logs = []
+        with patch.object(probe, '_address', side_effect=lambda _p, n: Address(n)), \
+                patch.object(probe, '_memory_bytes', side_effect=ValueError('short read')):
+            self.assertFalse(probe.inspect_pe_entrypoint(program, logs.append))
+        self.assertTrue(any('HEADER_INVALID_OR_UNREADABLE' in x for x in logs))
+
+
 class NamedSymbolReferencesTests(unittest.TestCase):
     """A matching symbol is evidence; an absent or truncated map is not."""
 
