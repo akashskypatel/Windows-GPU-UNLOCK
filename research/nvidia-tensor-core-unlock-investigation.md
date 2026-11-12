@@ -44,7 +44,13 @@ The original Windows host path reads the external file through `FUN_1400F35F0 â†
 
 **Public Linux comparison only:** NVIDIA Linux source 615.78.08 has named GA102 Booter-load indices 139â€“148 and AD102 indices 149â€“158, with IMAGE, HEADER, signature, patch and count entries. Several are compiled-in (`EXTERNAL: NO`). These public Linux names and numbers cannot be assigned to the 1,293-slot Windows 617.42 index. Linux 610.43.03 versus 615.78.08 production Booter image, wrapper and signature bytes differ for both GPUs even when some GSP boot pieces match. No exact Windows 615.78.05 Booter image or signature set is proved by that comparison. Do not load public Linux signed assets as if they were accepted by stock Windows.
 
-## 4. Original Windows Falcon and protected-loader chain
+## 4. Reference unlock mechanism and its evidence limit
+
+The published Linux pre-driver sequence is a **comparison**, not a Windows 617.42 operating procedure: obtain exclusive GPU access before the operating-system NVIDIA driver starts; use FWSEC-FRTS and an authenticated SEC2 Booter; apply architecture-specific permission and issue-rate selectors; stop the secure work, release DMA, reset the GPU with PCIe FLR, and return to the stock driver. AD102 Linux reference work identifies four permission-related registers: WPR_CFG `0x001FA7CC`, FBPA `0x009A0148`, WPR `0x001FA7C4`, and FEAT `0x00823804`. The experimental selector addresses `0x0082381C` and `0x00823820` are not qualified Windows 617.42 writes for either installed card. **No register value, signature or order from the Linux reference is an authorized physical action.** GA102 and AD102 need separate original-firmware acceptance and per-card permission proof.
+
+The critical original Windows work is **before any secure execution**: find the exact Booter production bytes and metadata, connect the selected record and signature through the actual host descriptor to the invoked loader, and establish architecture selection. Generic GSP firmware installation, a firmware index, a Falcon transfer, and a function-pointer registration are necessary context but cannot satisfy this binding or acceptance requirement.
+
+## 5. Original Windows Falcon and protected-loader chain
 
 **Falcon** is NVIDIA's embedded firmware processor family. The current original-driver data path is a set of **partly connected components**, not a proven secure-loading execution chain:
 
@@ -58,17 +64,19 @@ The original Windows host path reads the external file through `FUN_1400F35F0 â†
 
 **Most recent bounded original report:** `nvlddmkm-61742-booter-discovery-20261112-093513-209532.txt`, SHA-256 `b4931ad0630d5299c3d46a1e05d30b36cb4ad0d1454980128427c58ef1f021ed`, 6,916 bytes, complete unclipped C for `FUN_1406B94D0` (215 characters) and `FUN_1406B99D0` (3,788 characters), unchanged driver MD5 and no Ghidra/device writes. `FUN_1406B94D0` reads a register-derived status value through `FUN_1406B63F0` at offset `0xF4` and selects bits. `FUN_1406B99D0` checks state, 4-byte alignment, size and register-window limits and reads/writes resource words through `FUN_1406B63F0` and `FUN_1406B6470`, with a guarded indirect helper. Neither body directly builds signed IMAGE/HEADER/SIG/PATCH fields nor calls `FUN_140BF3880`. Both are **DEAD END as direct Booter producers**. This does not classify all their indirect consumers.
 
-## 5. Preboot graphics, driver release and recovery facts
+## 6. Preboot graphics, driver release and recovery facts
 
 **Current physical state:** All three displays were last reported attached to RTX 3080. The current preboot configured NVIDIA console is therefore **CONFLICT**, with no confirmed independent AMD console in that cabling. The independent earlier AMD-only monitor setup showed AMD `ConOut` and `ErrOut`, no NVIDIA GOPs, and both NVIDIA PCI driver bindings still present; the full topology verdict was **INCOMPLETE** because NVIDIA GOPs were absent. These are **different passive configurations**.
 
 Original passive diagnostics prove both exact NVIDIA identities and PCI bridge ancestry, including distinct roots; they also show that GraphicsConsole and ConSplitter share child/consumer relationships across the AMD and NVIDIA console branches. The original MSI B850 BIOS `E7E56AMSI.1A70` GraphicsConsole/ConSplitter executable-section fingerprints matched the mapped physical code in passive capture. Original source analysis shows that some Stop cleanup status values are ignored or replaced, and that shared state can change before an allocation or close failure. A success return alone is not proof that all owners and protocols were restored. **No real NVIDIA GOP or shared-driver Stop, AMD survival after Stop, peer preservation after Stop, or full-power recovery has been demonstrated.**
 
+**MSI Stop source details:** In original MSI 1A70, GraphicsConsole Stop at offset `0xE28` checks the TextOut uninstall result but does not enforce every later close/free result. ConSplitter output Stop at `0x1480` changes a shared output list; its marker-uninstall status near `0x1578` can be replaced by an earlier FreePool status when returning near `0x161A`. The ConSplitter helper at `0x4664` can encounter GOP lookup or pool allocation failures after an output-list change. The input and pointer Stop entries are different interfaces; they do not provide an independent error-output recovery path. These exact failure points justify the strict post-Stop and cold-recovery gates. They do **not** prove that a physical Stop has occurred or that the selected GPU can be released safely.
+
 The physical `0020/0021` selected-card diagnostics passed **identity/preparation-only**. `RUN0001.TXT` passed ordered RTX 4090 â†’ RTX 3080 selection and a required safe refusal: `MUTATION_AUTHORIZED=0`, `ACTIVE_EXECUTION=REFUSED` before `GuInit`. No active firmware, DMA, FLR, selector write, GOP release or Windows-after-unlock test took place.
 
 In the universal implementation fork, current source and host/synthetic-EFI tests cover private selected-card platform, firmware-table and MSI release-plan backing; saved peer snapshots; one-use selector state; conservative DMA and failed-map retention; source-verified post-close owner checks; protected AMD console owner admission; and a sticky refusal after early or late Windows handover check failure. The original selected path remains **one-shot**. A second active same-boot card transaction and reset of retained hardware fault state are **not implemented**. Canonical non-synthetic active builds still refuse while the safety gates are false. Representative verified runs: universal host and synthetic Windows EFI [43144007489](https://github.com/akashskypatel/universal-gpu-unlock/actions/runs/43144007489); Windows original-driver host checks [43258988642](https://github.com/akashskypatel/Windows-GPU-UNLOCK/actions/runs/43258988642). These are prior CI results, not a new run or a physical clearance.
 
-## 6. Dead ends and findings that must not be reused as proof
+## 7. Dead ends and findings that must not be reused as proof
 
 This table records a result once. A **DEAD END** is closed only for its stated hypothesis.
 
@@ -90,7 +98,7 @@ This table records a result once. A **DEAD END** is closed only for its stated h
 | **IRRELEVANT** | CUDA peer-to-peer support or one FP16 throughput threshold | Not a measure of the target Tensor Core FP32-accumulation issue rate. `nvidia-smi topo -p2p` previously showed unsupported peer access. |
 | **UNPROVEN** | Authenticode structures, Linux firmware signatures, ROM geometry, MSI BIOS display preference, passive AMD console, or a 20-second polling timeout | None proves secure-loader acceptance, safe proprietary Stop, guaranteed recovery or successful unlock. |
 
-## 7. What original-source evidence is still missing
+## 8. What original-source evidence is still missing
 
 1. **Record selection:** Find exact production AD102 and GA102 signed Booter IMAGE, HEADER, SIG and PATCH record identities, byte ownership, offsets/lengths, and actual producer. Determine whether each selected item is embedded or read from the original NVUCODES/GSP pair.
 2. **Real loader invocation:** Prove that the **same constructed nested 0x9B0 object** published at `outer+0x108` receives an indirect call through its installed `+0x170` method and that this resolves to `FUN_140BF3880` on the relevant per-architecture branch.
