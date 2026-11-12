@@ -148,6 +148,63 @@ def _source_block(memory, address):
     return str(block.getName()) if block is not None else '<unmapped>'
 
 
+MAX_SYMBOL_PATTERNS = 4
+MAX_SYMBOLS_PER_PATTERN = 12
+MAX_SYMBOL_REFS_PER_SYMBOL = 20
+
+
+def inspect_named_symbol_references(program, patterns, log):
+    """Read bounded existing name-index and xref evidence; never create symbols."""
+    if (not isinstance(patterns, (list, tuple)) or
+            not 1 <= len(patterns) <= MAX_SYMBOL_PATTERNS or
+            any(not isinstance(p, str) or len(p) > 64 or len(p) < 3 or
+                not re.fullmatch(r'[A-Za-z0-9_*?]+', p) or
+                not re.search(r'[A-Za-z]', p) for p in patterns)):
+        raise ValueError('TRACE_SYMBOL_PATTERNS requires 1-4 bounded name patterns')
+    symbols = program.getSymbolTable()
+    references = program.getReferenceManager()
+    functions = program.getFunctionManager()
+    listing = program.getListing()
+    complete = True
+    for pattern in patterns:
+        count = 0
+        truncated = False
+        for sym in symbols.getSymbolIterator(pattern, False):
+            if count >= MAX_SYMBOLS_PER_PATTERN:
+                truncated = True
+                break
+            count += 1
+            target = sym.getAddress()
+            log('SYMBOL_MATCH pattern=%s name=%s namespace=%s address=%s type=%s' % (
+                pattern, sym.getName(), sym.getParentNamespace(), target,
+                sym.getSymbolType()))
+            ref_count = 0
+            for ref in references.getReferencesTo(target):
+                if ref_count >= MAX_SYMBOL_REFS_PER_SYMBOL:
+                    truncated = True
+                    break
+                ref_count += 1
+                site = ref.getFromAddress()
+                function = functions.getFunctionContaining(site)
+                instruction = listing.getInstructionAt(site)
+                log('SYMBOL_XREF pattern=%s target=%s site=%s kind=%s owner=%s asm=%s' % (
+                    pattern, target, site, ref.getReferenceType(),
+                    function.getEntryPoint() if function is not None else 'UNKNOWN',
+                    str(instruction) if instruction is not None else 'NONE'))
+            log('SYMBOL_XREF_COUNT pattern=%s target=%s recorded=%d' % (
+                pattern, target, ref_count))
+        if not count:
+            log('SYMBOL_MATCH_NONE pattern=%s EXISTING_SYMBOL_MAP_ONLY=TRUE' % pattern)
+        if truncated:
+            complete = False
+            log('SYMBOL_REFERENCES_TRUNCATED pattern=%s symbols_limit=%d references_limit=%d' % (
+                pattern, MAX_SYMBOLS_PER_PATTERN, MAX_SYMBOL_REFS_PER_SYMBOL))
+        log('SYMBOL_PATTERN_COMPLETE pattern=%s matched=%d truncated=%s' % (
+            pattern, count, truncated))
+    log('SYMBOL_LOOKUP_SCOPE=EXISTING_SYMBOL_INDEX_AND_XREFS_ONLY NO_IMPORT_OR_RUNTIME_PROOF')
+    return complete
+
+
 def scan_memory(program, log, deadline):
     memory = program.getMemory()
     initialized = [b for b in memory.getBlocks() if b.isInitialized()]
@@ -1354,6 +1411,10 @@ def main():
             if not scan_nested_receiver_candidates(program, output, time.monotonic() + MAX_RECEIVER_SECONDS):
                 status = 'PARTIAL'
                 output('SCAN_NESTED_RECEIVER_COMPLETE=FALSE; candidate cap or time budget reached')
+        symbol_patterns = globals().get('TRACE_SYMBOL_PATTERNS', ())
+        if symbol_patterns and not inspect_named_symbol_references(program, symbol_patterns, output):
+            status = 'PARTIAL'
+            output('SYMBOL_REFERENCES_COMPLETE=FALSE; bounded name or xref limit reached')
         static_sites = globals().get('TRACE_STATIC_BYTES', ())
         if static_sites and not inspect_static_bytes(program, static_sites, output):
             status = 'PARTIAL'
