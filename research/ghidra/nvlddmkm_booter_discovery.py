@@ -153,6 +153,85 @@ MAX_SYMBOLS_PER_PATTERN = 12
 MAX_SYMBOL_REFS_PER_SYMBOL = 20
 
 
+MAX_PE_HEADER_OFFSET = 0x1000
+MAX_PE_ENTRY_INSTRUCTIONS = 20
+
+
+def parse_pe64_entrypoint_header(header: bytes):
+    """Strict, bounded PE32+ entry RVA from original mapped image headers."""
+    if len(header) < 0x40 or header[:2] != b'MZ':
+        raise ValueError('DOS_HEADER_MISSING')
+    pe_offset = int.from_bytes(header[0x3c:0x40], 'little')
+    if not 0x40 <= pe_offset <= MAX_PE_HEADER_OFFSET:
+        raise ValueError('PE_OFFSET_OUT_OF_RANGE')
+    opt = pe_offset + 24
+    if len(header) < opt + 0x40 or header[pe_offset:pe_offset+4] != b'PE\x00\x00':
+        raise ValueError('PE_HEADER_MISSING_OR_SHORT')
+    if int.from_bytes(header[pe_offset+4:pe_offset+6], 'little') != 0x8664:
+        raise ValueError('NOT_AMD64_PE')
+    optional_size = int.from_bytes(header[pe_offset+20:pe_offset+22], 'little')
+    if optional_size < 0x40:
+        raise ValueError('OPTIONAL_HEADER_TOO_SHORT')
+    if int.from_bytes(header[opt:opt+2], 'little') != 0x20b:
+        raise ValueError('NOT_PE32_PLUS')
+    entry_rva = int.from_bytes(header[opt+0x10:opt+0x14], 'little')
+    image_size = int.from_bytes(header[opt+0x38:opt+0x3c], 'little')
+    if not 0 < entry_rva < image_size <= 512 * 1024 * 1024:
+        raise ValueError('ENTRY_RVA_OUTSIDE_IMAGE')
+    return entry_rva, image_size
+
+
+def inspect_pe_entrypoint(program, log):
+    """Read only the loaded PE header and a bounded existing entry listing."""
+    memory = program.getMemory()
+    base = int(program.getImageBase().getOffset())
+    try:
+        dos = _memory_bytes(memory, _address(program, base), 0x40)
+        if dos[:2] != b'MZ':
+            raise ValueError('DOS_HEADER_MISSING')
+        offset = int.from_bytes(dos[0x3c:0x40], 'little')
+        if not 0x40 <= offset <= MAX_PE_HEADER_OFFSET:
+            raise ValueError('PE_OFFSET_OUT_OF_RANGE')
+        size = offset + 24 + 0x40
+        header = _memory_bytes(memory, _address(program, base), size)
+        entry_rva, image_size = parse_pe64_entrypoint_header(header)
+    except Exception as exc:
+        log('PE_ENTRYPOINT_UNAVAILABLE reason=HEADER_INVALID_OR_UNREADABLE error_type=%s detail=%s' % (
+            type(exc).__name__, str(exc)[:96]))
+        return False
+
+    addr = _address(program, base + entry_rva)
+    log('PE_ENTRYPOINT source=LOADED_PE32_PLUS_HEADER rva=0x%x va=%s image_size=0x%x' % (
+        entry_rva, addr, image_size))
+    block = memory.getBlock(addr)
+    if block is None or not block.isInitialized() or not block.isExecute():
+        log('PE_ENTRYPOINT_UNAVAILABLE reason=ENTRY_NOT_MAPPED_EXECUTABLE')
+        return False
+    function = program.getFunctionManager().getFunctionContaining(addr)
+    instruction = program.getListing().getInstructionAt(addr)
+    if function is None or instruction is None:
+        log('PE_ENTRYPOINT_UNAVAILABLE reason=NO_EXISTING_FUNCTION_OR_INSTRUCTION')
+        return False
+    exact = function.getEntryPoint() == addr
+    log('PE_ENTRY_FUNCTION existing_name=%s existing_entry=%s exact_entry=%s' % (
+        function.getName(), function.getEntryPoint(), exact))
+    if not exact:
+        log('PE_ENTRYPOINT_UNAVAILABLE reason=FUNCTION_START_DIFFERS_FROM_HEADER_ENTRY')
+        return False
+
+    listing = program.getListing()
+    cursor = instruction
+    for _ in range(MAX_PE_ENTRY_INSTRUCTIONS):
+        if cursor is None or not function.getBody().contains(cursor.getAddress()):
+            break
+        log('  PE_ENTRY_INSTRUCTION va=%s asm=%s' % (
+            cursor.getAddress(), cursor))
+        cursor = listing.getInstructionAfter(cursor.getAddress())
+    log('PE_ENTRY_CONTEXT_ONLY=TRUE listing_limit=%d no_control_flow_or_runtime_inference' % (
+        MAX_PE_ENTRY_INSTRUCTIONS))
+    return True
+
+
 def inspect_named_symbol_references(program, patterns, log):
     """Read bounded existing name-index and xref evidence; never create symbols."""
     if (not isinstance(patterns, (list, tuple)) or
@@ -1411,6 +1490,9 @@ def main():
             if not scan_nested_receiver_candidates(program, output, time.monotonic() + MAX_RECEIVER_SECONDS):
                 status = 'PARTIAL'
                 output('SCAN_NESTED_RECEIVER_COMPLETE=FALSE; candidate cap or time budget reached')
+        if bool(globals().get('TRACE_PE_ENTRYPOINT', False)) and not inspect_pe_entrypoint(program, output):
+            status = 'PARTIAL'
+            output('PE_ENTRYPOINT_COMPLETE=FALSE; PE header or existing function evidence unavailable')
         symbol_patterns = globals().get('TRACE_SYMBOL_PATTERNS', ())
         if symbol_patterns and not inspect_named_symbol_references(program, symbol_patterns, output):
             status = 'PARTIAL'
