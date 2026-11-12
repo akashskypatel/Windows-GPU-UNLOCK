@@ -279,7 +279,7 @@ class DecompilationCoverageTests(unittest.TestCase):
     def test_missing_or_empty_decompiler_body_is_incomplete(self):
         # A successful decompiler return without C output cannot establish
         # a complete function body, even when its length is below the cap.
-        for source in (None, '', '  ', '\\n\\t'):
+        for source in (None, '', '  ', '\n\t'):
             with self.subTest(source=source):
                 completed, lines = self._analyze(source)
                 self.assertFalse(completed)
