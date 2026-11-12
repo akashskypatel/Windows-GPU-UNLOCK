@@ -910,7 +910,9 @@ def targeted_decompile(program, addresses, log):
             n = 0
             for ref in program.getReferenceManager().getReferencesTo(entry):
                 if n >= MAX_INCOMING_REFS:
-                    log('TARGET_INCOMING_REFS_TRUNCATED=true')
+                    log('TARGET_INCOMING_REFS_TRUNCATED=true entry=%s cap=%d' %
+                        (entry, MAX_INCOMING_REFS))
+                    all_targets_completed = False
                     break
                 log('  TARGET_CALLER from=%s kind=%s' % (ref.getFromAddress(), ref.getReferenceType()))
                 n += 1

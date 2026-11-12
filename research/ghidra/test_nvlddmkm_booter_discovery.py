@@ -187,7 +187,7 @@ class FocusedDecompileTests(unittest.TestCase):
 
 
 class DecompilationCoverageTests(unittest.TestCase):
-    def _analyze(self, c_source, full_output_limit=None):
+    def _analyze(self, c_source, full_output_limit=None, incoming_refs=0):
         """Exercise the real targeted path through a minimal Java API simulation."""
         import types
 
@@ -228,7 +228,15 @@ class DecompilationCoverageTests(unittest.TestCase):
                 return type('Fns', (), {'getFunctionContaining': lambda self, address: Function()})()
 
             def getReferenceManager(self):
-                return type('Refs', (), {'getReferencesTo': lambda self, address: []})()
+                class Ref:
+                    def getFromAddress(self):
+                        return '140000001'
+
+                    def getReferenceType(self):
+                        return 'DATA'
+
+                return type('Refs', (), {'getReferencesTo':
+                    lambda self, address: [Ref() for _ in range(incoming_refs)]})()
 
         modules = {name: types.ModuleType(name) for name in
                    ('ghidra', 'ghidra.app', 'ghidra.app.decompiler',
@@ -242,6 +250,25 @@ class DecompilationCoverageTests(unittest.TestCase):
              patch.object(probe, '_address', side_effect=lambda program, address: Address()):
             result = probe.targeted_decompile(Program(), ['0x1401b0e00'], logs.append)
         return result, logs
+
+    def test_incoming_reference_budget_does_not_claim_complete(self):
+        # A full decompilation does not make an omitted inbound reference
+        # complete evidence. Exactly the cap is not itself truncation.
+        completed, lines = self._analyze('int f() {}', incoming_refs=probe.MAX_INCOMING_REFS)
+        self.assertTrue(completed)
+        self.assertEqual(sum('  TARGET_CALLER ' in line for line in lines),
+                         probe.MAX_INCOMING_REFS)
+        self.assertFalse(any('TARGET_INCOMING_REFS_TRUNCATED' in line for line in lines))
+
+        completed, lines = self._analyze('int f() {}',
+                                         incoming_refs=probe.MAX_INCOMING_REFS + 1)
+        self.assertFalse(completed)
+        self.assertEqual(sum('  TARGET_CALLER ' in line for line in lines),
+                         probe.MAX_INCOMING_REFS)
+        self.assertIn('TARGET_INCOMING_REFS_TRUNCATED=true', '\\n'.join(lines))
+        self.assertTrue(any('DECOMPILER_BEGIN' in line and 'clipped=False' in line
+                            for line in lines))
+        self.assertIn('DECOMPILER_END', lines)
 
     def test_clipped_regular_decompilation_reports_incomplete(self):
         completed, lines = self._analyze('X' * (probe.MAX_DECOMP_CHARS + 5))
