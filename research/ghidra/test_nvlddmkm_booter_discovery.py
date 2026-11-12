@@ -1071,6 +1071,89 @@ class ReferenceGraphWalkTests(unittest.TestCase):
         self.assertIn('DECOMPILER_OUTPUT_CLIPPED', graph['omissions'])
 
 
+class NamedSymbolReferencesTests(unittest.TestCase):
+    """A matching symbol is evidence; an absent or truncated map is not."""
+
+    @staticmethod
+    def fixture(symbol_names=('DxgkInitialize',), refs=1):
+        from types import SimpleNamespace
+
+        symbols = [SimpleNamespace(
+            getAddress=lambda: '0x140010000',
+            getName=lambda n=name: n,
+            getParentNamespace=lambda: 'ntoskrnl.exe',
+            getSymbolType=lambda: 'FUNCTION') for name in symbol_names]
+
+        class Table:
+            def getSymbolIterator(self, pattern, case_sensitive):
+                assert case_sensitive is False
+                import fnmatch
+                return iter(sym for sym in symbols if fnmatch.fnmatchcase(
+                    sym.getName().lower(), pattern.lower()))
+
+        ref = SimpleNamespace(getFromAddress=lambda: '0x140001234',
+                              getReferenceType=lambda: 'UNCONDITIONAL_CALL')
+        program = SimpleNamespace(
+            getSymbolTable=lambda: Table(),
+            getReferenceManager=lambda: SimpleNamespace(
+                getReferencesTo=lambda _addr: iter([ref] * refs)),
+            getFunctionManager=lambda: SimpleNamespace(
+                getFunctionContaining=lambda _addr: SimpleNamespace(
+                    getEntryPoint=lambda: '0x140001000')),
+            getListing=lambda: SimpleNamespace(
+                getInstructionAt=lambda _addr: 'CALL qword ptr [DxgkInitialize]'))
+        return program
+
+    def test_named_symbol_reports_actual_owner_and_instruction(self):
+        records = []
+        complete = probe.inspect_named_symbol_references(
+            self.fixture(), ['*DxgkInit*'], records.append)
+        self.assertTrue(complete)
+        self.assertTrue(any('SYMBOL_MATCH pattern=*DxgkInit* name=DxgkInitialize'
+                            in x for x in records))
+        self.assertTrue(any('site=0x140001234 kind=UNCONDITIONAL_CALL'
+                            in x and 'owner=0x140001000' in x for x in records))
+        self.assertTrue(any('asm=CALL qword ptr [DxgkInitialize]' in x
+                            for x in records))
+        self.assertFalse(any('SYMBOL_REFERENCES_TRUNCATED' in x for x in records))
+
+    def test_absent_name_is_explicit_and_not_fabricated(self):
+        records = []
+        self.assertTrue(probe.inspect_named_symbol_references(
+            self.fixture(symbol_names=()), ['*DxgkInit*'], records.append))
+        self.assertTrue(any('SYMBOL_MATCH_NONE pattern=*DxgkInit*' in x
+                            for x in records))
+        self.assertFalse(any(x.startswith('SYMBOL_XREF ') for x in records))
+
+    def test_reference_cap_marks_partial_instead_of_complete(self):
+        records = []
+        self.assertFalse(probe.inspect_named_symbol_references(
+            self.fixture(refs=probe.MAX_SYMBOL_REFS_PER_SYMBOL + 1),
+            ['*DxgkInit*'], records.append))
+        self.assertTrue(any('SYMBOL_REFERENCES_TRUNCATED' in x
+                            for x in records))
+        self.assertEqual(sum(x.startswith('SYMBOL_XREF ') for x in records),
+                         probe.MAX_SYMBOL_REFS_PER_SYMBOL)
+
+    def test_symbol_count_cap_marks_partial_instead_of_complete(self):
+        records = []
+        names = ('DxgkInitialize',) * (probe.MAX_SYMBOLS_PER_PATTERN + 1)
+        self.assertFalse(probe.inspect_named_symbol_references(
+            self.fixture(symbol_names=names, refs=0),
+            ['*DxgkInit*'], records.append))
+        self.assertTrue(any('SYMBOL_REFERENCES_TRUNCATED' in x
+                            for x in records))
+        self.assertEqual(sum(x.startswith('SYMBOL_MATCH ') for x in records),
+                         probe.MAX_SYMBOLS_PER_PATTERN)
+
+    def test_invalid_queries_are_rejected_before_ghidra_access(self):
+        for value in ('*DxgkInit*', [], ['*'], ['%'], ['*' * 65],
+                      ['DxgkInit'] * 5, [12]):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                probe.inspect_named_symbol_references(None, value,
+                                                      lambda _x: None)
+
+
 class BoundedFunctionListingTests(unittest.TestCase):
     """Independent mock checks: preserve evidence and fail on incomplete listings."""
 
