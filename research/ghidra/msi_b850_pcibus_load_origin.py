@@ -41,7 +41,8 @@ def source_hash(path):
         raise ValueError("Original extracted PciBus EFI file is not readable: %s" % item)
     if item.stat().st_size > MAX_SOURCE_BYTES:
         raise ValueError("Original PE exceeds bounded file size")
-    return hashlib.sha256(item.read_bytes()).hexdigest()
+    data = item.read_bytes()
+    return hashlib.sha256(data).hexdigest(), hashlib.md5(data).hexdigest()
 
 
 def instruction_window(program, function, call_addr, emit):
@@ -109,7 +110,10 @@ def run():
     path = globals().get("PCIBUS_ORIGINAL_PE") or str(program.getExecutablePath())
     if not path:
         raise ValueError("Provide PCIBUS_ORIGINAL_PE pointing to the extracted original PE")
-    digest = source_hash(path)
+    digest, original_md5 = source_hash(path)
+    program_md5 = str(program.getExecutableMD5() or "").lower()
+    if program_md5 != original_md5:
+        raise ValueError("Imported Ghidra program MD5 does not match pinned original PE bytes")
     if digest.lower() != EXPECTED_SHA256:
         raise ValueError("Original PciBus PE SHA-256 mismatch: %s" % digest)
     base = int(program.getImageBase().getOffset())
