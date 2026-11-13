@@ -5,6 +5,7 @@ on:
     paths:
       - 'research/gop/*.py'
       - 'research/ghidra/nvlddmkm_booter_discovery.py'
+      - 'research/ghidra/msi_b850_pcibus_load_origin.py'
       - 'research/ghidra/test_*.py'
       - 'research/firmware/inspect_installed_firmware.py'
       - 'research/firmware/test_inspect_installed_firmware.py'
