@@ -102,7 +102,10 @@ def direct_callers(program, target):
 
 
 def run():
+    print("MSI_PCIBUS_GHIDRA_TRACE_START READ_ONLY=1")
     program = globals().get("currentProgram")
+    if program is None and globals().get("state") is not None:
+        program = state.getCurrentProgram()
     if program is None:
         raise RuntimeError("Open original extracted PciBus in Ghidra Python 3 first")
     if "pcibus" not in str(program.getName()).lower():
@@ -208,5 +211,5 @@ def run():
     return status
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" or "currentProgram" in globals() or "state" in globals():
     run()
