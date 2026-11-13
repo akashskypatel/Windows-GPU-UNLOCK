@@ -130,7 +130,7 @@ def run():
                 datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
     status = "COMPLETE"
     decomp = None
-    with report_path.open("w", encoding="utf-8") as fd:
+    with report_path.open("x", encoding="utf-8") as fd:
         def say(value):
             line = str(value)
             fd.write(line + "\n")
