@@ -4,6 +4,8 @@ Synthetic reference edges test the actual caller filter. These checks do not
 claim to execute Ghidra or any original firmware image.
 """
 import hashlib
+from contextlib import redirect_stdout
+from io import StringIO
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -99,6 +101,39 @@ class TraceInputTests(unittest.TestCase):
     def test_no_direct_calls_does_not_invent_any(self):
         p = Program([Ref(0x1234, False)])
         self.assertEqual(trace.direct_callers(p, Address(trace.LOADER)), [])
+
+    def test_console_exec_auto_invokes_read_only_preflight(self):
+        """A console exec without __main__ must run and visibly reject wrong program."""
+        class WrongProgram:
+            def getName(self):
+                return "wrong-firmware"
+
+        output = StringIO()
+        with redirect_stdout(output):
+            with self.assertRaisesRegex(ValueError, "not the original PciBus image"):
+                exec(SCRIPT.read_text(encoding="utf-8"),
+                     {"__name__": "ghidra-console",
+                      "currentProgram": WrongProgram()})
+        self.assertIn("MSI_PCIBUS_GHIDRA_TRACE_START READ_ONLY=1",
+                      output.getvalue())
+
+    def test_state_only_console_exec_uses_active_program(self):
+        """The older state-based Ghidra console globals also start the report."""
+        class WrongProgram:
+            def getName(self):
+                return "wrong-firmware"
+
+        class State:
+            def getCurrentProgram(self):
+                return WrongProgram()
+
+        output = StringIO()
+        with redirect_stdout(output):
+            with self.assertRaisesRegex(ValueError, "not the original PciBus image"):
+                exec(SCRIPT.read_text(encoding="utf-8"),
+                     {"__name__": "ghidra-console", "state": State()})
+        self.assertIn("MSI_PCIBUS_GHIDRA_TRACE_START READ_ONLY=1",
+                      output.getvalue())
 
 
 if __name__ == "__main__":
