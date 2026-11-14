@@ -48,7 +48,7 @@ jobs:
               echo "ERROR=NO_OFFICIAL_ZIP_MATCHED_PIN DO_NOT_ANALYZE_UNVERIFIED_IMAGE"
               exit 2
             fi
-            python3 - "$OUT/vendor.zip" "$OUT/policy-coverage.json" <<'PY'
+            python3 - "$OUT/vendor.zip" "$OUT/policy-coverage.json" "$OUT/original.bin" <<'PY'
           import hashlib
           import json
           from pathlib import Path
@@ -73,6 +73,7 @@ jobs:
           digest = hashlib.sha256(image).hexdigest()
           if digest != original_sha:
               raise ValueError("original BIOS SHA mismatch: " + digest)
+          Path(sys.argv[3]).write_bytes(image)
           volumes = []
           cursor = 0
           while True:
@@ -131,6 +132,104 @@ jobs:
                     " OFFSETS=" + ",".join(hex(x["rom_offset"]) for x in matches))
           print("LIMITATION=RAW_LITERAL_SCAN_ONLY COMPRESSED_FFS_NOT_DECODED NO_PROVIDER_OR_RUNTIME_PROOF")
           PY
+          echo "STARTING_BOUNDED_COMPRESSED_SOURCE_PARSE"
+          python3 -m venv "$OUT/venv"
+          "$OUT/venv/bin/python" -m pip install --disable-pip-version-check --no-input "uefi_firmware==1.11"
+          mkdir -p "$OUT/extracted"
+          if timeout 180 "$OUT/venv/bin/uefi-firmware-parser" -b -e -q -o "$OUT/extracted" "$OUT/original.bin" > "$OUT/extractor.log" 2>&1; then
+            echo "EXTRACTOR_EXIT=0"
+          else
+            code=$?
+            echo "EXTRACTOR_EXIT=$code"
+            tail -60 "$OUT/extractor.log"
+            exit "$code"
+          fi
+          python3 - "$OUT/extracted" "$OUT/decompressed-policy.json" <<'PY2'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
+          import uuid
+          root = Path(sys.argv[1])
+          report = Path(sys.argv[2])
+          signatures = {
+              "EFI_PLATFORM_DRIVER_OVERRIDE": "6B30C738-A391-11D4-9A3B-0090273FC14D",
+              "EFI_PCI_PLATFORM": "07D75280-27D4-4D69-90D0-5643E238B341",
+              "EFI_PCI_OVERRIDE": "B5B35764-460C-4A06-99FC-77A17C1B5CEB",
+              "AMI_OPROM_POLICY": "542D6248-4198-4960-9F59-2384646D63B4",
+              "AMI_OPROM_COMPANION": "DC14E697-775A-4C3B-A11A-EDC38E1BE3E6",
+          }
+          needles = {n:uuid.UUID(g).bytes_le for n,g in signatures.items()}
+          known = {
+              "original_PciBus_PE": "d341ffee887f7bb9e51e70d87c1fd16edf92d4360bf835829eb9aac1cda7615f",
+              "original_OptionRomPolicy_PE": "7da343f76c7cb983cf0a1120cdabc6c42747486d465726a29faa08f6a4815c27",
+              "original_Shell_PE": "b91032f513a63625be9b32b9b3698468dd28f61a476a0d52dd7c71cef89d5203",
+              "original_DXE_volume": "c297b1213cc3d90a40480bfbd6cce7ce56b9751e03443e5f96c2a89fc6a4df74",
+          }
+          files = sorted(root.rglob("*"))
+          if len(files) > 20000:
+              raise ValueError("unbounded extracted path count")
+          results = {name:[] for name in needles}
+          matched_pins = {name:[] for name in known}
+          visited = {}
+          total = 0
+          unique_count = 0
+          for path in files:
+              if not path.is_file() or path.is_symlink():
+                  continue
+              size = path.stat().st_size
+              if size > 64 * 1024 * 1024:
+                  raise ValueError("oversized extracted item")
+              total += size
+              if total > 768 * 1024 * 1024:
+                  raise ValueError("extracted input total size over limit")
+              data = path.read_bytes()
+              sha = hashlib.sha256(data).hexdigest()
+              name = str(path.relative_to(root))
+              for known_name, known_sha in known.items():
+                  if sha == known_sha:
+                      matched_pins[known_name].append(name)
+              if sha in visited:
+                  continue
+              visited[sha] = name
+              unique_count += 1
+              for item, needle in needles.items():
+                  offset = 0
+                  while True:
+                      at = data.find(needle, offset)
+                      if at < 0:
+                          break
+                      offset = at + 1
+                      if len(results[item]) >= 400:
+                          raise ValueError("GUID finding cap exceeded")
+                      results[item].append({"relative_file": name, "sha256": sha,
+                                            "file_bytes":size, "offset":at})
+          output = {
+              "scope": "tool-decoded EFI archive objects and sections; not proven complete",
+              "extractor_version": "uefi_firmware 1.11",
+              "extracted_paths": len(files),
+              "total_extracted_file_bytes":total,
+              "unique_extracted_file_contents":unique_count,
+              "known_exact_object_hashes":matched_pins,
+              "guid_hits":results,
+              "complete_firmware_decode_proven":False,
+              "guid_absence_does_not_prove_no_provider":True,
+              "original_driver_invocation_proven":False,
+              "hardware_mutation":False
+          }
+          report.write_text(json.dumps(output, indent=2,sort_keys=True)+"\n",encoding="utf-8")
+          print("EXTRACTED_PATHS=%d UNIQUE_CONTENTS=%d TOTAL_BYTES=%d"%
+                (len(files),unique_count,total))
+          for item, found in results.items():
+              print("EXTRACTED_GUID="+item+" HITS="+str(len(found)))
+              for row in found[:8]:
+                  print("HIT="+item+" FILE="+row["relative_file"]+" AT="+hex(row["offset"]))
+          for item, found in matched_pins.items():
+              print("KNOWN_SHA_MATCH="+item+" COUNT="+str(len(found)))
+          print("LIMIT=DECODE_COVERAGE_UNPROVEN NOT_A_HARDWARE_OR_PROVIDER_PROOF")
+          PY2
+          rm -rf "$OUT/extracted" "$OUT/venv"
+          rm -f "$OUT/original.bin"
             rm -f "$OUT/vendor.zip"
           } 2>&1 | tee -a "$LOG"
       - name: Upload activity log
@@ -145,5 +244,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: msi-original-policy-coverage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/msi-source-audit/policy-coverage.json
+          path: |
+            ${{ runner.temp }}/msi-source-audit/policy-coverage.json
+            ${{ runner.temp }}/msi-source-audit/decompressed-policy.json
+            ${{ runner.temp }}/msi-source-audit/extractor.log
           if-no-files-found: error
