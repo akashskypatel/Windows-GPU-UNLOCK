@@ -905,6 +905,35 @@ jobs:
           txt_name,txt_rva,txt_size,txt_at=originals[0]
           opt_sizeofimage=struct.unpack_from("<I",data,opt+0x38)[0]
           txt_sha=hashlib.sha256(data[txt_at:txt_at+txt_size]).hexdigest()
+          pe_magic=struct.unpack_from("<H",data,opt)[0]
+          if pe_magic!=0x20b:raise ValueError("BDS optional header must be PE32+")
+          reloc_rva,reloc_bytes=struct.unpack_from("<II",data,opt+0x70+5*8)
+          reloc_entries=[]
+          scan=reloc_rva
+          end=reloc_rva+reloc_bytes
+          if reloc_bytes>4096 or end<scan:
+              raise ValueError("BDS relocation directory size invalid")
+          def original_rva(rva,length):
+              candidates=[(label,at+rva-start)
+                          for label,start,sz,at in sections
+                          if start<=rva and rva+length<=start+sz]
+              if len(candidates)!=1:raise ValueError("BDS relocation address not mapped")
+              return data[candidates[0][1]:candidates[0][1]+length]
+          if reloc_bytes:
+              while scan<end:
+                  page,block_size=struct.unpack("<II",original_rva(scan,8))
+                  if block_size<8 or block_size%2!=0 or block_size>end-scan:
+                      raise ValueError("Invalid BDS relocation block")
+                  for i in range((block_size-8)//2):
+                      entry=struct.unpack("<H",original_rva(scan+8+i*2,2))[0]
+                      kind=entry>>12
+                      relocated_rva=page+(entry&0xfff)
+                      if kind and txt_rva<=relocated_rva<txt_rva+txt_size:
+                          reloc_entries.append({"type":kind,"rva":hex(relocated_rva)})
+                  scan+=block_size
+          print("AMI_BDS_PE_TEXT_RELOCATIONS="+str(reloc_entries[:30])+
+                " COUNT="+str(len(reloc_entries))+
+                " RELOCATION_DIRECTORY_BYTES="+str(reloc_bytes))
           print("AMI_BDS_PE_TEXT_AUTH_RVA="+hex(txt_rva)+
                 " TEXT_RAW_BYTES="+str(txt_size)+" TEXT_SHA256="+txt_sha+
                 " SIZE_OF_IMAGE="+str(opt_sizeofimage)+" ORIGINAL_PE_BYTES="+str(len(data)))
