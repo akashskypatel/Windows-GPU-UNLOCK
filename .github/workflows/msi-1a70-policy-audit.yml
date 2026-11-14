@@ -537,6 +537,117 @@ jobs:
               json.dump(out,dst,indent=2,sort_keys=True)
           PY6
           rm -f "$OUT/bds-original.pe"
+          python3 - "$OUT/extracted" "$OUT/security2-source.json" <<'PY7'
+          import hashlib
+          import json
+          from pathlib import Path
+          import struct
+          import subprocess
+          import sys
+          import uuid
+
+          root = Path(sys.argv[1])
+          report = Path(sys.argv[2])
+          modules = {
+              "DxeCore": "d6a2cb7f-6a18-4e2f-b43b-9920a733700a",
+              "SecurityStubDxe_candidate": "f80697e9-7fd6-4665-8646-88e33ef71dfc",
+          }
+          guid_values = {
+              "Security2": "94AB2F58-1438-4EF1-9152-18941A3A0E68",
+              "Security": "A46423E3-4617-49F1-B9FF-D1BFA9115839",
+          }
+          evidence = {}
+          for module, file_guid in modules.items():
+              candidates = [p for p in root.rglob("*.pe") if
+                            ("file-"+file_guid+"/") in (str(p.relative_to(root)).lower()+"/")]
+              if len(candidates) != 1:
+                  raise ValueError("expected one "+module+" PE, found "+str(len(candidates)))
+              path = candidates[0]
+              data = path.read_bytes()
+              if len(data) > 4*1024*1024 or data[:2] != b"MZ":
+                  raise ValueError("invalid module PE header/size")
+              h = struct.unpack_from("<I",data,0x3c)[0]
+              if data[h:h+4] != b"PE\0\0":
+                  raise ValueError("invalid PE")
+              count, opts = struct.unpack_from("<H",data,h+6)[0],struct.unpack_from("<H",data,h+20)[0]
+              op=h+24
+              if struct.unpack_from("<H",data,op)[0] != 0x20b:
+                  raise ValueError("not PE32+")
+              entry = struct.unpack_from("<I",data,op+16)[0]
+              sections = []
+              for i in range(count):
+                  z=op+opts+i*40
+                  name=data[z:z+8].split(b"\0")[0].decode("ascii","replace")
+                  virtual_size,rva,n,at=struct.unpack_from("<IIII",data,z+8)
+                  if at>len(data) or n>len(data)-at:
+                      raise ValueError("section bounds invalid")
+                  sections.append({"name":name,"rva":rva,"size":n,"at":at})
+              found={}
+              for kind, guid in guid_values.items():
+                  needle=uuid.UUID(guid).bytes_le
+                  found[kind]=[]
+                  for s in sections:
+                      block=data[s["at"]:s["at"]+s["size"]]
+                      start=0
+                      while True:
+                          off=block.find(needle,start)
+                          if off<0:break
+                          found[kind].append({"rva":s["rva"]+off,"section":s["name"]})
+                          start=off+1
+              refs={}
+              for kind, found_values in found.items():
+                  wanted={p["rva"] for p in found_values}
+                  refs[kind]=[]
+                  for s in sections:
+                      if s["name"]!=".text":continue
+                      block=data[s["at"]:s["at"]+s["size"]]
+                      for offset in range(len(block)-7):
+                          if block[offset] not in (0x48,0x4c):
+                              continue
+                          if block[offset+1] not in (0x8b,0x8d):
+                              continue
+                          if block[offset+2]&0xc7 != 5:
+                              continue
+                          target=s["rva"]+offset+7+struct.unpack_from("<i",block,offset+3)[0]
+                          if target in wanted:
+                              refs[kind].append({"rva":s["rva"]+offset,"target":target})
+              result={"original_pe_sha256":hashlib.sha256(data).hexdigest(),
+                      "ffs_guid":file_guid,"relative_source":str(path.relative_to(root)),
+                      "entry_rva":hex(entry),"pe_bytes":len(data),
+                      "literal_guids":found,"rip_relative_reference_candidates":refs,
+                      "provider_installation_proven":False,
+                      "image_authentication_per_card_policy_proven":False}
+              evidence[module]=result
+              print("SECURITY_MODULE="+module+" SHA256="+result["original_pe_sha256"]+
+                    " BYTES="+str(len(data))+" ENTRY="+hex(entry))
+              for kind in guid_values:
+                  print("SECURITY_GUID="+module+" "+kind+" LOCATIONS="+str(found[kind])+
+                        " REF_CANDIDATES="+str(refs[kind]))
+              printed = 0
+              for kind in guid_values:
+                  for ref in refs[kind][:8]:
+                      if printed>=16:break
+                      at=ref["rva"]
+                      begin=max(0,at-36)
+                      end=at+80
+                      call=subprocess.run(["objdump","-d","-Mintel",
+                                        "--start-address="+hex(begin),
+                                        "--stop-address="+hex(end),str(path)],
+                                        capture_output=True,text=True,timeout=10)
+                      print("SECURITY_ORIGINAL_DISASM_BEGIN="+module+"/"+kind+" REF="+hex(at)+
+                            " EXIT="+str(call.returncode))
+                      print((call.stdout or call.stderr)[-5700:])
+                      print("SECURITY_ORIGINAL_DISASM_END")
+                      printed+=1
+          report.write_text(json.dumps({
+              "source":"official SHA-verified MSI 1A70 BIOS",
+              "scope":"two selected PE modules with literal Security2 GUID",
+              "modules":evidence,
+              "all_provider_installations_exhaustively_proven":False,
+              "per_device_security_decision_proven":False,
+              "hardware_mutation":False
+          },sort_keys=True,indent=2)+"\n",encoding="utf-8")
+          PY7
           rm -rf "$OUT/extracted" "$OUT/venv"
           rm -f "$OUT/original.bin"
             rm -f "$OUT/vendor.zip"
@@ -559,5 +670,6 @@ jobs:
             ${{ runner.temp }}/msi-source-audit/dxe-core-guid-reference.json
             ${{ runner.temp }}/msi-source-audit/bds-prebind.json
             ${{ runner.temp }}/msi-source-audit/bds-connect-refs.json
+            ${{ runner.temp }}/msi-source-audit/security2-source.json
             ${{ runner.temp }}/msi-source-audit/extractor.log
           if-no-files-found: error
