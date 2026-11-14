@@ -639,6 +639,38 @@ jobs:
                       print((call.stdout or call.stderr)[-5700:])
                       print("SECURITY_ORIGINAL_DISASM_END")
                       printed+=1
+              if module == "SecurityStubDxe_candidate":
+                  interface_slots = {}
+                  for rva in (0x7ba0,0x7ba8,0x7bb0,0x7bb8,0x9890):
+                      candidates = [s for s in sections if
+                                    s["rva"] <= rva and rva+8 <= s["rva"]+s["size"]]
+                      if len(candidates)!=1:
+                          raise ValueError("original SecurityStub pointer not mapped: "+hex(rva))
+                      s=candidates[0]
+                      offset=s["at"]+rva-s["rva"]
+                      pointer=struct.unpack_from("<Q",data,offset)[0]
+                      interface_slots[hex(rva)]=hex(pointer)
+                      print("SECURITY_STUB_DATA="+hex(rva)+" VALUE="+hex(pointer)+
+                            " SECTION="+s["name"])
+                  result["candidate_interface_table_qwords"]=interface_slots
+                  text_sections=[s for s in sections if s["name"]==".text"]
+                  if len(text_sections)!=1:
+                      raise ValueError("original SecurityStub text section ambiguous")
+                  ts=text_sections[0]
+                  for rva in (0x7ba0,0x7ba8,0x7bb0,0x7bb8):
+                      target=int(interface_slots[hex(rva)],16)
+                      if not ts["rva"]<=target<ts["rva"]+ts["size"]:
+                          print("SECURITY_STUB_INTERFACE_NONCODE="+hex(rva)+
+                                " PTR="+hex(target))
+                          continue
+                      call=subprocess.run(["objdump","-d","-Mintel",
+                                          "--start-address="+hex(max(ts["rva"],target)),
+                                          "--stop-address="+hex(min(ts["rva"]+ts["size"],target+175)),
+                                          str(path)],capture_output=True,text=True,timeout=12)
+                      print("SECURITY_STUB_METHOD_DISASM_BEGIN="+hex(rva)+
+                            " METHOD="+hex(target)+" EXIT="+str(call.returncode))
+                      print((call.stdout or call.stderr)[-9500:])
+                      print("SECURITY_STUB_METHOD_DISASM_END")
           report.write_text(json.dumps({
               "source":"official SHA-verified MSI 1A70 BIOS",
               "scope":"two selected PE modules with literal Security2 GUID",
