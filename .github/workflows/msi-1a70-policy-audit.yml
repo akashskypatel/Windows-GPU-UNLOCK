@@ -712,6 +712,15 @@ jobs:
                   if len(target_calls)>80:
                       raise ValueError("Security handler registration call candidates exceed cap")
                   print("SECURITY_REGISTRATION_DIRECT_E8_CANDIDATES="+str(target_calls))
+                  for callsite in (0x8c3,0x54e0):
+                      cmd=subprocess.run(["objdump","-d","-Mintel",
+                                           "--start-address="+hex(callsite-88),
+                                           "--stop-address="+hex(callsite+30),str(path)],
+                                           capture_output=True,text=True,timeout=12)
+                      print("SECURITY_REGISTRANT_CALLSITE_BEGIN="+hex(callsite)+
+                            " EXIT="+str(cmd.returncode))
+                      print((cmd.stdout or cmd.stderr)[-11500:])
+                      print("SECURITY_REGISTRANT_CALLSITE_END")
                   result["registration_direct_e8_candidates"]=target_calls
                   print("SECURITY_HANDLER_TABLE_XREF_COUNT="+str(len(refs)))
                   for record in refs:
