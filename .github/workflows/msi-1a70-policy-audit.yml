@@ -451,6 +451,87 @@ jobs:
             echo "ORIGINAL_BDS_DISASM_END"
           done
           echo "SOURCE_NOTE=ADDITIONAL_BDS_CONNECT_HELPER_CALL_SITES_REQUIRE_CONTROL_FLOW_NOT_A_HARDWARE_TRACE"
+          python3 - "$OUT/bds-original.pe" "$OUT/bds-connect-refs.json" <<'PY6'
+          import hashlib
+          import json
+          import struct
+          import sys
+          import uuid
+          binary=open(sys.argv[1],"rb").read()
+          pe=struct.unpack_from("<I",binary,0x3c)[0]
+          optional=pe+24
+          section_count=struct.unpack_from("<H",binary,pe+6)[0]
+          optional_size=struct.unpack_from("<H",binary,pe+20)[0]
+          sections=[]
+          for index in range(section_count):
+              pos=optional+optional_size+index*40
+              name=binary[pos:pos+8].split(b"\0")[0].decode("ascii","replace")
+              _,rva,size,raw=struct.unpack_from("<IIII",binary,pos+8)
+              sections.append({"name":name,"rva":rva,"size":size,"raw":raw})
+          def read_rva(rva,size):
+              hits=[c for c in sections if c["rva"]<=rva and rva+size<=c["rva"]+c["size"]]
+              if len(hits)!=1:
+                  raise ValueError("RVA lacks one mapped raw section: "+hex(rva))
+              off=hits[0]["raw"]+rva-hits[0]["rva"]
+              if off+size>len(binary):
+                  raise ValueError("original PE truncated")
+              return binary[off:off+size]
+          identifiers={}
+          for offset in (0x16030,0x160c0,0x16100,0x160a0,0x16130,0x161d0,0x16290):
+              chunk=read_rva(offset,16)
+              identifiers[hex(offset)]={"guid":str(uuid.UUID(bytes_le=chunk)),
+                                        "raw_hex":chunk.hex()}
+              print("BDS_GUID_AT="+hex(offset)+" GUID="+identifiers[hex(offset)]["guid"])
+          targets=(0xcd4,0x2f10,0x3000,0x3100,0x1210,0x550)
+          refs={hex(t):[] for t in targets}
+          text=[c for c in sections if c["name"]==".text"]
+          if len(text)!=1:
+              raise ValueError("original BDS text ambiguous")
+          c=text[0]
+          insns=read_rva(c["rva"],c["size"])
+          for i in range(len(insns)-5):
+              if insns[i]!=0xe8:
+                  continue
+              addr=c["rva"]+i
+              dst=addr+5+struct.unpack_from("<i",insns,i+1)[0]
+              if dst in targets:
+                  refs[hex(dst)].append(hex(addr))
+          for target,sites in refs.items():
+              print("BDS_DIRECT_NEAR_CALL_TARGET="+target+" SITES="+",".join(sites))
+          ptr_refs={}
+          for target in targets:
+              ptr=struct.pack("<Q",target)
+              hits=[]
+              for c in sections:
+                  if c["name"] not in (".data",".rdata"):
+                      continue
+                  data=read_rva(c["rva"],c["size"])
+                  start=0
+                  while True:
+                      i=data.find(ptr,start)
+                      if i<0:break
+                      hits.append(hex(c["rva"]+i))
+                      start=i+1
+              ptr_refs[hex(target)]=hits
+              print("BDS_STATIC_TABLE_ENTRY="+hex(target)+" OFFSETS="+",".join(hits[:15]))
+          labels={}
+          for off in (0x16bd0,0x16bf8):
+              data=read_rva(off,96)
+              labels[hex(off)]={"utf16":data.decode("utf-16le","replace").split("\0",1)[0],
+                                "hex_prefix":data[:32].hex()}
+              print("BDS_TEXT_AT="+hex(off)+" VALUE="+repr(labels[hex(off)]))
+          out={"original_bds_sha256":hashlib.sha256(binary).hexdigest(),
+               "literal_guid_fields":identifiers,
+               "possible_direct_near_calls":refs,
+               "static_data_pointer_occurrences":ptr_refs,
+               "labels":labels,
+               "source_capability":"original BDS static read-only",
+               "validated_callsite_set":{"0x142d":"0xcd4","0x2f5f":"0xcd4","0x31a7":"0xcd4"},
+               "first_binding_order_proven":False,
+               "hardware_mutation":False}
+          with open(sys.argv[2],"w") as dst:
+              json.dump(out,dst,indent=2,sort_keys=True)
+          PY6
           rm -f "$OUT/bds-original.pe"
           rm -rf "$OUT/extracted" "$OUT/venv"
           rm -f "$OUT/original.bin"
@@ -473,5 +554,6 @@ jobs:
             ${{ runner.temp }}/msi-source-audit/decompressed-policy.json
             ${{ runner.temp }}/msi-source-audit/dxe-core-guid-reference.json
             ${{ runner.temp }}/msi-source-audit/bds-prebind.json
+            ${{ runner.temp }}/msi-source-audit/bds-connect-refs.json
             ${{ runner.temp }}/msi-source-audit/extractor.log
           if-no-files-found: error
