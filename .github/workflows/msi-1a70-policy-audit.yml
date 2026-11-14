@@ -101,6 +101,7 @@ jobs:
               "AMI_OPROM_COMPANION": "DC14E697-775A-4C3B-A11A-EDC38E1BE3E6",
               "EFI_SECURITY2_ARCH": "94AB2F58-1438-4EF1-9152-18941A3A0E68",
               "EFI_SECURITY_ARCH": "A46423E3-4617-49F1-B9FF-D1BFA9115839",
+              "AMI_BDS_CONNECT_POLICY": "38D65EC3-8F39-4660-B8A6-F36AA3925475",
           }
           results = {}
           for name, identity in ids.items():
@@ -166,6 +167,7 @@ jobs:
               "AMI_OPROM_COMPANION": "DC14E697-775A-4C3B-A11A-EDC38E1BE3E6",
               "EFI_SECURITY2_ARCH": "94AB2F58-1438-4EF1-9152-18941A3A0E68",
               "EFI_SECURITY_ARCH": "A46423E3-4617-49F1-B9FF-D1BFA9115839",
+              "AMI_BDS_CONNECT_POLICY": "38D65EC3-8F39-4660-B8A6-F36AA3925475",
           }
           needles = {n:uuid.UUID(g).bytes_le for n,g in signatures.items()}
           known = {
@@ -232,6 +234,10 @@ jobs:
               print("EXTRACTED_GUID="+item+" HITS="+str(len(found)))
               for row in found[:8]:
                   print("HIT="+item+" FILE="+row["relative_file"]+" AT="+hex(row["offset"]))
+          print("AMI_BDS_CONNECT_POLICY_ORIGINAL_PE_TARGETS="+str([
+              row for row in results["AMI_BDS_CONNECT_POLICY"]
+              if row["relative_file"].endswith(".pe")
+          ]))
           for item, found in matched_pins.items():
               print("KNOWN_SHA_MATCH="+item+" COUNT="+str(len(found)))
           print("LIMIT=DECODE_COVERAGE_UNPROVEN NOT_A_HARDWARE_OR_PROVIDER_PROOF")
