@@ -414,6 +414,42 @@ jobs:
           objdump -d -Mintel --start-address=0x500 --stop-address=0x660 "$OUT/bds-original.pe" | head -140
           echo "BDS_ORIGINAL_EARLY_ENTRY_BYTE_DISASSEMBLY_END"
           echo "SOURCE_DECISION=STATIC_BDS_ONLY FIRST_NVIDIA_BIND_TIME_UNKNOWN"
+          python3 - "$OUT/bds-original.pe" <<'PY5'
+          import struct
+          import sys
+          data=open(sys.argv[1],"rb").read()
+          pe=struct.unpack_from("<I",data,0x3c)[0]
+          opt=pe+24
+          sections=[]
+          for i in range(struct.unpack_from("<H",data,pe+6)[0]):
+              start=opt+struct.unpack_from("<H",data,pe+20)[0]+i*40
+              name=data[start:start+8].split(b"\0")[0].decode("ascii","replace")
+              vsize,rva,rlen,raw=struct.unpack_from("<IIII",data,start+8)
+              sections.append((name,rva,rlen,raw))
+          pdatas=[a for a in sections if a[0]==".pdata"]
+          if len(pdatas)!=1:
+              raise ValueError("no unambiguous BDS pdata")
+          _,_,size,raw=pdatas[0]
+          records=[]
+          for off in range(raw,raw+size,12):
+              if off+12>len(data):
+                  break
+              st,end,unwind=struct.unpack_from("<III",data,off)
+              if st<end and end<0x400000:
+                  records.append((st,end,unwind))
+          targets=[0x514,0x550,0xcd4,0x1210,0x142d,0x2f5f,0x31a7]
+          print("BDS_PDATA_BOUNDED_FUNCTIONS="+str(len(records)))
+          for value in targets:
+              hits=[(hex(st),hex(end),hex(uw)) for st,end,uw in records if st<=value<end]
+              print("BDS_PDATA_AT="+hex(value)+" CONTAINING="+repr(hits))
+          PY5
+          for pair in "0xc80 0xd80" "0x2e80 0x2fb0" "0x3080 0x31f0"; do
+            set -- $pair
+            echo "ORIGINAL_BDS_DISASM_BEGIN $1 .. $2"
+            objdump -d -Mintel --start-address="$1" --stop-address="$2" "$OUT/bds-original.pe" | head -120
+            echo "ORIGINAL_BDS_DISASM_END"
+          done
+          echo "SOURCE_NOTE=ADDITIONAL_BDS_CONNECT_HELPER_CALL_SITES_REQUIRE_CONTROL_FLOW_NOT_A_HARDWARE_TRACE"
           rm -f "$OUT/bds-original.pe"
           rm -rf "$OUT/extracted" "$OUT/venv"
           rm -f "$OUT/original.bin"
