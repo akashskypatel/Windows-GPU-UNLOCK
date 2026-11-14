@@ -984,6 +984,114 @@ jobs:
               "hardware_mutation":False
           },indent=2,sort_keys=True)+"\n",encoding="utf-8")
           PY10
+          python3 - "$OUT/extracted" "$OUT/ami-prebind-order-byte-check.json" <<'PY11'
+          import hashlib
+          import json
+          from pathlib import Path
+          import struct
+          import sys
+          import uuid
+
+          root=Path(sys.argv[1])
+          report=Path(sys.argv[2])
+          ffs={
+              "PciBus":("3c1de39f-d207-408a-aacc-731cfb7f1dd7","d341ffee887f7bb9e51e70d87c1fd16edf92d4360bf835829eb9aac1cda7615f"),
+              "Bds":("8f4b8f82-9b91-4028-86e6-f4db7d4c1dff","431aef4704b759e361d2c3af5d09bee13b04f2767002543b6f39964c05971a77"),
+              "SecurityStubDxe":("f80697e9-7fd6-4665-8646-88e33ef71dfc","116158dcfc3882dd3a93814815c15bf214c30a19a0df3af0904efb8a4cb0c029")
+          }
+          source={}
+          for name,(guid,digest) in ffs.items():
+              matches=[p for p in root.rglob("*.pe")
+                       if ("file-"+guid+"/") in (str(p.relative_to(root)).lower()+"/")]
+              if len(matches)!=1:raise ValueError("missing original PE "+name)
+              path=matches[0]
+              data=path.read_bytes()
+              if hashlib.sha256(data).hexdigest()!=digest:
+                  raise ValueError("original module hash mismatch "+name)
+              pe=struct.unpack_from("<I",data,0x3c)[0]
+              opt=pe+24
+              optsz=struct.unpack_from("<H",data,pe+20)[0]
+              count=struct.unpack_from("<H",data,pe+6)[0]
+              sections=[]
+              for j in range(count):
+                  pos=opt+optsz+j*40
+                  name8=data[pos:pos+8].split(b"\0")[0].decode("ascii","replace")
+                  _,rva,sz,at=struct.unpack_from("<IIII",data,pos+8)
+                  if at>len(data) or sz>len(data)-at:
+                      raise ValueError("original section out of range")
+                  sections.append((name8,rva,sz,at))
+              def section_read(rva,count):
+                  matches=[(name8,at+rva-start)
+                           for name8,start,sz,at in sections
+                           if start<=rva and rva+count<=start+sz]
+                  if len(matches)!=1:raise ValueError("not a single mapped section")
+                  return data[matches[0][1]:matches[0][1]+count]
+              source[name]=(path,section_read,digest)
+          bds=source["Bds"][1]
+          pci=source["PciBus"][1]
+          install_guids={hex(rva):str(uuid.UUID(bytes_le=bds(rva,16)))
+                         for rva in (0x15fa0,0x16170,0x15ef0)}
+          expected_bds_arch="665e3ff6-46cc-11d4-9a38-0090273fc14d"
+          expected_ami_policy="38d65ec3-8f39-4660-b8a6-f36aa3925475"
+          if install_guids["0x15fa0"]!=expected_bds_arch:
+              raise ValueError("Bds first installed GUID is not BDS Arch")
+          if install_guids["0x16170"]!=expected_ami_policy:
+              raise ValueError("Bds installed policy identity changed")
+          checked={
+              "Bds_InstallMultipleProtocolInterfaces_0x9c0":(bds,0x9c0,"ff9048010000"),
+              "PciBus_LocateProtocol_0x958a":(pci,0x958a,"ff9040010000"),
+              "PciBus_policy_method_plus_0x10_0x95ac":(pci,0x95ac,"ff5010"),
+              "PciBus_mode_4_comparison_0x9561":(pci,0x9561,"80781804"),
+              "PciBus_mode_not_4_branch_0x9565":(pci,0x9565,"7550"),
+          }
+          matches={}
+          for name,(reader,addr,hexbytes) in checked.items():
+              raw=reader(addr,len(bytes.fromhex(hexbytes)))
+              if raw.hex()!=hexbytes:
+                  raise ValueError("original instruction mismatch "+name+" "+raw.hex())
+              matches[name]={"address_rva":hex(addr),"bytes":raw.hex(),"verified":True}
+          table=struct.unpack("<4Q",bds(0x16330,32))
+          if table!=(0x10000,0x3260,0x33e4,0x34e4):
+              raise ValueError("original policy method table changed")
+          deps={}
+          for name,(ffs_guid,_) in ffs.items():
+              paths=[p for p in root.rglob("section*.dxe.depex")
+                     if ("file-"+ffs_guid+"/") in (str(p.relative_to(root)).lower()+"/")]
+              if len(paths)!=1:raise ValueError("module depex source is ambiguous "+name)
+              data=paths[0].read_bytes()
+              deps[name]={"sha256":hashlib.sha256(data).hexdigest(),
+                          "requires_BdsArch_as_push":
+                              (b"\x02"+uuid.UUID(expected_bds_arch).bytes_le) in data,
+                          "requires_SecurityArch_as_push":
+                              (b"\x02"+uuid.UUID("A46423E3-4617-49F1-B9FF-D1BFA9115839").bytes_le) in data}
+          if not deps["PciBus"]["requires_BdsArch_as_push"]:
+              raise ValueError("original PciBus not gated on BDS Arch")
+          if not deps["PciBus"]["requires_SecurityArch_as_push"]:
+              raise ValueError("original PciBus not gated on Security Arch")
+          out={
+            "source":"exact official MSI 1A70, 3 SHA-pinned original DXE modules",
+            "Bds_installed_guids":install_guids,
+            "original_instruction_bytes":matches,
+            "Bds_policy_table":{
+                "rva":"0x16330","revision":hex(table[0]),
+                "get_callback_rva":hex(table[1]),
+                "set_callback_rva":hex(table[2]),
+                "class_callback_rva":hex(table[3])},
+            "module_dependencies":deps,
+            "guaranteed_source_order":
+                "Bds Arch protocol installed by original Bds before PciBus DXE driver can dispatch, given normal original DXE dependency handling",
+            "actual_gpu_bind_order_proven":False,
+            "selected_card_safe_admission_proven":False,
+            "firmware_mutation":False
+          }
+          report.write_text(json.dumps(out,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+          print("AMI_PREBIND_ORDER_VERIFIED=1")
+          print("BDS_INSTALLED_GUIDS="+str(install_guids))
+          print("BDS_POLICY_METHODS="+str(out["Bds_policy_table"]))
+          print("ORIGINAL_DEPENDENCIES="+str(deps))
+          print("ORIGINAL_INSTRUCTION_ASSERTIONS="+str(matches))
+          print("LIMIT=DXE_DEPENDENCY_ORDER_NOT_ACTUAL_GPU_BIND_TIMESTAMP")
+          PY11
           rm -rf "$OUT/extracted" "$OUT/venv"
           rm -f "$OUT/original.bin"
             rm -f "$OUT/vendor.zip"
@@ -1010,5 +1118,6 @@ jobs:
             ${{ runner.temp }}/msi-source-audit/ami-bds-connect-policy.json
             ${{ runner.temp }}/msi-source-audit/ami-bds-policy-methods.json
             ${{ runner.temp }}/msi-source-audit/ami-prebind-dependencies.json
+            ${{ runner.temp }}/msi-source-audit/ami-prebind-order-byte-check.json
             ${{ runner.temp }}/msi-source-audit/extractor.log
           if-no-files-found: error
