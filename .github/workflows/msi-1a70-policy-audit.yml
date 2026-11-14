@@ -905,6 +905,14 @@ jobs:
           txt_name,txt_rva,txt_size,txt_at=originals[0]
           opt_sizeofimage=struct.unpack_from("<I",data,opt+0x38)[0]
           txt_sha=hashlib.sha256(data[txt_at:txt_at+txt_size]).hexdigest()
+          txt_header=[opt+optsz+i*40 for i in range(count)
+                      if data[opt+optsz+i*40:opt+optsz+i*40+8].split(b"\\0")[0]==b".text"]
+          if len(txt_header)!=1:raise ValueError("exact BDS .text section absent")
+          txt_vsize=struct.unpack_from("<I",data,txt_header[0]+8)[0]
+          print("AMI_BDS_TEXT_SIZES VIRTUAL_SIZE="+str(txt_vsize)+
+                " RAW_SIZE="+str(txt_size)+
+                " VIRTUAL_SHA256="+hashlib.sha256(data[txt_at:txt_at+txt_vsize]).hexdigest()+
+                " RAW_SHA256="+txt_sha)
           pe_magic=struct.unpack_from("<H",data,opt)[0]
           if pe_magic!=0x20b:raise ValueError("BDS optional header must be PE32+")
           reloc_rva,reloc_bytes=struct.unpack_from("<II",data,opt+0x70+5*8)
