@@ -915,12 +915,58 @@ jobs:
                     " ENTRY="+hex(entry))
               print(run.stdout[-29000:])
               print("AMI_BDS_POLICY_METHOD_END")
+          head,_=data_at(0x163a0,16)
+          head_forward,head_backward=struct.unpack("<QQ",head)
+          if (head_forward,head_backward)!=(0x163a0,0x163a0):
+              raise ValueError("original BDS policy entry list not initially empty")
+          print("AMI_BDS_POLICY_INITIAL_LIST=SELF_LINKED_EMPTY AT=0x163a0")
+
+          import re
+          disasm=subprocess.run(["objdump","-d","-Mintel",str(path)],
+                                capture_output=True,text=True,timeout=15)
+          if disasm.returncode!=0:
+              raise ValueError("original BDS full disassembly failed")
+          callsites={}
+          for target in (0x3260,0x33e4,0x34e4,0x31c4):
+              pattern=re.compile(r"^\s*([0-9a-f]+):\s+([0-9a-f ]+)\s+call\s+(?:0x)?"+
+                                 format(target,"x")+r"(?:\s|$)",re.IGNORECASE)
+              sites=[]
+              for line in disasm.stdout.splitlines():
+                  match=pattern.match(line)
+                  if match:
+                      sites.append({"site_rva":"0x"+match.group(1),
+                                    "source_instruction":line.strip()})
+              if len(sites)>64:
+                  raise ValueError("original BDS direct callsite cap exceeded")
+              callsites[hex(target)]=sites
+              print("AMI_BDS_POLICY_DIRECT_TARGET="+hex(target)+
+                    " SITES="+str([s["site_rva"] for s in sites]))
+
+          arch_guid=bytes.fromhex("f63f5e66cc46d4119a380090273fc14d")
+          arch_refs=[]
+          for image in root.rglob("*.pe"):
+              if image.is_symlink() or image.stat().st_size>4*1024*1024:
+                  continue
+              block=image.read_bytes()
+              if arch_guid in block:
+                  arch_refs.append({"source":str(image.relative_to(root)),
+                                    "sha256":hashlib.sha256(block).hexdigest(),
+                                    "offsets":[hex(i) for i in
+                                               range(len(block)-15)
+                                               if block[i:i+16]==arch_guid][:24]})
+          if len(arch_refs)>100:
+              raise ValueError("BDS Arch GUID hit limit exceeded")
+          print("AMI_BDS_ARCH_ORIGINAL_PE_REFERENCES="+str(arch_refs))
           report.write_text(json.dumps({
               "original_bds_pe_sha256":digest,
               "policy_guid":"38d65ec3-8f39-4660-b8a6-f36aa3925475",
               "bds_policy_table_rva":"0x16330",
               "tables":tables,
               "method_pointers":extracted,
+              "initial_policy_entry_list_empty":True,
+              "original_direct_code_calls_to_policy_methods":callsites,
+              "all_decoded_original_bds_arch_guid_references":arch_refs,
+              "only_one_early_policy_writer_globally_proven":False,
               "complete_control_flow_proven":False,
               "first_boot_order_proven":False,
               "gpu_state_mutation":False},indent=2,sort_keys=True)+"\n",encoding="utf-8")
