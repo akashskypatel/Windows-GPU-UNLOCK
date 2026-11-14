@@ -836,6 +836,16 @@ jobs:
                         " GUID_RVA="+hex(record["guid_rva"]))
                   print(p.stdout[-12500:])
                   print("AMI_BDS_POLICY_REF_END")
+              if name=="PciBus":
+                  for start,stop in ((0x9390,0x9565),(0x9565,0x9600)):
+                      p=subprocess.run(["objdump","-d","-Mintel",
+                                        "--start-address="+hex(start),
+                                        "--stop-address="+hex(stop),str(path)],
+                                       capture_output=True,text=True,timeout=12)
+                      if p.returncode!=0:raise ValueError("Pinned PciBus control-flow byte disassembly failed")
+                      print("AMI_ORIGINAL_PCIBUS_MODE4_PRODUCER_BEGIN="+hex(start)+".."+hex(stop))
+                      print(p.stdout[-22500:])
+                      print("AMI_ORIGINAL_PCIBUS_MODE4_PRODUCER_END")
               found[name]={"original_sha256":sha,
                            "guid_locations":locations,
                            "original_x64_guid_reference_candidates":refs,
