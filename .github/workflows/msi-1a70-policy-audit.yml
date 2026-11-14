@@ -900,6 +900,14 @@ jobs:
               if len(hit)!=1:raise ValueError("invalid BDS RVA "+hex(rva))
               label,pos=hit[0]
               return data[pos:pos+size],label
+          originals=[x for x in sections if x[0]==".text"]
+          if len(originals)!=1:raise ValueError("original BDS text not unique")
+          txt_name,txt_rva,txt_size,txt_at=originals[0]
+          opt_sizeofimage=struct.unpack_from("<I",data,opt+0x38)[0]
+          txt_sha=hashlib.sha256(data[txt_at:txt_at+txt_size]).hexdigest()
+          print("AMI_BDS_PE_TEXT_AUTH_RVA="+hex(txt_rva)+
+                " TEXT_RAW_BYTES="+str(txt_size)+" TEXT_SHA256="+txt_sha+
+                " SIZE_OF_IMAGE="+str(opt_sizeofimage)+" ORIGINAL_PE_BYTES="+str(len(data)))
           tables={}
           for base in (0x16330,0x16398,0x16310):
               raw,part=data_at(base,48)
