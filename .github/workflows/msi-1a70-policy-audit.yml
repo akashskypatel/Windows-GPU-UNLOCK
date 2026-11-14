@@ -232,6 +232,98 @@ jobs:
               print("KNOWN_SHA_MATCH="+item+" COUNT="+str(len(found)))
           print("LIMIT=DECODE_COVERAGE_UNPROVEN NOT_A_HARDWARE_OR_PROVIDER_PROOF")
           PY2
+          python3 - "$OUT/extracted" "$OUT/dxe-core-guid-reference.json" <<'PY3'
+          import hashlib
+          import json
+          from pathlib import Path
+          import struct
+          import subprocess
+          import sys
+          import uuid
+          root = Path(sys.argv[1])
+          destination = Path(sys.argv[2])
+          target_guid = "d6a2cb7f-6a18-4e2f-b43b-9920a733700a"
+          matches = [p for p in root.rglob("*.pe") if
+                     ("file-" + target_guid + "/") in (str(p.relative_to(root)).lower() + "/")]
+          if len(matches) != 1:
+              raise ValueError("expected one exact original DXE_CORE PE, found %d" % len(matches))
+          path = matches[0]
+          data = path.read_bytes()
+          if data[:2] != b"MZ":
+              raise ValueError("original DXE CORE is not PE")
+          at = struct.unpack_from("<I", data, 0x3c)[0]
+          if data[at:at+4] != b"PE\0\0":
+              raise ValueError("invalid original PE signature")
+          count = struct.unpack_from("<H", data, at+6)[0]
+          op_size = struct.unpack_from("<H", data, at+20)[0]
+          opt = at + 24
+          if struct.unpack_from("<H", data, opt)[0] != 0x20b:
+              raise ValueError("original DXE CORE is not PE32+")
+          base = struct.unpack_from("<Q", data, opt+24)[0]
+          entry = struct.unpack_from("<I", data, opt+16)[0]
+          subsys = struct.unpack_from("<H", data, opt+68)[0]
+          sections = []
+          for i in range(count):
+              off = opt + op_size + i * 40
+              name = data[off:off+8].split(b"\0")[0].decode("ascii","replace")
+              virt_size,rva,raw_len,raw_at = struct.unpack_from("<IIII",data,off+8)
+              if raw_at > len(data) or raw_len > len(data)-raw_at:
+                  raise ValueError("original PE section invalid")
+              sections.append((name,virt_size,rva,raw_len,raw_at))
+          needle = uuid.UUID("6B30C738-A391-11D4-9A3B-0090273FC14D").bytes_le
+          positions = []
+          for i,s in enumerate(sections):
+              name,virt,rva,size,raw_at = s
+              pos = data.find(needle,raw_at,raw_at+size)
+              while pos >= 0:
+                  positions.append((pos,rva+pos-raw_at,name))
+                  pos = data.find(needle,pos+1,raw_at+size)
+          refs = []
+          for name,virt,rva,raw_len,raw_at in sections:
+              if name.lower() != ".text":
+                  continue
+              block = data[raw_at:raw_at+raw_len]
+              for i in range(len(block)-7):
+                  if block[i] not in (0x48,0x4c) or block[i+1] not in (0x8d,0x8b):
+                      continue
+                  if block[i+2] & 0xc7 != 5:
+                      continue
+                  disp = struct.unpack_from("<i",block,i+3)[0]
+                  insn_rva = rva+i
+                  dest = insn_rva+7+disp
+                  if any(dest==p[1] for p in positions):
+                      refs.append({"site_rva":insn_rva,"target_rva":dest,
+                                   "code_bytes":block[max(0,i-12):i+24].hex()})
+          result = {"identity":"DXE_CORE_FFS","ffs_guid":target_guid,
+                    "original_pe_path":str(path.relative_to(root)),
+                    "pe_sha256":hashlib.sha256(data).hexdigest(),
+                    "pe_bytes":len(data),"image_base":hex(base),
+                    "entry_rva":hex(entry),"pe_subsystem":subsys,
+                    "sections":[{"name":x[0],"rva":hex(x[2]),"raw_bytes":x[3]} for x in sections],
+                    "platform_override_guid_locations":
+                      [{"offset":hex(p),"rva":hex(rv),"section":name} for p,rv,name in positions],
+                    "bounded_rip_relative_reference_candidates":refs,
+                    "full_control_flow_proven":False,"provider_proven":False,"hardware_mutation":False}
+          destination.write_text(json.dumps(result,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+          print("DXE_CORE_PE_SHA256="+result["pe_sha256"]+" BYTES="+str(len(data))+
+                " ENTRY_RVA="+hex(entry)+" SUBSYSTEM="+str(subsys))
+          print("DXE_CORE_GUID_OFFSETS="+str(result["platform_override_guid_locations"]))
+          print("DXE_CORE_CANDIDATE_RIP_REFS="+str(len(refs)))
+          for ref in refs[:10]:
+              print("DXE_CORE_RIP_REF="+str(ref))
+              start=max(0,base+ref["site_rva"]-32)
+              stop=base+ref["site_rva"]+48
+              try:
+                  call=subprocess.run(["objdump","-d","-Mintel",
+                                      "--start-address="+hex(start),
+                                      "--stop-address="+hex(stop),str(path)],
+                                      capture_output=True,text=True,timeout=10)
+                  print("ORIGINAL_DISASM_BEGIN="+hex(ref["site_rva"])+" EXIT="+str(call.returncode))
+                  print((call.stdout or call.stderr)[-3600:])
+                  print("ORIGINAL_DISASM_END")
+              except Exception as exc:
+                  print("ORIGINAL_DISASM_ERROR="+str(exc))
+          PY3
           rm -rf "$OUT/extracted" "$OUT/venv"
           rm -f "$OUT/original.bin"
             rm -f "$OUT/vendor.zip"
@@ -251,5 +343,6 @@ jobs:
           path: |
             ${{ runner.temp }}/msi-source-audit/policy-coverage.json
             ${{ runner.temp }}/msi-source-audit/decompressed-policy.json
+            ${{ runner.temp }}/msi-source-audit/dxe-core-guid-reference.json
             ${{ runner.temp }}/msi-source-audit/extractor.log
           if-no-files-found: error
