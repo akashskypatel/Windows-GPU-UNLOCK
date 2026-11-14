@@ -23,6 +23,10 @@ jobs:
             python3 --version
             curl --version | head -1
           } > "$RUNNER_TEMP/msi-source-audit/audit.log" 2>&1
+      - name: Select Python 3.12 for supported EFI parser binary extension
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - name: Verify original MSI release and inspect raw firmware policy GUIDs
         shell: bash
         run: |
