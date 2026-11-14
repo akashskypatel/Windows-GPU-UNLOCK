@@ -324,6 +324,97 @@ jobs:
               except Exception as exc:
                   print("ORIGINAL_DISASM_ERROR="+str(exc))
           PY3
+          python3 - "$OUT/extracted" "$OUT/bds-prebind.json" "$OUT/bds-original.pe" <<'PY4'
+          from pathlib import Path
+          import hashlib
+          import json
+          import struct
+          import sys
+          root = Path(sys.argv[1])
+          report = Path(sys.argv[2])
+          copied_original = Path(sys.argv[3])
+          candidates = []
+          for p in root.rglob("*.pe"):
+              if p.is_symlink() or p.stat().st_size > 4 * 1024 * 1024:
+                  continue
+              data = p.read_bytes()
+              if b"D\x00r\x00i\x00v\x00e\x00r\x00O\x00r\x00d\x00e\x00r\x00" not in data:
+                  continue
+              candidates.append({
+                  "path": str(p.relative_to(root)),
+                  "size": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+                  "driver_format_matches": data.count("Driver%04X".encode("utf-16le")),
+                  "ascii_driver_matches": data.count(b"Driver%04X"),
+                  "bds_registration_ptr": data[0x16e58:0x16e60].hex() if len(data)>0x16e60 else None
+              })
+          print("BDS_DRIVERORDER_CANDIDATES="+str(len(candidates)))
+          for c in candidates[:20]:
+              print("BDS_CANDIDATE="+json.dumps(c,sort_keys=True))
+          accepted = [c for c in candidates if c["driver_format_matches"] or c["ascii_driver_matches"]]
+          if len(accepted)!=1:
+              raise ValueError("expected one original BDS PE with DriverOrder and Driver%04X; actual %d" % len(accepted))
+          name=accepted[0]["path"]
+          data=(root/name).read_bytes()
+          copied_original.write_bytes(data)
+          if data[:2]!=b"MZ":
+              raise ValueError("BDS missing DOS signature")
+          pe=struct.unpack_from("<I",data,0x3c)[0]
+          if data[pe:pe+4]!=b"PE\0\0":
+              raise ValueError("BDS missing PE signature")
+          count=struct.unpack_from("<H",data,pe+6)[0]
+          opsize=struct.unpack_from("<H",data,pe+20)[0]
+          opt=pe+24
+          if struct.unpack_from("<H",data,opt)[0]!=0x20b:
+              raise ValueError("BDS expected PE32+")
+          base=struct.unpack_from("<Q",data,opt+24)[0]
+          entry=struct.unpack_from("<I",data,opt+16)[0]
+          sections=[]
+          for i in range(count):
+              off=opt+opsize+i*40
+              name_bytes=data[off:off+8].split(b"\0")[0].decode("ascii","replace")
+              virtual_size,rva,raw_len,raw_at=struct.unpack_from("<IIII",data,off+8)
+              if raw_at>len(data) or raw_len>len(data)-raw_at:
+                  raise ValueError("BDS section out of range")
+              sections.append((name_bytes,rva,raw_at,raw_len))
+          text_sections=[s for s in sections if s[0]==".text"]
+          if len(text_sections)!=1:
+              raise ValueError("BDS must have one text section")
+          _,text_rva,text_off,text_length=text_sections[0]
+          text_data=data[text_off:text_off+text_length]
+          refs=[]
+          for i in range(len(text_data)-5):
+              if text_data[i]!=0xe8:
+                  continue
+              target=text_rva+i+5+struct.unpack_from("<i",text_data,i+1)[0]
+              if target in (0xcd4,0x1210,0x550):
+                  refs.append({"site_rva":hex(text_rva+i),"target_rva":hex(target),
+                               "raw_bytes":text_data[max(0,i-10):i+12].hex(),
+                               "instruction_alignment_proven":False})
+          emitted={
+              "source":"verified original MSI 1A70 extracted BDS PE",
+              "original_bios_member_sha256_verified":True,
+              "selected":accepted[0],
+              "pe_image_base":hex(base),
+              "entry_rva":hex(entry),
+              "sections":[{"name":s[0],"rva":hex(s[1]),"bytes":s[3]} for s in sections],
+              "candidate_near_call_edges":refs,
+              "complete_bds_connection_order_proven":False,
+              "driverorder_before_first_nvidia_binding_proven":False,
+              "hardware_mutation":False
+          }
+          report.write_text(json.dumps(emitted,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+          print("BDS_SELECTED_SHA256="+accepted[0]["sha256"]+" IMAGE_BASE="+hex(base)+" ENTRY="+hex(entry))
+          print("BDS_DIRECT_E8_NEAR_TARGETS="+str(refs))
+          PY4
+          echo "BDS_ORIGINAL_CALLBACK_BYTE_DISASSEMBLY_BEGIN"
+          objdump -d -Mintel --start-address=0x1200 --stop-address=0x1450 "$OUT/bds-original.pe" | tail -200 | head -190
+          echo "BDS_ORIGINAL_CALLBACK_BYTE_DISASSEMBLY_END"
+          echo "BDS_ORIGINAL_EARLY_ENTRY_BYTE_DISASSEMBLY_BEGIN"
+          objdump -d -Mintel --start-address=0x500 --stop-address=0x660 "$OUT/bds-original.pe" | head -140
+          echo "BDS_ORIGINAL_EARLY_ENTRY_BYTE_DISASSEMBLY_END"
+          echo "SOURCE_DECISION=STATIC_BDS_ONLY FIRST_NVIDIA_BIND_TIME_UNKNOWN"
+          rm -f "$OUT/bds-original.pe"
           rm -rf "$OUT/extracted" "$OUT/venv"
           rm -f "$OUT/original.bin"
             rm -f "$OUT/vendor.zip"
@@ -344,5 +435,6 @@ jobs:
             ${{ runner.temp }}/msi-source-audit/policy-coverage.json
             ${{ runner.temp }}/msi-source-audit/decompressed-policy.json
             ${{ runner.temp }}/msi-source-audit/dxe-core-guid-reference.json
+            ${{ runner.temp }}/msi-source-audit/bds-prebind.json
             ${{ runner.temp }}/msi-source-audit/extractor.log
           if-no-files-found: error
