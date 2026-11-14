@@ -853,6 +853,78 @@ jobs:
               "hardware_mutation":False
           },indent=2,sort_keys=True)+"\n",encoding="utf-8")
           PY8
+          python3 - "$OUT/extracted" "$OUT/ami-bds-policy-methods.json" <<'PY9'
+          import hashlib
+          import json
+          from pathlib import Path
+          import struct
+          import subprocess
+          import sys
+
+          root=Path(sys.argv[1])
+          report=Path(sys.argv[2])
+          ffs="8f4b8f82-9b91-4028-86e6-f4db7d4c1dff"
+          candidates=[p for p in root.rglob("*.pe") if
+                      ("file-"+ffs+"/") in (str(p.relative_to(root)).lower()+"/")]
+          if len(candidates)!=1:raise ValueError("BDS source PE missing or duplicate")
+          path=candidates[0]
+          data=path.read_bytes()
+          digest=hashlib.sha256(data).hexdigest()
+          expected="431aef4704b759e361d2c3af5d09bee13b04f2767002543b6f39964c05971a77"
+          if digest!=expected:raise ValueError("original BDS SHA mismatch")
+          pe=struct.unpack_from("<I",data,0x3c)[0]
+          count=struct.unpack_from("<H",data,pe+6)[0]
+          opt=pe+24
+          optsz=struct.unpack_from("<H",data,pe+20)[0]
+          sections=[]
+          for index in range(count):
+              z=opt+optsz+index*40
+              label=data[z:z+8].split(b"\0")[0].decode("ascii","replace")
+              _,rva,size,at=struct.unpack_from("<IIII",data,z+8)
+              if at>len(data) or size>len(data)-at:raise ValueError("BDS section bounds")
+              sections.append((label,rva,size,at))
+          def data_at(rva,size):
+              hit=[(label,at+rva-start)
+                   for label,start,length,at in sections
+                   if start<=rva and rva+size<=start+length]
+              if len(hit)!=1:raise ValueError("invalid BDS RVA "+hex(rva))
+              label,pos=hit[0]
+              return data[pos:pos+size],label
+          tables={}
+          for base in (0x16330,0x16398,0x16310):
+              raw,part=data_at(base,48)
+              words=list(struct.unpack("<6Q",raw))
+              tables[hex(base)]={"section":part,"six_qwords":[hex(w) for w in words]}
+              print("AMI_BDS_INTERFACE_TABLE="+hex(base)+
+                    " SIX_QWORDS="+str([hex(w) for w in words]))
+          ptrs=tables[hex(0x16330)]["six_qwords"]
+          extracted={}
+          for i in (1,2):
+              entry=int(ptrs[i],16)
+              if not any(label==".text" and rva<=entry<rva+size
+                         for label,rva,size,_ in sections):
+                  raise ValueError("AMI BDS policy callback does not point into code")
+              run=subprocess.run(["objdump","-d","-Mintel",
+                                  "--start-address="+hex(entry),
+                                  "--stop-address="+hex(entry+704),
+                                  str(path)],capture_output=True,text=True,timeout=12)
+              if run.returncode!=0:raise ValueError("BDS source disassembly failed")
+              extracted[hex(8*i)]={"entry_rva":hex(entry),
+                                   "original_register_instructions_validated":run.returncode==0}
+              print("AMI_BDS_POLICY_METHOD_BEGIN=+"+hex(8*i)+
+                    " ENTRY="+hex(entry))
+              print(run.stdout[-29000:])
+              print("AMI_BDS_POLICY_METHOD_END")
+          report.write_text(json.dumps({
+              "original_bds_pe_sha256":digest,
+              "policy_guid":"38d65ec3-8f39-4660-b8a6-f36aa3925475",
+              "bds_policy_table_rva":"0x16330",
+              "tables":tables,
+              "method_pointers":extracted,
+              "complete_control_flow_proven":False,
+              "first_boot_order_proven":False,
+              "gpu_state_mutation":False},indent=2,sort_keys=True)+"\n",encoding="utf-8")
+          PY9
           rm -rf "$OUT/extracted" "$OUT/venv"
           rm -f "$OUT/original.bin"
             rm -f "$OUT/vendor.zip"
@@ -877,5 +949,6 @@ jobs:
             ${{ runner.temp }}/msi-source-audit/bds-connect-refs.json
             ${{ runner.temp }}/msi-source-audit/security2-source.json
             ${{ runner.temp }}/msi-source-audit/ami-bds-connect-policy.json
+            ${{ runner.temp }}/msi-source-audit/ami-bds-policy-methods.json
             ${{ runner.temp }}/msi-source-audit/extractor.log
           if-no-files-found: error
