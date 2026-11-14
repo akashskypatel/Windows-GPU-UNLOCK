@@ -99,6 +99,8 @@ jobs:
               "EFI_PCI_OVERRIDE": "B5B35764-460C-4A06-99FC-77A17C1B5CEB",
               "AMI_OPROM_POLICY": "542D6248-4198-4960-9F59-2384646D63B4",
               "AMI_OPROM_COMPANION": "DC14E697-775A-4C3B-A11A-EDC38E1BE3E6",
+              "EFI_SECURITY2_ARCH": "94AB2F58-1438-4EF1-9152-18941A3A0E68",
+              "EFI_SECURITY_ARCH": "A46423E3-4617-49F1-B9FF-D1BFA9115839",
           }
           results = {}
           for name, identity in ids.items():
@@ -162,6 +164,8 @@ jobs:
               "EFI_PCI_OVERRIDE": "B5B35764-460C-4A06-99FC-77A17C1B5CEB",
               "AMI_OPROM_POLICY": "542D6248-4198-4960-9F59-2384646D63B4",
               "AMI_OPROM_COMPANION": "DC14E697-775A-4C3B-A11A-EDC38E1BE3E6",
+              "EFI_SECURITY2_ARCH": "94AB2F58-1438-4EF1-9152-18941A3A0E68",
+              "EFI_SECURITY_ARCH": "A46423E3-4617-49F1-B9FF-D1BFA9115839",
           }
           needles = {n:uuid.UUID(g).bytes_le for n,g in signatures.items()}
           known = {
