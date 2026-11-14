@@ -671,6 +671,15 @@ jobs:
                             " METHOD="+hex(target)+" EXIT="+str(call.returncode))
                       print((call.stdout or call.stderr)[-9500:])
                       print("SECURITY_STUB_METHOD_DISASM_END")
+                  for target in (0xccc,0x3274,0x3830):
+                      call=subprocess.run(["objdump","-d","-Mintel",
+                                          "--start-address="+hex(target),
+                                          "--stop-address="+hex(target+288),
+                                          str(path)],capture_output=True,text=True,timeout=12)
+                      print("SECURITY_CALLBACK_HELPER_BEGIN="+hex(target)+
+                            " EXIT="+str(call.returncode))
+                      print((call.stdout or call.stderr)[-15000:])
+                      print("SECURITY_CALLBACK_HELPER_END")
           report.write_text(json.dumps({
               "source":"official SHA-verified MSI 1A70 BIOS",
               "scope":"two selected PE modules with literal Security2 GUID",
