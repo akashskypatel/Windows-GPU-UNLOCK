@@ -1024,7 +1024,7 @@ jobs:
                   matches=[(name8,at+rva-start)
                            for name8,start,sz,at in sections
                            if start<=rva and rva+count<=start+sz]
-                  if len(matches)!=1:raise ValueError("not a single mapped section")
+                  if len(matches)!=1:raise ValueError("not a single mapped section: module="+name+" rva="+hex(rva)+" count="+str(count)+" sections="+str(sections))
                   return data[matches[0][1]:matches[0][1]+count]
               source[name]=(path,section_read,digest)
           bds=source["Bds"][1]
