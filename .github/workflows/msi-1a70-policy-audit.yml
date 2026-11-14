@@ -680,6 +680,24 @@ jobs:
                             " EXIT="+str(call.returncode))
                       print((call.stdout or call.stderr)[-15000:])
                       print("SECURITY_CALLBACK_HELPER_END")
+                  audit=subprocess.run(["objdump","-d","-Mintel",str(path)],
+                                       capture_output=True,text=True,timeout=15)
+                  if audit.returncode!=0:
+                      raise ValueError("SecurityStub full text disassembly failed")
+                  raw_lines=audit.stdout.splitlines()
+                  refs=[]
+                  for i,line in enumerate(raw_lines):
+                      if "# 0x98f8" in line or "# 0x9910" in line or "# 0x9898" in line:
+                          refs.append({"line":i,"instruction":line.strip()})
+                  if len(refs)>64:
+                      raise ValueError("SecurityStub handler global reference cap")
+                  result["security_handler_global_references"]=refs
+                  print("SECURITY_HANDLER_TABLE_XREF_COUNT="+str(len(refs)))
+                  for record in refs:
+                      i=record["line"]
+                      print("SECURITY_HANDLER_TABLE_XREF_BEGIN="+str(i))
+                      print("\\n".join(raw_lines[max(0,i-4):min(len(raw_lines),i+7)]))
+                      print("SECURITY_HANDLER_TABLE_XREF_END")
           report.write_text(json.dumps({
               "source":"official SHA-verified MSI 1A70 BIOS",
               "scope":"two selected PE modules with literal Security2 GUID",
