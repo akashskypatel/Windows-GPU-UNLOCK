@@ -1020,12 +1020,12 @@ jobs:
                   if at>len(data) or sz>len(data)-at:
                       raise ValueError("original section out of range")
                   sections.append((name8,rva,sz,at))
-              def section_read(rva,count):
+              def section_read(rva,count,_data=data,_sections=tuple(sections),_name=name):
                   matches=[(name8,at+rva-start)
-                           for name8,start,sz,at in sections
+                           for name8,start,sz,at in _sections
                            if start<=rva and rva+count<=start+sz]
-                  if len(matches)!=1:raise ValueError("not a single mapped section: module="+name+" rva="+hex(rva)+" count="+str(count)+" sections="+str(sections))
-                  return data[matches[0][1]:matches[0][1]+count]
+                  if len(matches)!=1:raise ValueError("not a single mapped section: module="+_name+" rva="+hex(rva)+" count="+str(count)+" sections="+str(_sections))
+                  return _data[matches[0][1]:matches[0][1]+count]
               source[name]=(path,section_read,digest)
           bds=source["Bds"][1]
           pci=source["PciBus"][1]
