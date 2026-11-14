@@ -763,6 +763,96 @@ jobs:
               "hardware_mutation":False
           },sort_keys=True,indent=2)+"\n",encoding="utf-8")
           PY7
+          python3 - "$OUT/extracted" "$OUT/ami-bds-connect-policy.json" <<'PY8'
+          import hashlib
+          import json
+          from pathlib import Path
+          import struct
+          import subprocess
+          import sys
+          import uuid
+
+          root = Path(sys.argv[1])
+          output = Path(sys.argv[2])
+          target_guid = "38d65ec3-8f39-4660-b8a6-f36aa3925475"
+          expected = {
+            "PciBus": ("3c1de39f-d207-408a-aacc-731cfb7f1dd7","d341ffee887f7bb9e51e70d87c1fd16edf92d4360bf835829eb9aac1cda7615f"),
+            "Bds": ("8f4b8f82-9b91-4028-86e6-f4db7d4c1dff","431aef4704b759e361d2c3af5d09bee13b04f2767002543b6f39964c05971a77"),
+            "SecurityStubDxe": ("f80697e9-7fd6-4665-8646-88e33ef71dfc","116158dcfc3882dd3a93814815c15bf214c30a19a0df3af0904efb8a4cb0c029")
+          }
+          found={}
+          needle=uuid.UUID(target_guid).bytes_le
+          for name,(ffs,expected_sha) in expected.items():
+              targets=[p for p in root.rglob("*.pe")
+                       if ("file-"+ffs+"/") in (str(p.relative_to(root)).lower()+"/")]
+              if len(targets)!=1:raise ValueError(name+" missing exact PE")
+              path=targets[0]
+              data=path.read_bytes()
+              sha=hashlib.sha256(data).hexdigest()
+              if sha!=expected_sha:raise ValueError(name+" source PE sha mismatch")
+              if data[:2]!=b"MZ":raise ValueError(name+" invalid MZ")
+              pe=struct.unpack_from("<I",data,0x3c)[0]
+              if data[pe:pe+4]!=b"PE\0\0":raise ValueError(name+" missing PE")
+              count=struct.unpack_from("<H",data,pe+6)[0]
+              opt=pe+24
+              opts=struct.unpack_from("<H",data,pe+20)[0]
+              sect=[]
+              for i in range(count):
+                  z=opt+opts+i*40
+                  n=data[z:z+8].split(b"\0")[0].decode("ascii","replace")
+                  vsize,rva,rawbytes,raw=struct.unpack_from("<IIII",data,z+8)
+                  if raw>len(data) or rawbytes>len(data)-raw:raise ValueError(name+" PE bad range")
+                  sect.append({"name":n,"rva":rva,"size":rawbytes,"at":raw})
+              locations=[]
+              for sec in sect:
+                  block=data[sec["at"]:sec["at"]+sec["size"]]
+                  at=0
+                  while True:
+                      k=block.find(needle,at)
+                      if k<0:break
+                      locations.append({"rva":sec["rva"]+k,"section":sec["name"]})
+                      at=k+1
+              wanted={v["rva"] for v in locations}
+              refs=[]
+              for sec in sect:
+                  if sec["name"]!=".text":continue
+                  block=data[sec["at"]:sec["at"]+sec["size"]]
+                  for at in range(len(block)-7):
+                      if block[at] not in (0x48,0x4c):continue
+                      if block[at+1] not in (0x8d,0x8b):continue
+                      if block[at+2]&0xc7 != 5:continue
+                      dest=sec["rva"]+at+7+struct.unpack_from("<i",block,at+3)[0]
+                      if dest in wanted:
+                          refs.append({"site_rva":sec["rva"]+at,"guid_rva":dest})
+              if len(refs)>16:raise ValueError(name+" unexpected GUID reference count")
+              for record in refs:
+                  addr=record["site_rva"]
+                  command=["objdump","-d","-Mintel",
+                           "--start-address="+hex(max(0,addr-64)),
+                           "--stop-address="+hex(addr+135),str(path)]
+                  p=subprocess.run(command,capture_output=True,text=True,timeout=12)
+                  if p.returncode!=0:raise ValueError(name+" original disassembly failed")
+                  print("AMI_BDS_POLICY_REF_BEGIN="+name+" AT="+hex(addr)+
+                        " GUID_RVA="+hex(record["guid_rva"]))
+                  print(p.stdout[-12500:])
+                  print("AMI_BDS_POLICY_REF_END")
+              found[name]={"original_sha256":sha,
+                           "guid_locations":locations,
+                           "original_x64_guid_reference_candidates":refs,
+                           "original_provider_install_verified":False,
+                           "per_card_policy_verified":False,
+                           "original_module_executed_on_owner_boot":False}
+              print("AMI_BDS_POLICY_MODULE="+name+" SHA="+sha+
+                    " GUID_LOCATIONS="+str(locations)+" REFS="+str(refs))
+          output.write_text(json.dumps({
+              "guid":target_guid,
+              "scope":"exact three independently sha-pinned original MSI PE files",
+              "modules":found,
+              "complete_indirect_reference_scan":False,
+              "first_gpu_binding_time_proven":False,
+              "hardware_mutation":False
+          },indent=2,sort_keys=True)+"\n",encoding="utf-8")
+          PY8
           rm -rf "$OUT/extracted" "$OUT/venv"
           rm -f "$OUT/original.bin"
             rm -f "$OUT/vendor.zip"
@@ -786,5 +876,6 @@ jobs:
             ${{ runner.temp }}/msi-source-audit/bds-prebind.json
             ${{ runner.temp }}/msi-source-audit/bds-connect-refs.json
             ${{ runner.temp }}/msi-source-audit/security2-source.json
+            ${{ runner.temp }}/msi-source-audit/ami-bds-connect-policy.json
             ${{ runner.temp }}/msi-source-audit/extractor.log
           if-no-files-found: error
