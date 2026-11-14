@@ -1,0 +1,149 @@
+name: MSI 1A70 original ROM policy source audit
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/msi-1a70-policy-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Create persistent activity log
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/msi-source-audit"
+          {
+            echo "event=$GITHUB_EVENT_NAME repo=$GITHUB_REPOSITORY sha=$GITHUB_SHA ref=$GITHUB_REF run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT"
+            date -u
+            uname -a
+            python3 --version
+            curl --version | head -1
+          } > "$RUNNER_TEMP/msi-source-audit/audit.log" 2>&1
+      - name: Verify original MSI release and inspect raw firmware policy GUIDs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          OUT="$RUNNER_TEMP/msi-source-audit"
+          LOG="$OUT/audit.log"
+          trap 'rc=$?; { echo "SOURCE_AUDIT_EXIT=$rc"; date -u; df -h .; } >> "$LOG" 2>&1; exit "$rc"' EXIT
+          {
+            echo "SCOPE=OFFLINE_ONLY HARDWARE_ACTION=NONE DRIVER_ACTION=NONE FIRMWARE_EXECUTION=NONE"
+            expected_zip="1d924e6bebb76b09fb7cccfb4551f659a2c0b95563194923c013b792ec7645a9"
+            found=0
+            for url in "https://download.msi.com/bos_exe/mb/7E56v1A7.zip" "https://download.msi.com/bos_exe/mb/7E56v1A70.zip"; do
+              echo "SOURCE_CANDIDATE=$url"
+              if curl --fail --location --silent --show-error --retry 1 --connect-timeout 10 --max-time 65 "$url" -o "$OUT/vendor.zip"; then
+                actual="$(sha256sum "$OUT/vendor.zip" | cut -d' ' -f1)"
+                echo "VENDOR_ZIP_SHA256=$actual"
+                if [ "$actual" = "$expected_zip" ]; then found=1; break; fi
+              else
+                echo "SOURCE_FETCH_FAILED=$url"
+              fi
+            done
+            if [ "$found" -ne 1 ]; then
+              echo "ERROR=NO_OFFICIAL_ZIP_MATCHED_PIN DO_NOT_ANALYZE_UNVERIFIED_IMAGE"
+              exit 2
+            fi
+            python3 - "$OUT/vendor.zip" "$OUT/policy-coverage.json" <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import struct
+          import sys
+          import uuid
+          import zipfile
+
+          source = Path(sys.argv[1])
+          report = Path(sys.argv[2])
+          original_sha = "f9e32efb322221d829822ede474cf3a9fce20cc0324f98f4380741de0f5118e3"
+          with zipfile.ZipFile(source) as z:
+              members = [i for i in z.infolist() if i.filename.split("/")[-1] == "E7E56AMSI.1A70"]
+              if len(members) != 1:
+                  raise ValueError("expected one original MSI 1A70 BIOS member")
+              item = members[0]
+              if item.file_size < 16 * 1024 * 1024 or item.file_size > 64 * 1024 * 1024:
+                  raise ValueError("BIOS size outside bounded limits")
+              image = z.read(item)
+              if z.testzip() is not None:
+                  raise ValueError("ZIP member CRC invalid")
+          digest = hashlib.sha256(image).hexdigest()
+          if digest != original_sha:
+              raise ValueError("original BIOS SHA mismatch: " + digest)
+          volumes = []
+          cursor = 0
+          while True:
+              at = image.find(b"_FVH", cursor)
+              if at < 0:
+                  break
+              cursor = at + 4
+              start = at - 0x28
+              if start < 0 or at + 0x10 > len(image):
+                  continue
+              length = int.from_bytes(image[start + 0x20:start + 0x28], "little")
+              hsize = int.from_bytes(image[start + 0x30:start + 0x32], "little")
+              if length < 0x38 or hsize < 0x38 or hsize > length or length > len(image) - start:
+                  continue
+              volumes.append({"offset": start, "size": length, "header_bytes": hsize})
+          ids = {
+              "EFI_PLATFORM_DRIVER_OVERRIDE": "6B30C738-A391-11D4-9A3B-0090273FC14D",
+              "EFI_PCI_PLATFORM": "07D75280-27D4-4D69-90D0-5643E238B341",
+              "EFI_PCI_OVERRIDE": "B5B35764-460C-4A06-99FC-77A17C1B5CEB",
+              "AMI_OPROM_POLICY": "542D6248-4198-4960-9F59-2384646D63B4",
+              "AMI_OPROM_COMPANION": "DC14E697-775A-4C3B-A11A-EDC38E1BE3E6",
+          }
+          results = {}
+          for name, identity in ids.items():
+              needle = uuid.UUID(identity).bytes_le
+              matches = []
+              pos = 0
+              while True:
+                  at = image.find(needle, pos)
+                  if at < 0:
+                      break
+                  pos = at + 1
+                  if len(matches) == 1024:
+                      raise ValueError("GUID hit limit exceeded")
+                  applicable = [v for v in volumes if v["offset"] <= at < v["offset"] + v["size"]]
+                  region = min(applicable, key=lambda v: v["size"]) if applicable else None
+                  matches.append({"rom_offset": at, "raw_volume_start": region["offset"] if region else None})
+              results[name] = matches
+          output = {
+              "scope": "original vendor BIOS raw bytes only; no compressed-section decode",
+              "zip_sha256_verified": True,
+              "original_member_sha256": digest,
+              "original_member_bytes": len(image),
+              "firmware_volume_headers_bounded": volumes,
+              "guid_raw_hits": results,
+              "provider_identity_proven": False,
+              "driver_binding_order_proven": False,
+              "nvidia_release_proven": False,
+              "gpu_mutation": False,
+          }
+          report.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print("SOURCE_VERIFIED=1 ORIGINAL_BIOS_SHA256=" + digest)
+          print("ROM_BYTES=" + str(len(image)) + " BOUNDED_FV_HEADERS=" + str(len(volumes)))
+          for name, matches in results.items():
+              print("GUID=" + name + " RAW_HITS=" + str(len(matches)) +
+                    " OFFSETS=" + ",".join(hex(x["rom_offset"]) for x in matches))
+          print("LIMITATION=RAW_LITERAL_SCAN_ONLY COMPRESSED_FFS_NOT_DECODED NO_PROVIDER_OR_RUNTIME_PROOF")
+          PY
+            rm -f "$OUT/vendor.zip"
+          } 2>&1 | tee -a "$LOG"
+      - name: Upload activity log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-original-source-log-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/msi-source-audit/audit.log
+          if-no-files-found: error
+      - name: Upload source report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-original-policy-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/msi-source-audit/policy-coverage.json
+          if-no-files-found: error
