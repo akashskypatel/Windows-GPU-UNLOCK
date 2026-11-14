@@ -692,6 +692,27 @@ jobs:
                   if len(refs)>64:
                       raise ValueError("SecurityStub handler global reference cap")
                   result["security_handler_global_references"]=refs
+                  print("SECURITY_HANDLER_REGISTRATION_DISASM_BEGIN")
+                  helper=subprocess.run(["objdump","-d","-Mintel",
+                                         "--start-address=0x3160","--stop-address=0x3280",
+                                         str(path)],capture_output=True,text=True,timeout=12)
+                  print("SECURITY_HANDLER_REGISTRATION_EXIT="+str(helper.returncode))
+                  print((helper.stdout or helper.stderr)[-17500:])
+                  print("SECURITY_HANDLER_REGISTRATION_DISASM_END")
+                  target_calls=[]
+                  for section in sections:
+                      if section["name"]!=".text":continue
+                      block=data[section["at"]:section["at"]+section["size"]]
+                      for offset in range(len(block)-5):
+                          if block[offset]!=0xe8:continue
+                          caller=section["rva"]+offset
+                          destination=caller+5+struct.unpack_from("<i",block,offset+1)[0]
+                          if 0x3150<=destination<0x31e0:
+                              target_calls.append((hex(caller),hex(destination)))
+                  if len(target_calls)>80:
+                      raise ValueError("Security handler registration call candidates exceed cap")
+                  print("SECURITY_REGISTRATION_DIRECT_E8_CANDIDATES="+str(target_calls))
+                  result["registration_direct_e8_candidates"]=target_calls
                   print("SECURITY_HANDLER_TABLE_XREF_COUNT="+str(len(refs)))
                   for record in refs:
                       i=record["line"]
