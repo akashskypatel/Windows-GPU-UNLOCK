@@ -712,6 +712,15 @@ jobs:
                   if len(target_calls)>80:
                       raise ValueError("Security handler registration call candidates exceed cap")
                   print("SECURITY_REGISTRATION_DIRECT_E8_CANDIDATES="+str(target_calls))
+                  for callback, span in ((0x3cf4,0x2d0),(0x4c04,0x1c0)):
+                      run=subprocess.run(["objdump","-d","-Mintel",
+                                           "--start-address="+hex(callback),
+                                           "--stop-address="+hex(callback+span),str(path)],
+                                           capture_output=True,text=True,timeout=12)
+                      print("SECURITY_ORIGINAL_HANDLER_DISASM_BEGIN="+hex(callback)+
+                            " EXIT="+str(run.returncode))
+                      print((run.stdout or run.stderr)[-23000:])
+                      print("SECURITY_ORIGINAL_HANDLER_DISASM_END")
                   for callsite in (0x8c3,0x54e0):
                       cmd=subprocess.run(["objdump","-d","-Mintel",
                                            "--start-address="+hex(callsite-88),
