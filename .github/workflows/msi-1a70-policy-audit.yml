@@ -909,6 +909,13 @@ jobs:
                       if data[opt+optsz+i*40:opt+optsz+i*40+8].split(b"\0")[0]==b".text"]
           if len(txt_header)!=1:raise ValueError("exact BDS .text section absent")
           txt_vsize=struct.unpack_from("<I",data,txt_header[0]+8)[0]
+          if txt_vsize!=89076 or txt_size!=89088 or txt_at!=txt_rva:
+              raise ValueError("Original Bds virtual/raw text layout changed")
+          if hashlib.sha256(data[txt_at:txt_at+txt_vsize]).hexdigest()!=(
+              "b17dc40833da35c094671ff1da25b1e7ac367daf77637eebc65b7d6cf5f00151"):
+              raise ValueError("Bds virtual text hash changed")
+          if txt_sha!="193259158df002813374b2219b78c7a6c0dc96a02892265b400ceb996935648b":
+              raise ValueError("Bds raw padded text hash changed")
           print("AMI_BDS_TEXT_SIZES VIRTUAL_SIZE="+str(txt_vsize)+
                 " RAW_SIZE="+str(txt_size)+
                 " VIRTUAL_SHA256="+hashlib.sha256(data[txt_at:txt_at+txt_vsize]).hexdigest()+
