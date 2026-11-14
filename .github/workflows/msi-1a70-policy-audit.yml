@@ -1076,7 +1076,7 @@ jobs:
           bds=source["Bds"][1]
           pci=source["PciBus"][1]
           install_guids={hex(rva):str(uuid.UUID(bytes_le=bds(rva,16)))
-                         for rva in (0x15fa0,0x16170,0x15ef0)}
+                         for rva in (0x15fa0,0x16170,0x15ef0,0x16030,0x160c0,0x160e0,0x16100)}
           expected_bds_arch="665e3ff6-46cc-11d4-9a38-0090273fc14d"
           expected_ami_policy="38d65ec3-8f39-4660-b8a6-f36aa3925475"
           if install_guids["0x15fa0"]!=expected_bds_arch:
@@ -1089,6 +1089,10 @@ jobs:
               "PciBus_policy_method_plus_0x10_0x95ac":(pci,0x95ac,"ff5010"),
               "PciBus_mode_4_comparison_0x9561":(pci,0x9561,"80781804"),
               "PciBus_mode_not_4_branch_0x9565":(pci,0x9565,"7550"),
+              "Bds_class_policy_network_compare_0x34f8":(bds,0x34f8,"483b0dc12b0100"),
+              "Bds_class_policy_other_compare_0x3518":(bds,0x3518,"483b0dc12b0100"),
+              "Bds_class_policy_reject_type_over_1_0x34e4":(bds,0x34e4,"4183f802"),
+              "Bds_policy_lookup_default_zero_0x32b3":(bds,0x32b3,"832300"),
           }
           matches={}
           for name,(reader,addr,hexbytes) in checked.items():
