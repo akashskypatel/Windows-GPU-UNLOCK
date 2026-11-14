@@ -925,6 +925,65 @@ jobs:
               "first_boot_order_proven":False,
               "gpu_state_mutation":False},indent=2,sort_keys=True)+"\n",encoding="utf-8")
           PY9
+          python3 - "$OUT/extracted" "$OUT/ami-prebind-dependencies.json" <<'PY10'
+          import hashlib
+          import json
+          from pathlib import Path
+          import struct
+          import sys
+          import uuid
+          root=Path(sys.argv[1])
+          report=Path(sys.argv[2])
+          modules={
+              "PciBus":"3c1de39f-d207-408a-aacc-731cfb7f1dd7",
+              "Bds":"8f4b8f82-9b91-4028-86e6-f4db7d4c1dff",
+              "SecurityStubDxe":"f80697e9-7fd6-4665-8646-88e33ef71dfc",
+          }
+          names={0:"BEFORE",1:"AFTER",2:"PUSH",3:"AND",4:"OR",5:"NOT",6:"TRUE",7:"FALSE",8:"END",9:"SOR"}
+          evidence={}
+          for module,ffs in modules.items():
+              sources=[p for p in root.rglob("section*.dxe.depex")
+                       if ("file-"+ffs+"/") in (str(p.relative_to(root)).lower()+"/")]
+              if len(sources)>4:raise ValueError("unexpected dependency count "+module)
+              entries=[]
+              for p in sources:
+                  data=p.read_bytes()
+                  if len(data)>4096:raise ValueError("large depex "+module)
+                  bytecode=[]
+                  i=0
+                  while i<len(data):
+                      op=data[i]
+                      i+=1
+                      if op not in names:
+                          bytecode.append({"offset":i-1,"unknown_hex":hex(op)})
+                          break
+                      item={"offset":i-1,"opcode":names[op]}
+                      if op in (0,1,2):
+                          if len(data)-i<16:
+                              item["truncated"]=True
+                              bytecode.append(item)
+                              break
+                          item["guid"]=str(uuid.UUID(bytes_le=data[i:i+16]))
+                          i+=16
+                      bytecode.append(item)
+                      if op==8:break
+                  entries.append({"file":str(p.relative_to(root)),
+                                  "sha256":hashlib.sha256(data).hexdigest(),
+                                  "bytes":len(data),
+                                  "hex":data[:160].hex(),
+                                  "operations":bytecode,
+                                  "fully_parsed_bytes":i==len(data)})
+              evidence[module]=entries
+              print("AMI_PREBIND_DEPEX_MODULE="+module+" COUNT="+str(len(entries)))
+              for e in entries:
+                  print("AMI_PREBIND_DEPEX="+module+" DATA="+str(e))
+          report.write_text(json.dumps({
+              "scope":"source FFS dependency expressions only, not actual dispatch timestamps",
+              "modules":evidence,
+              "dependency_expression_proves_actual_first_gpu_binding":False,
+              "hardware_mutation":False
+          },indent=2,sort_keys=True)+"\n",encoding="utf-8")
+          PY10
           rm -rf "$OUT/extracted" "$OUT/venv"
           rm -f "$OUT/original.bin"
             rm -f "$OUT/vendor.zip"
@@ -950,5 +1009,6 @@ jobs:
             ${{ runner.temp }}/msi-source-audit/security2-source.json
             ${{ runner.temp }}/msi-source-audit/ami-bds-connect-policy.json
             ${{ runner.temp }}/msi-source-audit/ami-bds-policy-methods.json
+            ${{ runner.temp }}/msi-source-audit/ami-prebind-dependencies.json
             ${{ runner.temp }}/msi-source-audit/extractor.log
           if-no-files-found: error
