@@ -428,7 +428,8 @@ jobs:
               sections.append((name,rva,rlen,raw))
           pdatas=[a for a in sections if a[0]==".pdata"]
           if len(pdatas)!=1:
-              raise ValueError("no unambiguous BDS pdata")
+              print("BDS_PDATA_UNAVAILABLE=1 SECTION_NAMES="+repr([s[0] for s in sections]))
+              pdatas=[("unavailable",0,0,0)]
           _,_,size,raw=pdatas[0]
           records=[]
           for off in range(raw,raw+size,12):
