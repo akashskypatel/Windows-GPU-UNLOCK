@@ -712,6 +712,17 @@ jobs:
                   if len(target_calls)>80:
                       raise ValueError("Security handler registration call candidates exceed cap")
                   print("SECURITY_REGISTRATION_DIRECT_E8_CANDIDATES="+str(target_calls))
+                  for slot in (0x7a80,0x7a50,0x7850,0x79c0):
+                      matches=[sec for sec in sections if sec["rva"]<=slot and
+                               slot+16<=sec["rva"]+sec["size"]]
+                      if len(matches)!=1:
+                          raise ValueError("unknown original SecurityStub GUID offset "+hex(slot))
+                      sec=matches[0]
+                      at=sec["at"]+slot-sec["rva"]
+                      ident=uuid.UUID(bytes_le=data[at:at+16])
+                      print("SECURITY_STUB_PROTOCOL_GUID_AT="+hex(slot)+
+                            " GUID="+str(ident)+" SEC="+sec["name"])
+                      result.setdefault("original_guid_at_rva",{})[hex(slot)]=str(ident)
                   for callback, span in ((0x3cf4,0x2d0),(0x4c04,0x1c0)):
                       run=subprocess.run(["objdump","-d","-Mintel",
                                            "--start-address="+hex(callback),
