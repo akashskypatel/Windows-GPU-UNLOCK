@@ -461,9 +461,9 @@ Expected path `D:\Projects\gpu-unlock\universal-gpu-unlock\src\build_diagnostic\
 
 | Responsibility | Current next action |
 |---|---|
-| **AGENT — Completed** | Reviewed the current execution map and investigation notes for the firmware trust requirement. The owner states that the intended path does not require a bypass. The documents do not establish a bypass requirement or physical signed-firmware acceptance. CI 44241151556 remains host PASS and Windows EFI PASS. No active execution source changes or new tests in this review. |
+| **AGENT — Completed** | Verified both repository heads. Execution source is unchanged at 25037e7. The active multi-GPU architecture remains incomplete. No new source changes, tests or hardware results. |
 | **OWNER — Next** | No mandatory hardware action. No active multi-GPU EFI artifact is qualified. |
-| **AGENT — Next** | The requested active multi-GPU architecture is incomplete. Keep independent read-only diagnostics separate from active execution. Do not treat a source-level design or compiler result as proof of signed-firmware acceptance. Preserve the existing production restrictions. |
+| **AGENT — Next** | No active execution implementation in progress. Independent read-only GPU management through supported interfaces is a separate task. Preserve existing admission and firmware protections. |
 | **OWNER + AGENT — Hardware/state** | Original UEFI release passed in its experimental scope; healthy-stock cold-power baseline passed and owner accepts recovery risk. Firmware acceptance, dual-GPU modification, post-modification Windows operation and failed-transaction recovery are untested. Existing production guards unchanged. |
 
 **Completed diagnostic — stock Windows PCI function scope (read-only; do not repeat):** `gpu-pci-functions.txt` is the owner capture at `2026-11-16T20:13:09.9112852-08:00`. Four present NVIDIA PCI functions and all requested properties were returned without reported errors. The exact identities and limits are recorded in the investigation notes. No device reset, restart, disable or firmware change occurred as part of this inventory. Historical DIAG00/07/10 independently supply preboot function identities, PCI I/O ownership and command state; see the investigation record for exact line ranges and limitations. No repeat is requested.
