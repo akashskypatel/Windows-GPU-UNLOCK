@@ -629,7 +629,7 @@ Expected path `D:\Projects\gpu-unlock\universal-gpu-unlock\src\build_diagnostic\
 | Responsibility | Current next action |
 |---|---|
 | **AGENT — Completed** | Verified final CI (host PASS, simulator 18/18 PASS, EFI PASS). Reviewed live-target selection, link policy, independent peer display, asset/signing admission, Windows staging and one-use recovery barrier. Prepared conditional owner procedure for RTX4090-only combined transaction/reattach. |
-| **OWNER — Next** | Supply read-only UEFI Shell GuTargets, GuBootState and driver registration observations; confirm current 4090/3080 identities, 3080 display routing and existing stock boot evidence. Do not boot the combined image until exact target and restart record are reviewed; preserve current recovery barrier and no automatic driver registration. |
+| **OWNER — Next** | Boot the UEFI Shell before Windows starts; `dmpstore` and `bcfg` are shell commands, not PowerShell commands. Supply read-only GuTargets, GuBootState and driver registration observations. Preserve the restart record; no combined image boot until review. |
 | **AGENT — Next** | Review returned selection/restart/driver evidence and determine whether the RTX4090-only combined run can proceed. Resolve any exact prerequisite refusal without weakening admission. Review complete combined run log and manual Windows CUDA evidence after authorized physical execution. |
 | **OWNER + AGENT — Hardware/state** | Combined source and CI PASS; RTX4090 combined physical test pending preconditions. Dual transaction blocked by last measured GA102 ASPM=2 and independent peer GOP requirement. Preserve CAN_DETACH=false, CAN_UNLOCK=false, CAN_FLASH=false, RECOVERY_VERIFIED=false. |
 
